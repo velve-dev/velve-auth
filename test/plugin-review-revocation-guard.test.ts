@@ -104,6 +104,7 @@ beforeAll(async () => {
 		plugins: [{ id: "revoker", routes: [revokeRoute] } as VelvePlugin<"revoker">, WATCHER],
 	});
 	userId = await createUser(mounted.connection, mounted.schema);
+	await mounted.reseal(userId);
 });
 
 afterAll(async () => {

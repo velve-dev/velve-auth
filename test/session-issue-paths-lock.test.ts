@@ -17,11 +17,13 @@ import { openTestConnection, type TestConnection } from "./db-postgres-connectio
 import { aFreshEpochOtherThan } from "./session-fixtures.js";
 import { testKeyRing } from "./totp-fixtures.js";
 
-// Section 3.18 point 3: issuing a session takes the account lock before it reads the epoch, on
-// every path that inserts a session row, not only on the plain issue. A holder of the lock raises
-// the epoch; each path must wait for the holder and bind the epoch it leaves (E-3141).
+// Section 3.18 point 3: issuing a session takes the account lock before it inserts, on every path
+// that inserts a session row, not only on the plain issue. A holder of the lock raises the epoch;
+// each path waits for the holder and, as its check read the epoch the holder replaced, ends
+// without a session (E-3141, E-3377, E-3403).
 
 const NO_REQUEST = { ipAddress: null, userAgent: null };
+const CHECKED = { version: 1, sessionEpoch: 1 } as const;
 const HOLD_MS = 400;
 
 let migrated: MigratedSchema;
@@ -65,7 +67,7 @@ const PATHS: readonly [string, Path][] = [
 		"issue",
 		async (userId) => () =>
 			sessions.issue({
-				authorisedBy: "read_under_lock",
+				authorisedBy: CHECKED,
 				userId,
 				factors: ["password"],
 				observed: NO_REQUEST,
@@ -75,7 +77,7 @@ const PATHS: readonly [string, Path][] = [
 		"issueReplacingPresented",
 		async (userId) => () =>
 			sessions.issueReplacingPresented({
-				authorisedBy: "read_under_lock",
+				authorisedBy: CHECKED,
 				completes: "password_sign_in",
 				presentedToken: null,
 				userId,
@@ -84,60 +86,17 @@ const PATHS: readonly [string, Path][] = [
 			}),
 	],
 	[
-		"reissue",
-		async (userId) => {
-			const first = await sessions.issue({
-				authorisedBy: "read_under_lock",
-				userId,
-				factors: ["password"],
-				observed: NO_REQUEST,
-			});
-			return () =>
-				sessions.reissue({
-					authorisedBy: "read_under_lock",
-					completes: "totp_second_factor",
-					previousToken: first.token,
-					userId,
-					factors: ["password"],
-					observed: NO_REQUEST,
-				});
-		},
-	],
-	[
-		"reissueAfterCredentialChange",
-		async (userId) => {
-			const first = await sessions.issue({
-				authorisedBy: "read_under_lock",
-				userId,
-				factors: ["password"],
-				observed: NO_REQUEST,
-			});
-			const resolved = await sessions.resolve(first.token);
-			if (resolved === null) {
-				throw new Error("the first session did not resolve");
-			}
-			return () =>
-				sessions.reissueAfterCredentialChange({
-					authorisedBy: "read_under_lock",
-					completes: "password_change",
-					resolved,
-					factors: ["password"],
-					observed: NO_REQUEST,
-				});
-		},
-	],
-	[
 		"reissueSessionOfUser",
 		async (userId) => {
 			const first = await sessions.issue({
-				authorisedBy: "read_under_lock",
+				authorisedBy: CHECKED,
 				userId,
 				factors: ["password"],
 				observed: NO_REQUEST,
 			});
 			return () =>
 				sessions.reissueSessionOfUser({
-					authorisedBy: "read_under_lock",
+					authorisedBy: CHECKED,
 					completes: "oauth_link",
 					actor: actorOfTestUser(userId),
 					previousSessionId: first.session.id,
@@ -148,7 +107,7 @@ const PATHS: readonly [string, Path][] = [
 	],
 ];
 
-describe("every path that inserts a session waits for the account lock and binds the epoch it leaves", () => {
+describe("every path that inserts a session waits for the account lock and inserts nothing under the epoch it leaves", () => {
 	it.each(PATHS)("%s", async (_name, path) => {
 		const userId = await sealedAccount();
 		const run = await path(userId);
@@ -159,15 +118,17 @@ describe("every path that inserts a session waits for the account lock and binds
 			[userId, aFreshEpochOtherThan(1)],
 		);
 
-		const running = run();
+		const running = run().then(
+			() => "issued",
+			() => "refused",
+		);
 		const finishedBeforeCommit = await Promise.race([
 			running.then(() => true),
 			new Promise<boolean>((resolve) => setTimeout(() => resolve(false), HOLD_MS)),
 		]);
 		await holder.query("COMMIT", []);
-		const issued = await running;
 
 		expect(finishedBeforeCommit).toBe(false);
-		expect((await sessions.resolve(issued.token))?.userId).toBe(userId);
+		expect(await running).toBe("refused");
 	});
 });

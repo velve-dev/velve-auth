@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Driver } from "../src/core/db/driver.js";
+import { securityStateDocumentOf } from "../src/core/security-state/read.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
 import { createSessionToken } from "../src/core/session/token.js";
 import { testKeyProvider } from "./auth-fixtures.js";
@@ -78,7 +79,7 @@ afterAll(async () => {
 describe("S-CACHE-1, E-20, E-21: one query per answer, never a remembered one", () => {
 	it("issues exactly one statement for each of fifty consecutive answers", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -105,7 +106,7 @@ describe("S-CACHE-1, E-20, E-21: one query per answer, never a remembered one", 
 
 	it("asks again after the row is deleted behind its back, and changes its answer", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -148,7 +149,7 @@ describe("S-CACHE-1, E-20, E-21: one query per answer, never a remembered one", 
 describe("S-CACHE-2: the four conditions of the one resolving statement", () => {
 	it("reads the token hash, both deadlines and the account state in a single statement", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -172,11 +173,13 @@ describe("S-CACHE-2: the four conditions of the one resolving statement", () => 
 	 * the one authorisation query is a decision somebody made on purpose. This is that fixture.
 	 * `observed_at` is the one column beyond the wording of architecture 3.5 (E-232); the factors are
 	 * read as JSON, and the two MAC columns and the account's session epoch are read beside them,
-	 * because S-INTEG-9 checks the row before use.
+	 * because S-INTEG-9 checks the row before use. The account's whole security state is read by the
+	 * same statement, as the document `securityStateDocumentOf` builds for the one read, so the seal is
+	 * checked against what this one statement saw (E-3164).
 	 */
 	it("runs the statement this fixture pins, byte for byte", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -190,7 +193,8 @@ describe("S-CACHE-2: the four conditions of the one resolving statement", () => 
 \t\ts.absolute_expires_at, array_to_json(s.factors)::text AS factor_names, s.ip, s.user_agent,
 \t\ts.token_mac, s.token_mac_key_version, u.disabled_at, now() AS observed_at,
 \t\tCASE WHEN isfinite(s.created_at) THEN trunc(extract(epoch FROM s.created_at) * 1000000)::text END AS created_at_us,
-\t\tCOALESCE(st.session_epoch, 1)::text AS session_epoch
+\t\tCOALESCE(st.session_epoch, 1)::text AS session_epoch,
+\t\t${securityStateDocumentOf(migrated.schema, "s.user_id")} AS security_state
 \tFROM ${migrated.schema}.session s
 \tJOIN ${migrated.schema}.user u ON u.id = s.user_id
 \tLEFT JOIN ${migrated.schema}.security_state st ON st.user_id = s.user_id
@@ -200,7 +204,7 @@ describe("S-CACHE-2: the four conditions of the one resolving statement", () => 
 
 	it("answers resolve and refresh from that one statement and no other", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -217,7 +221,7 @@ describe("S-CACHE-2: the four conditions of the one resolving statement", () => 
 
 	it("never puts the plaintext token in a statement or a parameter (S-TIM-4)", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -239,7 +243,7 @@ describe("S-CACHE-2: the four conditions of the one resolving statement", () => 
 describe("L-4, S-CACHE-3: account_disabled and where it may appear", () => {
 	it("takes effect on the very next request of an existing session", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -262,7 +266,7 @@ describe("L-4, S-CACHE-3: account_disabled and where it may appear", () => {
 
 	it("does not extend the idle deadline of a session it refuses", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -283,7 +287,7 @@ describe("L-4, S-CACHE-3: account_disabled and where it may appear", () => {
 
 	it("goes away again when the account is enabled, without a lifetime to wait out", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
@@ -341,15 +345,15 @@ describe("L-4, S-CACHE-3: account_disabled and where it may appear", () => {
 		);
 
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
 		});
-		const reissued = await service.reissue({
-			authorisedBy: "read_under_lock",
+		const reissued = await service.issueReplacingPresented({
+			authorisedBy: "unsealed",
 			completes: "totp_second_factor",
-			previousToken: issued.token,
+			presentedToken: issued.token,
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,

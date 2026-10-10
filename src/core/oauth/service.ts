@@ -9,7 +9,9 @@ import { createUserRepository, type User, type UserRepository } from "../auth/us
 import { type Actor, actorOfConsumedOAuthFlow, type ConsumedOAuthFlow } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { lockAccountRow } from "../db/lock.js";
+import type { IssueAuthorisation } from "../db/repositories/session.js";
 import { PreviousSessionMissingError } from "../db/repositories/session.js";
+import type { SecondFactor } from "../factor/pending/repository.js";
 import { type OAuthResponseDelivery, oauthStateCookieFor } from "../http/cookies.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RedirectPath } from "../http/redirect.js";
@@ -25,6 +27,17 @@ import { KeyError } from "../keys/index.js";
 import { hooksOnTheTransaction } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
 import { askBeforeSignIn, createSessionUnderHooks, tellAfterSignIn } from "../plugin/sign-in.js";
+import { type AnchorReading, consultAnchors } from "../security-state/anchor.js";
+import { assertBelowCredentialLimit } from "../security-state/limits.js";
+import { type SecurityStateRead, sealedComponentsOf } from "../security-state/read.js";
+import {
+	checkAccount,
+	issueAuthorisationOf,
+	reportEnvelopeRefusal,
+	sealChange,
+	secondFactorsOf,
+} from "../security-state/runtime.js";
+import { componentsAfter, sealCreatedAccount } from "../security-state/sealing.js";
 import { sessionRowsOn } from "../session/rows.js";
 import type { IssuedSession, ObservedRequest } from "../session/service.js";
 import { authorizationUrlFor } from "./authorization-request.js";
@@ -95,6 +108,15 @@ export interface OAuthService {
 interface ResolvedAccount {
 	readonly userId: string;
 	readonly identity: Identity;
+	/** the seal the sign-in checked or wrote, which the session it leads to is bound to */
+	readonly authorisedBy: IssueAuthorisation;
+	/** the second factors the sign-in's verified read held */
+	readonly secondFactors: readonly SecondFactor[];
+}
+
+function sealedIdentityAfter(read: SecurityStateRead, provider: string, subject: string) {
+	const components = sealedComponentsOf(read);
+	return { ...components, identities: [...components.identities, { provider, subject }] };
 }
 
 interface IdentityLinkWritten extends IssuedSession {
@@ -370,6 +392,39 @@ export function createOAuthService(input: {
 		return locked;
 	}
 
+	//a sign-in through a linked identity checks the seal and finds that identity in its read (S-INTEG-4)
+	async function checkedIdentityOf(
+		transaction: Driver,
+		locked: OwnedIdentity,
+		anchorReading: AnchorReading,
+	): Promise<Pick<ResolvedAccount, "authorisedBy" | "secondFactors">> {
+		const check = await checkAccount(services.securityState, locked.userId, "sign_in", {
+			driver: transaction,
+			anchorReading,
+		});
+		if (check.kind !== "usable") {
+			throw new ConcealedError("broken_state_on_oauth_sign_in");
+		}
+		const sealed = check.read.identities.some(
+			(identity) =>
+				identity.id === locked.identity.id &&
+				identity.provider === locked.identity.provider &&
+				identity.subject === locked.identity.subject,
+		);
+		if (!sealed) {
+			services.securityState.alarms.raise({
+				userId: locked.userId,
+				occasion: "sign_in",
+				reason: "seal_mismatch",
+			});
+			throw new ConcealedError("broken_state_on_oauth_sign_in");
+		}
+		assertTheAccountIsEnabled(
+			await createUserRepository({ driver: transaction, schema }).findUserById(locked.userId),
+		);
+		return { authorisedBy: check.authorisedBy, secondFactors: secondFactorsOf(check.read) };
+	}
+
 	async function accountForSignIn(
 		provider: ResolvedProvider,
 		account: ProviderAccount,
@@ -384,24 +439,72 @@ export function createOAuthService(input: {
 			});
 
 			if (existing !== null) {
+				//the anchor is asked before the lock so no connection holds it while the application answers (S-INTEG-6)
+				const anchored = await consultAnchors(services.securityState.anchors, existing.userId);
 				const locked = await theIdentityUnderItsAccountLock(transaction, owned, existing);
-				assertTheAccountIsEnabled(await users.findUserById(locked.userId));
+				const checked = await checkedIdentityOf(transaction, locked, anchored);
 				return {
 					userId: locked.userId,
 					identity: await owned.refreshIdentity({ existing: locked, ...facts }),
+					...checked,
 				};
 			}
 
 			const joinable = await accountAnAutomaticLinkMayJoin({ users, account, provider });
-			const owner =
-				joinable === null
-					? await createAccountFor(transaction, provider, account)
-					: await theJoinableAccountUnderItsLock(transaction, users, joinable, provider, account);
-			return {
-				userId: owner.id,
-				identity: refuseIfAlreadyLinked(
+			if (joinable === null) {
+				const owner = await createAccountFor(transaction, provider, account);
+				const identity = refuseIfAlreadyLinked(
 					await owned.insertIdentityOfSignIn({ userId: owner.id, ...facts }),
-				),
+				);
+				//an account created by a sign-in is sealed with its identity in the same transaction (S-INTEG-3)
+				const sealed = await sealCreatedAccount(transaction, owner.id, { schema, keys });
+				return {
+					userId: owner.id,
+					identity,
+					authorisedBy: issueAuthorisationOf(sealed),
+					secondFactors: secondFactorsOf(sealed.read),
+				};
+			}
+			const anchored = await consultAnchors(services.securityState.anchors, joinable.id);
+			const joined = await theJoinableAccountUnderItsLock(
+				transaction,
+				users,
+				joinable,
+				provider,
+				account,
+			);
+			const sealed = await sealChange(
+				services.securityState,
+				{ unproven: joined.id },
+				{
+					epoch: "keep",
+					write: async (tx, read) => {
+						assertBelowCredentialLimit(read, "identity", services.securityState.limits);
+						return refuseIfAlreadyLinked(
+							await createOAuthIdentityRepository({
+								driver: tx,
+								schema,
+								keys,
+							}).insertIdentityOfSignIn({
+								userId: joined.id,
+								...facts,
+							}),
+						);
+					},
+					after: (read) => sealedIdentityAfter(read, provider.id, account.subject),
+				},
+				{
+					driver: transaction,
+					occasion: "sign_in",
+					refusal: "broken_state_on_oauth_sign_in",
+					anchorReading: anchored,
+				},
+			);
+			return {
+				userId: joined.id,
+				identity: sealed.written,
+				authorisedBy: issueAuthorisationOf(sealed),
+				secondFactors: secondFactorsOf(sealed.read),
 			};
 		});
 	}
@@ -424,11 +527,17 @@ export function createOAuthService(input: {
 
 	//the pending row is written first and withdrawn again when it names no factor (E-563)
 	async function signInOrAskForTheSecondFactor(
-		userId: string,
+		resolved: ResolvedAccount,
 		arrival: OAuthCallbackArrival,
 	): Promise<SignInResult> {
 		const { observed } = arrival;
-		const pending = await services.pending.begin({ userId, factorsCompleted: OAUTH_FACTORS });
+		const { userId, authorisedBy } = resolved;
+		const pending = await services.pending.begin({
+			userId,
+			factorsCompleted: OAUTH_FACTORS,
+			sessionEpoch: authorisedBy === "unsealed" ? 1 : authorisedBy.sessionEpoch,
+			offered: { factors: resolved.secondFactors, refusal: "broken_state_on_oauth_sign_in" },
+		});
 		if (pending.pending.availableFactors.length > 0) {
 			return {
 				status: "second_factor_required",
@@ -441,7 +550,7 @@ export function createOAuthService(input: {
 		const { issued, user } = await issueSessionAround(userId, () =>
 			services.sessions.issueReplacingPresented({
 				completes: "oauth_sign_in",
-				authorisedBy: "read_under_lock",
+				authorisedBy,
 				presentedToken: arrival.presentedSessionToken,
 				userId,
 				factors: OAUTH_FACTORS,
@@ -478,41 +587,58 @@ export function createOAuthService(input: {
 		return createSessionUnderHooks(
 			services.pluginRuntime.hooks,
 			{ userId, factors: OAUTH_FACTORS },
-			() => linkInOneTransaction(userId, input),
+			() => linkInOneTransaction(input),
 		);
 	}
 
-	async function linkInOneTransaction(
-		userId: string,
-		input: {
-			readonly linked: LinkedSession;
-			readonly facts: IdentityFacts;
-			readonly observed: ObservedRequest;
-		},
-	): Promise<IdentityLinkWritten> {
-		return driver.transaction(async (transaction) => {
-			//identity and session are both written below, so the account row is locked first
-			await lockAccountRow(transaction, schema, userId);
-			const owned = createOAuthIdentityRepository({ driver: transaction, schema, keys });
-			assertTheAccountIsEnabled(
-				await createUserRepository({ driver: transaction, schema }).findUserById(userId),
-			);
-			//a link only ever inserts and the unique pair refuses every existing identity (E-979)
-			const actor = actorOfConsumedOAuthFlow(input.linked.account);
-			const identity = refuseIfAlreadyLinked(await owned.insertIdentity({ actor, ...input.facts }));
-			const issued = await services.sessions
-				.boundTo(transaction)
-				.reissueSessionOfUser({
-					completes: "oauth_link",
-					authorisedBy: "read_under_lock",
-					actor,
-					previousSessionId: input.linked.previousSessionId,
-					factors: OAUTH_FACTORS,
-					observed: input.observed,
-				})
-				.catch(refuseAFlowWhoseSessionIsGone);
-			return { identity, token: issued.token, session: issued.session };
+	async function linkInOneTransaction(input: {
+		readonly linked: LinkedSession;
+		readonly facts: IdentityFacts;
+		readonly observed: ObservedRequest;
+	}): Promise<IdentityLinkWritten> {
+		const actor = actorOfConsumedOAuthFlow(input.linked.account);
+		const outcome: { issued?: IssuedSession } = {};
+		//a link inserts the identity under the lock and reseals before the session is issued under it (S-INTEG-3)
+		const sealed = await sealChange(services.securityState, actor, {
+			epoch: "keep",
+			write: async (transaction, read) => {
+				if (read.disabled) {
+					throw new ConcealedError("user_disabled_on_oauth_flow");
+				}
+				assertBelowCredentialLimit(read, "identity", services.securityState.limits);
+				//a link only ever inserts and the unique pair refuses every existing identity (E-979)
+				return refuseIfAlreadyLinked(
+					await createOAuthIdentityRepository({ driver: transaction, schema, keys }).insertIdentity(
+						{
+							actor,
+							...input.facts,
+						},
+					),
+				);
+			},
+			after: (read) => sealedIdentityAfter(read, input.facts.provider, input.facts.subject),
+			afterSeal: async (transaction, next) => {
+				outcome.issued = await services.sessions
+					.boundTo(transaction)
+					.reissueSessionOfUser({
+						completes: "oauth_link",
+						authorisedBy: next,
+						actor,
+						previousSessionId: input.linked.previousSessionId,
+						factors: OAUTH_FACTORS,
+						observed: input.observed,
+					})
+					.catch(refuseAFlowWhoseSessionIsGone);
+			},
 		});
+		if (outcome.issued === undefined) {
+			throw new ConcealedError("link_session_gone");
+		}
+		return {
+			identity: sealed.written,
+			token: outcome.issued.token,
+			session: outcome.issued.session,
+		};
 	}
 
 	//a flow that began before the upgrade holds an unbound verifier and is begun again (S-INTEG-1)
@@ -533,6 +659,12 @@ export function createOAuthService(input: {
 			);
 			return new TextDecoder().decode(verifier);
 		} catch (failure) {
+			reportEnvelopeRefusal(
+				services.securityState,
+				flow.linkTo?.userId ?? null,
+				flow.linkTo === null ? "sign_in" : "change",
+				failure,
+			);
 			throw failure instanceof KeyError ? new ConcealedError("state_not_found") : failure;
 		}
 	}
@@ -631,7 +763,7 @@ export function createOAuthService(input: {
 			}
 
 			const resolved = await accountForSignIn(provider, account, facts);
-			const result = await signInOrAskForTheSecondFactor(resolved.userId, arrival);
+			const result = await signInOrAskForTheSecondFactor(resolved, arrival);
 			if (result.status === "signed_in") {
 				await tellAfterSignIn(services.pluginRuntime.hooks, {
 					method: "oauth",
@@ -645,12 +777,21 @@ export function createOAuthService(input: {
 		listIdentities: ({ actor }) => identities.listIdentitiesOwnedBy({ actor }),
 
 		//the count that refuses to remove the last way in is shared with core identity (E-460)
-		unlinkIdentity: ({ actor, identityId }) =>
-			removeSignInMethod({
-				driver,
-				schema,
-				actor,
-				removing: { method: "linked_identity", identityId },
-			}),
+		unlinkIdentity: async ({ actor, identityId }) => {
+			await sealChange(services.securityState, actor, {
+				epoch: "keep",
+				write: (tx) =>
+					removeSignInMethod({
+						driver: tx,
+						schema,
+						actor,
+						removing: { method: "linked_identity", identityId },
+					}),
+				after: (read) =>
+					componentsAfter(read, {
+						identities: read.identities.filter((identity) => identity.id !== identityId),
+					}),
+			});
+		},
 	};
 }

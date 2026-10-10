@@ -16,6 +16,7 @@ import type { TokenBindingRefusal } from "../src/core/token/binding.js";
 import { createTestClock } from "../src/testing/index.js";
 import { openConnectionPool } from "./connection-pool-fixtures.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
+import { testSecurityState } from "./security-state-fixtures.js";
 import { secretBytesOfBase32, testKeyProvider } from "./totp-fixtures.js";
 
 /**
@@ -44,6 +45,7 @@ beforeAll(async () => {
 		reportTokenBindingRefusal: (refusal) => refusals.push(refusal),
 	});
 	totp = createTotpService({
+		securityState: testSecurityState(pool, migrated.schema, keys),
 		driver: pool,
 		schema: migrated.schema,
 		keys,

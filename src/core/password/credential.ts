@@ -74,9 +74,9 @@ export interface PasswordCredentialRepository {
 	//a sign-in has no proof yet as the row read here is what the proof is made from (E-2423)
 	findByUserId(userId: string): Promise<PasswordCredentialRow | null>;
 	findOwnedBy(input: { readonly actor: Actor }): Promise<PasswordCredentialRow | null>;
-	write(input: { actor: Actor } & PasswordCredentialWrite): Promise<void>;
+	write(input: { actor: Actor } & PasswordCredentialWrite): Promise<SealedPhc>;
 	//the account row was inserted by the same transaction so no other caller can own it (E-2428)
-	writeForCreatedAccount(input: { userId: string } & PasswordCredentialWrite): Promise<void>;
+	writeForCreatedAccount(input: { userId: string } & PasswordCredentialWrite): Promise<SealedPhc>;
 	//the rewrite opens and re-encrypts the same string and never derives a new one (S-INTEG-8)
 	rebindOwnedBy(input: {
 		readonly actor: Actor;
@@ -88,7 +88,7 @@ export interface PasswordCredentialRepository {
 		previous: Uint8Array<ArrayBuffer>;
 		phc: string;
 		scheme: PasswordScheme;
-	}): Promise<boolean>;
+	}): Promise<SealedPhc | null>;
 }
 
 interface RawRow {
@@ -156,10 +156,13 @@ FROM ${table} credential WHERE credential.user_id = $1`;
 	async function sealedRow(
 		ownerId: string,
 		{ phc, scheme, setBySessionId }: PasswordCredentialWrite,
-	): Promise<unknown[]> {
+	): Promise<{ readonly parameters: unknown[]; readonly stored: SealedPhc }> {
 		assertCredentialIsVerifiable(phc, scheme, memoryCeilingKiB);
 		const sealed = await sealPhc(options.keys, ownerId, phc);
-		return [ownerId, sealed.ciphertext, sealed.keyVersion, scheme, setBySessionId];
+		return {
+			parameters: [ownerId, sealed.ciphertext, sealed.keyVersion, scheme, setBySessionId],
+			stored: sealed,
+		};
 	}
 
 	//a false conflict predicate writes nothing and must not be reported as stored (E-185)
@@ -169,7 +172,11 @@ FROM ${table} credential WHERE credential.user_id = $1`;
 		}
 	}
 
-	async function writeOwnedBy(ownerId: string, credential: PasswordCredentialWrite): Promise<void> {
+	async function writeOwnedBy(
+		ownerId: string,
+		credential: PasswordCredentialWrite,
+	): Promise<SealedPhc> {
+		const row = await sealedRow(ownerId, credential);
 		//the conflict is on the owner column and the predicate says so explicitly (S-OWNER-2)
 		const written = await options.driver.query(
 			`INSERT INTO ${table} AS credential (user_id, phc, key_version, scheme, set_by_session_id)
@@ -180,20 +187,26 @@ FROM ${table} credential WHERE credential.user_id = $1`;
 			     updated_at = now()
 			 WHERE credential.user_id = $1
 			 RETURNING user_id`,
-			await sealedRow(ownerId, credential),
+			row.parameters,
 		);
 		assertWritten(written);
+		return row.stored;
 	}
 
 	//without a proof only a first credential may be written so an existing one is a key violation (E-2428)
-	async function insertFirst(ownerId: string, credential: PasswordCredentialWrite): Promise<void> {
+	async function insertFirst(
+		ownerId: string,
+		credential: PasswordCredentialWrite,
+	): Promise<SealedPhc> {
+		const row = await sealedRow(ownerId, credential);
 		const written = await options.driver.query(
 			`INSERT INTO ${table} (user_id, phc, key_version, scheme, set_by_session_id)
 			 VALUES ($1, $2, $3, $4, $5)
 			 RETURNING user_id`,
-			await sealedRow(ownerId, credential),
+			row.parameters,
 		);
 		assertWritten(written);
+		return row.stored;
 	}
 
 	return {
@@ -232,7 +245,7 @@ FROM ${table} credential WHERE credential.user_id = $1`;
 				[userId, sealed.ciphertext, scheme, sealed.keyVersion, previous],
 			);
 
-			return changed.length === 1;
+			return changed.length === 1 ? sealed : null;
 		},
 	};
 }

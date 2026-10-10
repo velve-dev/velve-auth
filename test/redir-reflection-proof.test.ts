@@ -4,6 +4,7 @@ import { createPendingAuthenticationService } from "../src/core/factor/pending/i
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import type { AnyRoute } from "../src/core/http/route.js";
 import { TEST_ORIGIN, testKeyProvider } from "./auth-fixtures.js";
+import { resealDirectly } from "./security-state-fixtures.js";
 import { jsonPost, mountWidest, signUpOn, type WidestMount } from "./widest-mount-fixtures.js";
 
 const TOKEN_KEYS = testKeyProvider();
@@ -192,6 +193,7 @@ describe("T-REDIR-7: JSON only, and no input reflected (S-REDIR-7)", () => {
 			 VALUES ($1, $2, $3, false, false, true) RETURNING id`,
 			[account.userId, randomBytes(32), randomBytes(32)],
 		);
+		await resealDirectly(mount.connection, mount.schema, TOKEN_KEYS, account.userId);
 		const renamed = await mount.handler(
 			jsonPost(
 				"/factor/webauthn/rename",

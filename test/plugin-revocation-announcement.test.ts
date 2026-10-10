@@ -107,6 +107,7 @@ function revoke(sessionId: string): Promise<Response> {
 beforeAll(async () => {
 	mounted = await mountAuth("pluginrevocation", { keys: TOKEN_KEYS, plugins: [REVOKER, WATCHER] });
 	userId = await createUser(mounted.connection, mounted.schema);
+	await mounted.reseal(userId);
 });
 
 afterAll(async () => {

@@ -42,6 +42,7 @@ import { openTestConnection } from "./db-postgres-connection.js";
 import { decodingJsonb } from "./jsonb-decoding-driver.js";
 import {
 	aFreshEpochOtherThan,
+	authorisationOf,
 	raiseEpochOf as raiseEpochTo,
 	rebindSessionsOf,
 	SESSION_FIXTURE_KEYS,
@@ -111,7 +112,7 @@ async function sql(statement: string, parameters: unknown[] = []): Promise<void>
 async function issuedSession(userId: string): Promise<string> {
 	return (
 		await sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: await authorisationOf(migrated.connection, schema, userId),
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -553,7 +554,7 @@ describe("a row under an older key version (S-KEY-5)", () => {
 		const retired = servicesUnder(ring.providerAt(2, [2]));
 		const session = (
 			await before.sessions.issue({
-				authorisedBy: "read_under_lock",
+				authorisedBy: "unsealed",
 				userId: owner,
 				factors: ["password"],
 				observed: NO_REQUEST,
@@ -589,7 +590,7 @@ describe("a row under an older key version (S-KEY-5)", () => {
 		const retired = servicesUnder(ring.providerAt(2, [2]));
 		const session = (
 			await before.sessions.issue({
-				authorisedBy: "read_under_lock",
+				authorisedBy: "unsealed",
 				userId: owner,
 				factors: ["password"],
 				observed: NO_REQUEST,
@@ -641,7 +642,7 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 	it("refuses a session issued under an older epoch than the account's", async () => {
 		const userId = await sealedAccount();
 		const issued = await sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: await authorisationOf(migrated.connection, schema, userId),
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -656,7 +657,7 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 	it("refuses a row written back after every session was deleted and the epoch raised", async () => {
 		const userId = await sealedAccount();
 		const issued = await sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: await authorisationOf(migrated.connection, schema, userId),
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -669,7 +670,7 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 
 		expect(await sessions.resolve(issued.token)).toBeNull();
 		const fresh = await sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: await authorisationOf(migrated.connection, schema, userId),
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -681,7 +682,7 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 	it("binds an account without a seal row to epoch 1 and checks it against 1", async () => {
 		const userId = await createUser(migrated.connection, schema);
 		const issued = await sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: await authorisationOf(migrated.connection, schema, userId),
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -708,7 +709,7 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 		});
 		const unsealed = await createUser(migrated.connection, schema);
 		const issuedWhileMigrating = await sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId: unsealed,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -718,7 +719,7 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 
 		await expect(
 			required.issue({
-				authorisedBy: "read_under_lock",
+				authorisedBy: "unsealed",
 				userId: unsealed,
 				factors: ["password"],
 				observed: NO_REQUEST,
@@ -726,7 +727,7 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 		).rejects.toThrow(ConcealedError);
 		expect(await required.resolve(issuedWhileMigrating.token)).toBeNull();
 		const issued = await required.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: await authorisationOf(migrated.connection, schema, sealed),
 			userId: sealed,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -741,7 +742,7 @@ describe("the session epoch a session MAC binds (S-INTEG-9)", () => {
 		const rotated = servicesUnder(ring.providerAt(2, [1, 2]));
 		const userId = await sealedAccount();
 		const issued = await before.sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: await authorisationOf(migrated.connection, schema, userId),
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -788,7 +789,7 @@ describe("the session lists of an account (S-INTEG-9)", () => {
 	it("lists, shows to a plugin and announces only the rows the library wrote", async () => {
 		const userId = await createUser(migrated.connection, schema);
 		const own = await sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: await authorisationOf(migrated.connection, schema, userId),
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -1148,7 +1149,7 @@ describe("an owner id in another spelling of the same uuid (S-INTEG-9)", () => {
 		const userId = await createUser(migrated.connection, schema);
 
 		const issued = await sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId: spell(userId),
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -1550,6 +1551,7 @@ describe("the anchor's place on a consuming path: after the consumption, before 
 		});
 
 		await completion.complete({
+			authorisedBy: "unsealed",
 			pendingToken: token,
 			factor: "totp",
 			presentedSessionToken: null,

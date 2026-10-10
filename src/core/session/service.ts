@@ -4,7 +4,6 @@ import {
 	createSessionRepository,
 	type IssueAuthorisation,
 	type MissedIssue,
-	PreviousSessionMissingError,
 	type SealVerification,
 	type SecurityStateSealing,
 	type SessionInsert,
@@ -13,7 +12,7 @@ import {
 } from "../db/repositories/session.js";
 import { isRowIdentifier } from "../db/row-identifier.js";
 import type { AuthenticationFactor, Session } from "../http/caller.js";
-import { ConcealedError, VelveError } from "../http/error-map.js";
+import { VelveError } from "../http/error-map.js";
 import type { KeyProvider } from "../keys/provider.js";
 import {
 	bindToken,
@@ -99,6 +98,12 @@ export interface SessionServiceOptions {
 	readonly reportTokenBindingRefusal?: TokenBindingRefusalReport;
 	/** verifies the seal under the account lock after an issue wrote no row, so a legitimate change that won the race raises no alarm */
 	readonly sealVerifiesAfterMissedIssue?: SealVerification;
+	/** checks the seal a resolution's one statement read, before the session is used */
+	readonly checkSessionState?: (
+		userId: string,
+		document: string | null,
+		attempt: "first" | "second",
+	) => Promise<"usable" | "broken" | "read_again">;
 	readonly session?: Partial<SessionConfig>;
 	readonly sessionMetadata?: SessionMetadataMode;
 }
@@ -115,31 +120,18 @@ export interface SessionService {
 		readonly userId: string;
 		readonly factors: readonly AuthenticationFactor[];
 		readonly observed: ObservedRequest;
+		/** the row id drawn before the issue, for a change that seals a credential naming the new session */
+		readonly sessionId?: string;
 	}): Promise<IssuedSession>;
 	/** issues a session and removes the one the browser presented, whoever owns it, in one transaction */
 	issueReplacingPresented(input: {
 		readonly completes: SessionIssuePath;
 		/** what the check that authorised the issue read of the seal row */
 		readonly authorisedBy: IssueAuthorisation;
+		/** the row id drawn before the issue, for a change that seals a credential naming the new session */
+		readonly sessionId?: string;
 		readonly presentedToken: string | null;
 		readonly userId: string;
-		readonly factors: readonly AuthenticationFactor[];
-		readonly observed: ObservedRequest;
-	}): Promise<IssuedSession>;
-	reissue(input: {
-		readonly completes: SessionIssuePath;
-		/** what the check that authorised the issue read of the seal row */
-		readonly authorisedBy: IssueAuthorisation;
-		readonly previousToken: string;
-		readonly userId: string;
-		readonly factors: readonly AuthenticationFactor[];
-		readonly observed: ObservedRequest;
-	}): Promise<IssuedSession>;
-	reissueAfterCredentialChange(input: {
-		readonly completes: SessionIssuePath;
-		/** what the check that authorised the issue read of the seal row */
-		readonly authorisedBy: IssueAuthorisation;
-		readonly resolved: SessionResolution;
 		readonly factors: readonly AuthenticationFactor[];
 		readonly observed: ObservedRequest;
 	}): Promise<IssuedSession>;
@@ -163,6 +155,8 @@ export interface SessionService {
 	}): Promise<void>;
 	revokeEveryOther(input: {
 		readonly resolved: SessionResolution;
+		/** the epoch the mass revocation draws, which the kept session is bound under */
+		readonly keptUnderEpoch?: number;
 	}): Promise<{ revokedCount: number }>;
 	revokeEvery(input: { readonly resolved: SessionResolution }): Promise<{ revokedCount: number }>;
 	revokeEverySessionOfUser(input: { readonly actor: Actor }): Promise<{ revokedCount: number }>;
@@ -176,14 +170,6 @@ interface VerifiedSession {
 	readonly found: SessionWithOwner;
 	readonly stored: StoredTokenMac;
 	readonly rebound: StoredTokenMac | null;
-}
-
-//a session that vanished before its replacement is one the caller no longer has
-function replacedSessionFailure(cause: unknown): never {
-	if (cause instanceof PreviousSessionMissingError) {
-		throw new ConcealedError("session_not_found");
-	}
-	throw cause;
 }
 
 //the brand of a resolved session is asserted here and nowhere else (S-OWNER-7)
@@ -240,10 +226,24 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 	}
 
 	//a row the library did not write is answered as no row before anything in it is read (S-INTEG-9)
-	async function verifiedSession(token: string): Promise<VerifiedSession | null> {
+	async function verifiedSession(
+		token: string,
+		attempt: "first" | "second" = "first",
+	): Promise<VerifiedSession | null> {
 		const tokenHash = sessionTokenHash(token);
 		const candidate = await sessions.findSessionByTokenHash(tokenHash);
 		if (candidate === null || candidate.sessionEpoch === null) {
+			return null;
+		}
+		//the seal is checked from the same statement before the session row is used (S-INTEG-4)
+		const state =
+			options.checkSessionState === undefined
+				? "usable"
+				: await options.checkSessionState(candidate.userId, candidate.securityState, attempt);
+		if (state === "read_again") {
+			return verifiedSession(token, "second");
+		}
+		if (state === "broken") {
 			return null;
 		}
 		const binding = await librarySessionBinding(
@@ -325,10 +325,10 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 
 		boundTo: (driver) => createSessionService({ ...options, driver }),
 
-		async issue({ completes = "sign_up", authorisedBy, userId, factors, observed }) {
+		async issue({ completes = "sign_up", authorisedBy, userId, factors, observed, sessionId }) {
 			const issued = createSessionToken();
-			const session = await sessions.insertSession(
-				insertFor(
+			const session = await sessions.insertSession({
+				...insertFor(
 					userId,
 					factors,
 					observed,
@@ -336,7 +336,8 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 					MISSED_ISSUE_BY_PATH[completes],
 					authorisedBy,
 				),
-			);
+				...(sessionId === undefined ? {} : { sessionId }),
+			});
 			return { token: issued.token, session };
 		},
 
@@ -348,29 +349,13 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			userId,
 			factors,
 			observed,
+			sessionId,
 		}) {
 			const issued = createSessionToken();
 			const session = await sessions.replacePresentedSession({
 				presentedTokenHash: presentedToken === null ? null : sessionTokenHash(presentedToken),
-				insert: insertFor(
-					userId,
-					factors,
-					observed,
-					issued.tokenHash,
-					MISSED_ISSUE_BY_PATH[completes],
-					authorisedBy,
-				),
-			});
-			return { token: issued.token, session };
-		},
-
-		//every change of the trust level must end the old session and begin a new one (S-FIX-1)
-		async reissue({ completes, authorisedBy, previousToken, userId, factors, observed }) {
-			const issued = createSessionToken();
-			const session = await sessions
-				.replaceSession({
-					previousTokenHash: sessionTokenHash(previousToken),
-					insert: insertFor(
+				insert: {
+					...insertFor(
 						userId,
 						factors,
 						observed,
@@ -378,24 +363,8 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 						MISSED_ISSUE_BY_PATH[completes],
 						authorisedBy,
 					),
-				})
-				.catch(replacedSessionFailure);
-			return { token: issued.token, session };
-		},
-
-		//a credential change must end every other session and nothing turns that off (S-FIX-6)
-		async reissueAfterCredentialChange({ completes, authorisedBy, resolved, factors, observed }) {
-			const issued = createSessionToken();
-			const session = await sessions.replaceEverySessionOfUser({
-				actor: actorOfResolvedSession(resolved),
-				insert: insertFor(
-					resolved.userId,
-					factors,
-					observed,
-					issued.tokenHash,
-					MISSED_ISSUE_BY_PATH[completes],
-					authorisedBy,
-				),
+					...(sessionId === undefined ? {} : { sessionId }),
+				},
 			});
 			return { token: issued.token, session };
 		},
@@ -456,11 +425,12 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 			});
 		},
 
-		async revokeEveryOther({ resolved }) {
+		async revokeEveryOther({ resolved, keptUnderEpoch }) {
 			return {
 				revokedCount: await sessions.deleteEveryOtherSessionOwnedBy({
 					actor: actorOfFreshSession(resolved),
 					keptSessionId: resolved.session.id,
+					...(keptUnderEpoch === undefined ? {} : { keptUnderEpoch }),
 				}),
 			};
 		},

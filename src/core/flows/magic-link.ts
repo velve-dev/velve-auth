@@ -75,7 +75,7 @@ export async function redeemMagicLink(
 		if (resolved === A_DISABLED_ACCOUNT) {
 			return resolved;
 		}
-		await confirmAddress({
+		const confirmed = await confirmAddress({
 			transaction,
 			schema,
 			pluginRuntime: environment.services.pluginRuntime,
@@ -83,28 +83,36 @@ export async function redeemMagicLink(
 			actor: resolved.actor,
 			confirmingSession,
 			newEmail: null,
+			securityState: environment.services.securityState,
 		});
-		return resolved;
+		return { ...resolved, sealed: confirmed.sealed, secondFactors: confirmed.secondFactors };
 	});
 	if (account === A_DISABLED_ACCOUNT) {
 		refuseADisabledAccount();
 	}
 
 	//a link as the first factor must not skip the second factor (E-735)
-	const begun = await pending.begin({ userId: account.user.id, factorsCompleted: [] });
+	//the session and the pending row are bound to the seal the redemption wrote (S-INTEG-9)
+	const begun = await pending.begin({
+		userId: account.user.id,
+		factorsCompleted: [],
+		sessionEpoch: account.sealed.sessionEpoch,
+		offered: { factors: account.secondFactors, refusal: "broken_state_on_token_redemption" },
+	});
 	if (begun.pending.availableFactors.length > 0) {
 		context.cookies.setPending(begun.token);
 		return { status: "second_factor_required", pendingToken: begun.token, pending: begun.pending };
 	}
 
-	await pending.consume(begun.token);
+	//a pending row that names no factor is withdrawn and the issue alone answers a race (E-3404)
+	await pending.cancel({ token: begun.token });
 	const issued = await createSessionUnderHooks(
 		hooks,
 		{ userId: account.user.id, factors: [] },
 		() =>
 			sessions.issueReplacingPresented({
 				completes: "magic_link",
-				authorisedBy: "read_under_lock",
+				authorisedBy: account.sealed,
 				presentedToken: context.sessionToken,
 				userId: account.user.id,
 				factors: [],

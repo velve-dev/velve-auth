@@ -13,6 +13,7 @@ import type { KeyProvider } from "../src/core/keys/provider.js";
 import { testKeyProvider } from "./auth-fixtures.js";
 import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { testSecurityState } from "./security-state-fixtures.js";
 import { createVirtualAuthenticator, type VirtualAuthenticator } from "./webauthn-simulator.js";
 
 export const RELYING_PARTY_ID = "example.com";
@@ -39,7 +40,13 @@ export async function openWebAuthnFixture(
 ): Promise<WebAuthnFixture> {
 	const { connection, schema } = await openMigratedSchema(prefix);
 	const keys = testKeyProvider();
-	const options: WebAuthnServiceOptions = { driver: connection, schema, keys, webauthn: config };
+	const options: WebAuthnServiceOptions = {
+		driver: connection,
+		schema,
+		keys,
+		webauthn: config,
+		securityState: testSecurityState(connection, schema, keys),
+	};
 	const service = createWebAuthnService(options);
 	return {
 		connection,

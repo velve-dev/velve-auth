@@ -202,6 +202,9 @@ async function seedLocalAccount(mount: Mounted, matrixCase: MatrixCase): Promise
 		`INSERT INTO $schema.user (email, email_verified_at) VALUES ($1, ${verified}) RETURNING id`,
 		[addressFor(matrixCase)],
 	);
+	if (row !== undefined) {
+		await mount.auth.reseal(row.id);
+	}
 	return row?.id ?? null;
 }
 

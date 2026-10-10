@@ -29,7 +29,7 @@ afterAll(async () => {
 async function staleSessionRenewedBySql() {
 	const userId = await createUser(migrated.connection, migrated.schema);
 	const issued = await service.issue({
-		authorisedBy: "read_under_lock",
+		authorisedBy: "unsealed",
 		userId,
 		factors: ["password"],
 		observed: { ipAddress: null, userAgent: null },

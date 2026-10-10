@@ -19,7 +19,7 @@ import { MAXIMUM_STORED_MEMORY_KIB } from "../password/limits.js";
 import { type SealingMode, type SealRowPresence, unboundReadingOf } from "./security-state.js";
 
 /** every envelope of one account that the rewrite converts, each as its bytes and key version */
-interface AccountEnvelopes {
+export interface AccountEnvelopes {
 	/** `password_credential.phc` and its `key_version`, or null when the account has no row there */
 	readonly password: PurposeCiphertext | null;
 	/** `totp_credential.secret_enc` and its `key_version`, or null when the account has no row there */

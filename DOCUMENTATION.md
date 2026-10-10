@@ -9697,7 +9697,366 @@ the columns exist.
 
 ## Security state: the seal
 
-> Reserved for `security-state-seal`: the seal, its reseal on every change, its verification, the alarm and the anchor (S-INTEG-2 to S-INTEG-6). This chapter is the only region of this file that feature writes into (`CLAUDE.md` §5); the writer who fills it deletes this note.
+Every account has one row in `velve.security_state`: a version, a session epoch
+and a digest, the HMAC-SHA256 under `state-mac` over a canonical encoding of
+every way into the account (architecture section 3.18, point 4). This chapter
+documents the modules in `src/core/security-state/` that compute, check and
+write that row, the alarm a broken state raises, and the anchor an application
+can contribute. All of them are internal; the package exports only the types `SecurityStateAlarm` and `LimitsConfig`.
+
+### The canonical encoding
+
+`src/core/security-state/encoding.ts`. `encodeSecurityState(state)` returns the
+bytes the seal digest is taken over. `state` is a `SecurityState`:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `userId` | `string` | the account id, a uuid in either case |
+| `version` | `number` | the seal row's `version` |
+| `sessionEpoch` | `number` | the seal row's `session_epoch` |
+| `email` | `string \| null` | `user.email`, or `null` where the account has none |
+| `emailVerified` | `boolean` | whether `user.email_verified_at` is set |
+| `disabled` | `boolean` | whether `user.disabled_at` is set |
+| `password` | `{ phcSha256, keyVersion, setBySessionId } \| null` | the SHA-256 of `password_credential.phc`, its `key_version` and `set_by_session_id`, or `null` without a password |
+| `passwordResetRequired` | `boolean` | whether a row in `velve.password_reset_required` exists |
+| `totp` | `{ confirmed, secretSha256, keyVersion } \| null` | whether `confirmed_at` is set, the SHA-256 of `secret_enc` and its `key_version`, or `null` |
+| `passkeys` | `{ credentialId, publicKey }[]` | every row of `velve.webauthn_credential` |
+| `identities` | `{ provider, subject }[]` | every row of `velve.identity` |
+| `recoveryCodes` | `{ keyVersion, codeHmac }[]` | every row of `velve.recovery_code` |
+
+Every field is a type byte, a four-byte big-endian length and its bytes:
+`0x00` absent, `0x01` text in UTF-8, `0x02` bytes, `0x03` list (the length is the
+count, followed by the elements), `0x04` integer (eight bytes big-endian),
+`0x05` boolean (one byte), `0x06` uuid (sixteen bytes), `0x07` record (the
+length is the byte length of the fields inside). The encoding begins with the
+text `velve-auth/security-state/v1` and continues in the order of the table.
+A present password or TOTP secret is a record; each passkey, identity and
+recovery code is a record of its pair, and each list is sorted bytewise by
+those records, so the order rows arrive in does not matter. A version, epoch or
+key version that is not an exact integer, an id that is not a uuid, and a
+ciphertext hash that is not 32 bytes throw a `RangeError`. The encoding is
+frozen (E-3151).
+
+### `computeSeal(keys, state)` and `verifySeal(keys, state, stored)`
+
+`src/core/security-state/seal.ts`. `computeSeal` takes the HMAC-SHA256 of the
+encoding under the current `state-mac` key through `macUnderCurrentKey` and
+resolves `{ keyVersion, digest }`. `verifySeal` recomputes it under
+`stored.keyVersion` through `verifyMacUnderKeyVersion`, which compares in constant
+time, and resolves a `SealVerdict`:
+
+| Verdict | When |
+|---|---|
+| `"valid"` | the digest matches |
+| `"seal_mismatch"` | it does not |
+| `"key_version_unknown"` | the ring does not hold the stored version |
+| `"key_unusable"` | the ring answers it with a key that cannot take the MAC |
+
+The three failures carry the alarm reason of the same name. Measured on the
+development machine, a computation costs a median of 86 µs for an account with
+one passkey and 180 µs at the cap of 20 passkeys and 10 identities, and a
+verification 80 µs and 166 µs (E-3152).
+
+### The one read
+
+`src/core/security-state/read.ts`. `readSecurityState(driver, schema, userId)`
+runs `securityStateReadStatement(schema)`, one statement that returns the
+account's seal row and every component as one JSON document, and resolves a
+`SecurityStateRead`, or `null` for an account that does not exist or an id
+that is not a uuid. Under READ COMMITTED a single statement sees one consistent
+state, which several statements would not; the statement takes no lock.
+
+| Field | Meaning |
+|---|---|
+| `userId` | the account |
+| `seal` | `{ version, digest, keyVersion, sessionEpoch }`, or `null` without a seal row |
+| `email`, `emailVerified`, `disabled`, `passwordResetRequired` | as the encoding covers them |
+| `password` | `{ phc, keyVersion, scheme, setBySessionId }` with the full ciphertext, or `null` |
+| `totp` | `{ secretEnc, keyVersion, confirmed }` with the full ciphertext, or `null` |
+| `passkeys` | `{ id, credentialId, publicKey, signCount }` per row |
+| `identities` | `{ id, provider, subject, accessTokenEnc, refreshTokenEnc, idTokenEnc, tokenKeyVersion }` per row, the stored provider tokens for the envelope rewrite (E-3161) |
+| `recoveryCodes` | `{ keyVersion, codeHmac }` per row |
+
+What a sign-in, a factor check or a change evaluates — the passkey and its
+public key, the identity, the PHC, the TOTP ciphertext, the recovery code — is
+taken from this read or checked as a member of it (S-INTEG-4). A value the
+library never writes, such as an integer outside the exact range of a
+JavaScript number, makes the read throw rather than be guessed at. Measured on
+the development machine, the statement takes a median of 1.3 ms for an account
+with one passkey and 1.6 ms at the cap of 20 passkeys and 10 identities (E-3153).
+
+`sealedComponentsOf(read)` returns the components with each ciphertext
+replaced by its SHA-256 value, and `securityStateOf(read, seal)` the whole
+`SecurityState` a stored seal was taken over.
+
+#### `checkSecurityState(keys, read, sealing)`
+
+Resolves `{ verdict, read }`, the verdict being `"valid"`, `"seal_mismatch"`,
+`"key_version_unknown"` or `"key_unusable"` from `verifySeal` for an account
+with a seal row; without one it is `"unsealed"` when `sealing` is `"migrating"`
+and `"seal_missing"` when it is `"required"`. Every verdict but `"valid"` and
+`"unsealed"` is a broken state. The read handed back is the only one the path
+may evaluate.
+
+### Sealing a change
+
+`src/core/security-state/sealing.ts`. A legitimate change of an account's
+sign-in methods is a `SealingChange<T>`:
+
+| Member | Type | Meaning |
+|---|---|---|
+| `epoch` | `"keep" \| "raise" \| (read) => "keep" \| "raise"` | `"raise"` for a mass revocation, which draws a new session epoch; a function decides it on the verified read, as an address confirmation does that removes a password only sometimes |
+| `write(tx, read, next)` | `Promise<T>` | writes the change over the locked transaction; that transaction refuses a second read of the state. `next` is the `SealTarget` — `{ version, sessionEpoch }` — the new seal will carry, so a kept session can be rebound under the new epoch |
+| `after(read, written)` | `SealedComponents` | the components after the change, from the verified read and what `write` returned |
+| `afterSeal(tx, sealed, written)` | `Promise<void>`, optional | runs in the same transaction once the new seal row is written; a change that signs the caller in issues its session here, under the version and epoch it just sealed |
+
+#### `sealAccount(services, userId, change)`
+
+Asks the anchors about the account, opens a transaction through
+`runSealingTransaction` and runs `sealUnderAccountLock` in it, then hands the new
+seal to the anchors after commit without awaiting them. Resolves
+`{ kind: "sealed", sealed }` or `{ kind: "refused", reason }`; every refusal that
+is a broken state raises the alarm with the occasion `change`, and a failing
+`recordSeal` raises `anchor_unavailable`. `services` holds `driver`, `schema`,
+`keys`, `sealing`, `anchors`, `alarms` and, for mode `"migrating"`,
+`convertUnsealed`.
+
+#### `sealUnderAccountLock(tx, userId, context, anchorReading, change)`
+
+The order of section 3.18 *Sealing* on an open transaction: `lockAccountRow`, one
+`readSecurityState`, `checkSecurityState`, the comparison with the anchors,
+`context.convertUnsealed` for an account without a seal row, `change.write`,
+`change.after`, `computeSeal`, the seal row written and `change.afterSeal`. A
+change that keeps the epoch and leaves every component as the read held it writes
+no seal row and hands `change.afterSeal` the version and epoch it verified
+(E-3402), unless the seal names an older `state-mac` key version than the ring's
+current one, which it renews (E-3408). With `context.leaveUnsealed` an account without a seal row gets
+`change.write` and no seal row. A path that learns its account by consuming a row calls it itself after
+the consumption and after `consultAnchors`, inside `runSealingTransaction`. It
+resolves `SealWritten`: `userId`, `version`, `sessionEpoch`, `keyVersion`,
+`digest`, `firstSeal`, `leftUnsealed`, the `read` the seal was computed from, and
+what `write` returned. It throws
+`SealingRefusedError` with a `reason`:
+
+| Reason | When |
+|---|---|
+| `"seal_missing"`, `"seal_mismatch"`, `"key_version_unknown"`, `"key_unusable"` | the check found a broken state |
+| `"version_below_anchor"`, `"anchor_mismatch"`, `"anchor_unavailable"` | the anchors' floor refuses the read |
+| `"seal_mismatch"` | also: the seal row was rewritten after the read, so the compare-and-set missed |
+| `"version_exhausted"` | the stored version is `Number.MAX_SAFE_INTEGER` |
+| `"account_missing"` | the account does not exist |
+
+The new version is the read's plus one, or 1 for a first seal; the epoch is the
+read's, 1 for a first seal, unless the change raises it. A change that reads the
+state again through the transaction it was handed fails with
+`SecondStateReadError`, and `test/security-state-one-read-guard.test.ts` scans the
+tree for a second read under the lock (E-3157).
+
+#### `runSealingTransaction(driver, work)`
+
+Runs `work` in a READ COMMITTED transaction of the library. A first seal whose
+insert meets a unique violation — a seal row inserted past the library — runs
+the whole transaction again, consumption included; after the third attempt it
+throws `SealingRefusedError` with `"seal_mismatch"`. Every other failure passes
+through unchanged.
+
+#### `sealCreatedAccount(tx, userId, { schema, keys })`
+
+The first seal of an account the same transaction created, at sign-up or
+import: one read and the insert of version 1 at epoch 1, without the lock,
+since no other transaction can hold the new row.
+
+#### `drawSessionEpochOtherThan(current)`
+
+A session epoch drawn uniformly from 1 to 9007199254740991 through the library's
+one source of randomness, never equal to `current`.
+
+### On the request path
+
+`src/core/security-state/runtime.ts` connects the modules above to the services.
+The instance builds one `SecurityStateRuntime` from the configuration —
+`driver`, `schema`, `keys`, `sealing`, `limits`, the anchor ports, the alarms
+and `reportTokenBindingRefusal`, where the token and envelope checks report a
+refused row; a refusal while listing sessions is raised with the occasion
+`session_resolve` (E-3381).
+
+| Function | What it does |
+|---|---|
+| `sealChange(runtime, account, change, { driver?, occasion?, refusal?, accountMissing? })` | asks the anchors, runs `sealUnderAccountLock` in a new sealing transaction or on `driver` when a path has already consumed its row there, hands an unsealed account in mode `"migrating"` to the bound-envelope rewrite, and after commit records the seal with the anchors. A broken state raises the alarm with `occasion` (`"change"` by default) and throws a `ConcealedError` with `refusal`, the ordinary failure of the path that changes; an account that does not exist throws what `accountMissing` returns, where the path gives one |
+| `issueAuthorisationOf(sealed)` | the `{ version, sessionEpoch }` a session issued after a change is bound to, or `"unsealed"` when the change left the account unsealed |
+| `secondFactorsOf(read)` | the second factors a verified read holds — a confirmed TOTP secret, any passkey, any recovery code — which a sign-in offers; `pending.begin` takes them as `offered` and refuses the sign-in with the path's ordinary failure when its insert no longer finds one (E-3406) |
+| `reportEnvelopeRefusal(runtime, userId, occasion, failure)` | raises `envelope_binding_mismatch` for a `KeyError` that says an envelope does not belong where it was found; the password check, the TOTP check and enrolment, the PKCE verifier and every envelope rewrite call it (E-3407) |
+| `envelopesOf(read)`, `readWithEnvelopes(read, envelopes)` | the read's stored envelopes in the shape the envelope rewrite takes, and the read with the rewrite's ciphertexts put back (E-3409) |
+| `checkAccount(runtime, userId, occasion, { driver? })` | asks the anchors, reads once and checks; resolves `{ kind: "usable", read, authorisedBy }`, `{ kind: "broken" }` after raising the alarm, or `{ kind: "missing" }`. A verified seal ahead of an anchor is recorded again, off the response path |
+| `checkAccountOrStandIn(runtime, userId, identifier)` | the password sign-in's check; for an unknown account it asks the anchors about a stand-in id derived from the identifier under `token-pepper`, runs the read and verifies a stand-in state, and answers `missing` |
+| `sessionStateCheckOf(runtime)` | the check a session resolution runs over the state document its one statement returned: `"usable"`, `"broken"`, or `"read_again"` once when the read lies below an anchor |
+| `sealVerifiesUnderLock(runtime)` | the verify-on-miss of a session issue whose conditional insert wrote nothing |
+
+`account` is a `ChangedAccount`: the `Actor` the path holds — from a resolved
+session, a redeemed one-time token or a consumed OAuth flow — or
+`{ unproven: userId }` for a path that holds no proof before the lock:
+`user.disable` and `user.enable`, the background rehash, the recovery code as a
+second factor, the reset with a recovery code and the automatic link of an OAuth
+sign-in. The bound-envelope rewrite needs a proof, so in mode `"migrating"` a
+change without one writes to an account without a seal row and leaves it
+unsealed, and `SealWritten.leftUnsealed` is `true`; in mode `"required"` such an
+account is a broken state anyway (E-3162).
+
+`checkAccount` and `sealChange` take an `anchorReading` a path asked for before it
+took the account lock itself, as the OAuth sign-in does (E-3405).
+
+`authorisedBy` is the `{ version, sessionEpoch }` the check read, or
+`"unsealed"`; no issue stands on a read its own lock takes (E-3403). Every session a sign-in, a factor check, a redemption or a link
+issues is inserted only while the seal row still holds that version and epoch;
+a miss is verified under the account lock and answered as the path's ordinary
+failure (E-3377). A pending authentication carries the epoch its first factor's
+check read, so a mass revocation between the two factors leaves it unable to
+complete.
+
+Every change section 3.18 *Sealing* lists is a `SealingChange`: the password
+set, change, reset, reset with a recovery code and background rehash; the
+address confirmation, whose first confirmation removes a password another
+person set and then raises the epoch (S-LINK-4); TOTP `enroll.start`, its
+confirmation and removal; passkey registration and removal; recovery-code
+generation and redemption; the OAuth link, the automatic link and unlink;
+`user.disable` and `user.enable`; and `session.revokeAll` and
+`session.revokeAllOther`, which raise the epoch and rebind the kept session
+under it. Sign-up seals the new account with `sealCreatedAccount` in the
+transaction that creates it.
+
+A broken state answers as each path's ordinary failure. The internal reasons
+`src/core/http/error-map.ts` maps are:
+
+| Reason | Answered as |
+|---|---|
+| `broken_state_on_password_sign_in` | `invalid_credentials` |
+| `broken_state_on_passkey_sign_in` | `webauthn_credential_rejected` |
+| `broken_state_on_oauth_sign_in` | `oauth_flow_invalid` |
+| `broken_state_on_token_redemption` | `invalid_token` |
+| `broken_state_on_totp_second_factor` | `invalid_factor_code` |
+| `broken_state_on_passkey_second_factor` | `webauthn_credential_rejected` |
+| `broken_state_on_recovery_second_factor` | `invalid_recovery_code` |
+| `broken_state_on_session_resolve` | `session_required` |
+| `broken_state_on_change` | `session_required` |
+
+#### Configuration
+
+| Option | Type | Default | Meaning |
+|---|---|---|---|
+| `securityState.alarm` | `(event: SecurityStateAlarm) => void` | none | receives every alarm the alarm module delivers; `SecurityStateAlarm` is exported as a type |
+| `limits.passkeysPerAccount` | `number` | `20` | the most passkeys one account may hold |
+| `limits.identitiesPerAccount` | `number` | `10` | the most identities one account may hold |
+
+`LimitsConfig` is exported as a type. A limit that is not a safe integer of at
+least 1 refuses the start with `limits_unusable`, and a limit raised above its
+default is reported at start as a weakening of the `limits` row of
+`SECURITY_OPTIONS`, since every check reads and seals every passkey and identity. A registration past the
+passkey limit answers `409 passkey_limit_reached`, and a link past the identity
+limit `409 identity_limit_reached`.
+
+### The limits
+
+`src/core/security-state/limits.ts`. Every check reads and encodes every passkey
+and identity of an account, so an account holds at most a configured number of
+each (S-INTEG-10).
+
+| Field of `LimitsConfig` | Default | Meaning |
+|---|---|---|
+| `passkeysPerAccount` | `20` | the most passkeys one account may hold |
+| `identitiesPerAccount` | `10` | the most identities one account may hold |
+
+`resolveLimits(configured)` fills in the defaults and returns `null` when a
+limit is not an integer of at least 1. `assertBelowCredentialLimit(read,
+credential, limits)` throws a `VelveError` with the code
+`passkey_limit_reached` or `identity_limit_reached` when the verified read already
+holds as many as the limit; a registration or a link calls it first in its
+sealing change's `write`, so the count is the one the account lock protects and
+the error rolls the change back (E-3158).
+
+### The alarm
+
+`src/core/security-state/alarm.ts`. `createSecurityStateAlarms({ callback, log, clock })`
+returns `{ raise(alarm) }`, where every path reports a broken state:
+
+| Field of `alarm` | Type | Meaning |
+|---|---|---|
+| `userId` | `string \| null` | the account, or `null` for a row without an owner |
+| `occasion` | `"sign_in" \| "factor_check" \| "session_resolve" \| "token_redemption" \| "change" \| "maintenance"` | the path that met the broken state |
+| `reason` | `"seal_missing" \| "seal_mismatch" \| "key_version_unknown" \| "version_below_anchor" \| "anchor_unavailable" \| "anchor_mismatch" \| "token_binding_mismatch" \| "envelope_binding_mismatch" \| "key_unusable"` | why |
+
+`raise` returns nothing and never throws; it decides at once and delivers
+later. The callback, `securityState.alarm` of the configuration, receives a
+frozen `SecurityStateAlarm` — the three fields and `suppressed` — and the log
+receives a `warn` line `security state alarm` with the same four fields. Both
+start in a `setTimeout` of zero, after the refusal has returned; a callback
+that throws or rejects, and a log that throws, are caught and logged at `error`
+with the occasion and the reason only.
+
+| Rule | Value |
+|---|---|
+| deduplication key | account, occasion and reason; for `userId: null` occasion and reason |
+| deduplication window | 60 seconds by `clock` |
+| delivered alarms per process | at most 100 in any 60 seconds, the aggregate not counted |
+| keys held | 10,000, the oldest delivery evicted first |
+
+One counter takes every alarm that is held back, by its key or by the bound,
+and the next delivered alarm carries its value in `suppressed` and resets it.
+When an alarm is held back by its key and 60 seconds have passed since the
+last aggregate, or since the alarm module was created, an aggregate
+`{ userId: null, occasion: "aggregate", reason: "suppressed", suppressed }`
+goes out in its place. There is no timer: a count with no later alarm waits,
+and a restart loses it (E-3155).
+
+### The anchor port
+
+`src/core/security-state/anchor.ts`. The request path calls an anchor through
+`SecurityStateAnchorPort`, a plugin's `securityStateAnchor` member
+([Plugins](#plugins)) with its frozen context already bound. It takes one port
+per plugin that contributes an anchor.
+
+| Member | Type | Meaning |
+|---|---|---|
+| `minimumVersion({ userId })` | `Promise<SecurityStateFloor \| null>` | the highest version the anchor recorded for the account with that version's digest in base64url, or `null` for no floor |
+| `recordSeal(event)` | `Promise<void>` | learns `{ userId, version, digest }` after a new seal has been committed |
+
+#### `decodeAnchorFloor(answer)`
+
+Reads one answer of `minimumVersion`. Returns `null` for `null`, the floor with
+its digest decoded for an object whose `version` is a safe integer from 1 and
+whose `digest` is base64url of 32 bytes, and `"malformed"` for anything else —
+`undefined`, `NaN`, `1.5`, `0`, `-1`, `2 ** 53`, a digest of another length. A
+malformed answer is never read as no floor.
+
+#### `consultAnchors(anchors, userId)`
+
+Asks every port about one account and resolves `{ kind: "answered", floors }`,
+one floor or `null` per port, or `{ kind: "unavailable" }` as soon as one port
+throws, rejects or answers something `decodeAnchorFloor` calls malformed. It
+never rejects. The request path calls it before the account lock and outside
+any transaction, except on a path that learns its account by consuming a row,
+which calls it after the consumption and before the lock.
+
+#### `compareWithAnchors(stored, reading)`
+
+Holds the stored version and digest of a seal, or `null` for an account
+without a seal row, against a reading:
+
+| Verdict | When |
+|---|---|
+| `"anchor_unavailable"` | the reading is unavailable |
+| `"version_below_anchor"` | the stored version lies below a floor, or there is no seal row and a port has a floor |
+| `"anchor_mismatch"` | the stored version equals a floor and the digests differ, compared in constant time |
+| `"ahead_of_anchor"` | the stored version lies above a floor, or a port answered `null` for a sealed account |
+| `"within_floor"` | none of these, also when no anchor is configured |
+
+`"ahead_of_anchor"` is not a broken state: a check whose seal verified records
+it again with the anchors, off the response path.
+
+#### `recordSealWithAnchors(anchors, event, reportFailure)`
+
+Hands every port the event after commit. If any port throws or rejects it calls
+`reportFailure` once, which raises the alarm `anchor_unavailable`; it never
+rejects, and a failure never undoes the committed change.
 
 ## Security state: administration and migration
 

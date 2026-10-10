@@ -6,10 +6,11 @@ import type { Driver } from "../src/core/db/driver.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import { toWebHandler } from "../src/core/http/web-handler.js";
 import { createVelveAuth } from "../src/index.js";
-import { configFor, TEST_ORIGIN } from "./auth-fixtures.js";
+import { configFor, TEST_ORIGIN, testKeyProvider } from "./auth-fixtures.js";
 import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import { normalisedAnswer, postTo } from "./flows-fixtures.js";
+import { resealDirectly } from "./security-state-fixtures.js";
 
 const PASSWORD = "correct-horse-battery-staple";
 const WRONG_PASSWORD = "a-different-password-entirely";
@@ -22,6 +23,7 @@ interface Attempt {
 	readonly answer: Response;
 }
 
+const KEYS = testKeyProvider();
 let connection: TestConnection;
 let schema: string;
 let handler: (request: Request) => Promise<Response>;
@@ -44,6 +46,7 @@ beforeAll(async () => {
 		configFor({
 			database: driver,
 			schema,
+			keys: KEYS,
 			rateLimit: {
 				perIpAddress: { capacity: 100_000, refillPerSecond: 100_000 },
 				perAccount: { capacity: 100_000, refillPerSecond: 100_000 },
@@ -72,6 +75,7 @@ async function markTheAddressVerified(): Promise<void> {
 	await connection.query(`UPDATE ${schema}.user SET email_verified_at = now() WHERE id = $1`, [
 		userId,
 	]);
+	await resealDirectly(connection, schema, KEYS, userId);
 }
 
 async function storedVerificationState(): Promise<Date | null> {

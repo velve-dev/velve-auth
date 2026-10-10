@@ -18,13 +18,15 @@ import type { KdfSemaphore } from "../password/semaphore.js";
 import type { RevokeReason } from "../plugin/config.js";
 import type { PluginRuntime } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
+import { sealedComponentsOf } from "../security-state/read.js";
+import { type SecurityStateRuntime, sealChange } from "../security-state/runtime.js";
 import type { SessionResolution, SessionService } from "../session/service.js";
+import type { TokenBindingRefusalReport } from "../token/binding.js";
 import type { OneTimeTokens } from "../token/one-time-token.js";
 import type {
 	EmailConfig,
 	RateLimitConfig,
 	RecoveryCodesConfig,
-	SecurityStateConfig,
 	TotpConfig,
 	WebAuthnConfig,
 } from "./config.js";
@@ -50,8 +52,10 @@ export interface RouteServices {
 	readonly driver: import("../db/driver.js").Driver;
 	readonly schema: string;
 	readonly keys: KeyProvider;
-	/** the security-state options with the sealing mode resolved */
-	readonly securityState: SecurityStateConfig;
+	/** the sealing mode, the alarm, the anchors and the limits every check and change of the seal uses */
+	readonly securityState: SecurityStateRuntime;
+	/** where a refused token row is reported, which raises the security-state alarm */
+	readonly reportTokenBindingRefusal: TokenBindingRefusalReport;
 	readonly clock: Clock;
 	readonly oneTimeTokens: OneTimeTokens;
 	/** the one bound on concurrent key derivation every route source in the process shares */
@@ -70,6 +74,20 @@ export interface RouteServices {
 	readonly pluginRuntime: PluginRuntime;
 	/** the fetch used for outbound provider calls, `globalThis.fetch` when absent */
 	readonly fetch?: typeof globalThis.fetch;
+}
+
+//a mass revocation draws a new session epoch and reseals in the transaction that deletes the rows (S-INTEG-3)
+async function revokedUnderANewEpoch(
+	services: RouteServices,
+	resolved: SessionResolution,
+	revoke: (sessions: SessionService, keptUnderEpoch: number) => Promise<{ revokedCount: number }>,
+): Promise<{ revokedCount: number }> {
+	const sealed = await sealChange(services.securityState, actorOfResolvedSession(resolved), {
+		epoch: "raise",
+		write: (tx, _read, next) => revoke(services.sessions.boundTo(tx), next.sessionEpoch),
+		after: (read) => sealedComponentsOf(read),
+	});
+	return sealed.written;
 }
 
 export function addressOnly(services: RouteServices): RateLimitRule {
@@ -262,7 +280,9 @@ export function sessionRoutes(services: RouteServices) {
 				(sessionId) => sessionId !== resolved.session.id,
 				"revoked_by_user",
 			);
-			return services.sessions.revokeEveryOther({ resolved });
+			return revokedUnderANewEpoch(services, resolved, (sessions, keptUnderEpoch) =>
+				sessions.revokeEveryOther({ resolved, keptUnderEpoch }),
+			);
 		},
 	});
 
@@ -285,7 +305,9 @@ export function sessionRoutes(services: RouteServices) {
 		handler: async (_input, context): Promise<{ revokedCount: number }> => {
 			const resolved = requireSession(services, context.session);
 			await announceRevocationOf(services, resolved, () => true, "revoked_by_user");
-			return services.sessions.revokeEvery({ resolved });
+			return revokedUnderANewEpoch(services, resolved, (sessions) =>
+				sessions.revokeEvery({ resolved }),
+			);
 		},
 	});
 

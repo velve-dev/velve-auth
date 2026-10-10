@@ -9,6 +9,7 @@ import { configFor, requestTo } from "./auth-fixtures.js";
 import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import { rebindAfterOneRead } from "./envelope-read-fixtures.js";
+import { resealDirectly } from "./security-state-fixtures.js";
 import { testKeyRing } from "./totp-fixtures.js";
 
 const PASSWORD = "a password long enough for the policy 7c1e";
@@ -87,12 +88,9 @@ async function unboundPhcOf(userId: string): Promise<Uint8Array<ArrayBuffer>> {
 	return (await encryptWithPurposeKey(keys, "password-enc", plain)).ciphertext;
 }
 
+//a sign-up seals the account and the seal is renewed over the changed envelope (E-3165)
 async function sealRowFor(userId: string) {
-	await connection.query(
-		`INSERT INTO ${schema}.security_state (user_id, version, digest, key_version)
-		 VALUES ($1, 1, $2, 1)`,
-		[userId, new Uint8Array(32)],
-	);
+	await resealDirectly(connection, schema, keys, userId);
 }
 
 //a sealed account, a malformed value and the start check all refuse the old form (S-INTEG-1)

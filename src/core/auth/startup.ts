@@ -5,6 +5,7 @@ import { isStorableKeyVersion } from "../keys/key-version.js";
 import { isKeyShaped, keyTakesMac, sameKeyFingerprintOf } from "../keys/mac.js";
 import { type IntegrityKeyPurpose, isIntegrityPurpose } from "../keys/purpose.js";
 import { type GenericProviderConfig, KNOWN_PROVIDERS } from "../oauth/config.js";
+import { resolveLimits } from "../security-state/limits.js";
 import type { BaseConfig } from "./config.js";
 import { isStartableSecurityState } from "./security-state.js";
 
@@ -35,7 +36,8 @@ type StartupErrorCode =
 	| "plugin_database_reaches_the_core"
 	| "route_namespace_conflict"
 	| "route_name_segment_reserved"
-	| "security_state_sealing_unknown";
+	| "security_state_sealing_unknown"
+	| "limits_unusable";
 
 const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> = {
 	keys_missing: "keys is required: every purpose key is derived from a root key of 32 bytes",
@@ -88,6 +90,8 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		"a route name has a segment every object already carries — __proto__, constructor or prototype — and the object path it folds into is not the library's to give away",
 	security_state_sealing_unknown:
 		'securityState.sealing must be "required" or "migrating"; any other value leaves unsaid whether an account must carry a seal',
+	limits_unusable:
+		"limits.passkeysPerAccount and limits.identitiesPerAccount must each be a whole number of at least 1, since every check of the seal reads and encodes them all",
 };
 
 /** the two contributors a route conflict names in its start error */
@@ -246,6 +250,17 @@ export function assertConfigurationIsStartable<M extends IdentityMode>(
 	assertEveryConfiguredBucketIsUsable(config.rateLimit);
 	assertPluginSqlHasOneDestination(config);
 	assertSealingModeIsKnown(config.securityState);
+	assertLimitsAreUsable(config.limits);
+}
+
+//a limit that is no count of at least one would refuse every registration or none (S-INTEG-10)
+function assertLimitsAreUsable(limits: unknown): void {
+	if (
+		limits !== undefined &&
+		(typeof limits !== "object" || limits === null || resolveLimits(limits) === null)
+	) {
+		throw new VelveStartupError("limits_unusable");
+	}
 }
 
 //an operator must learn which stored version made the start refuse (E-3289)

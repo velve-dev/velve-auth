@@ -5,6 +5,7 @@ import { createPasswordCredentialRepository } from "../src/core/password/credent
 import { createTestClock } from "../src/testing/index.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { testSecurityState } from "./security-state-fixtures.js";
 import { pendingAuthenticationsOn, secretBytesOfBase32, testKeyProvider } from "./totp-fixtures.js";
 
 //a reader built without a sealing mode reads no old envelope (S-INTEG-1)
@@ -26,15 +27,16 @@ afterAll(async () => {
 	await connection.close();
 });
 
+//the service reads its sealing mode from the security state it is given, "required" unless one is named (E-3165)
 function totpServiceWith(sealing?: "migrating" | "required") {
 	return createTotpService({
+		securityState: testSecurityState(connection, schema, keys, { sealing: sealing ?? "required" }),
 		driver: connection,
 		schema,
 		keys,
 		pending: pendingAuthenticationsOn(connection, schema),
 		issuer: "Velve",
 		clock: createTestClock(NOW),
-		...(sealing === undefined ? {} : { sealing }),
 	});
 }
 
@@ -44,7 +46,7 @@ async function accountWithAnUnboundConfirmedTotp(): Promise<{
 }> {
 	const userId = await createUser(connection, schema);
 	const actor = actorOfTestUser(userId);
-	const service = totpServiceWith();
+	const service = totpServiceWith("migrating");
 	const enrollment = await service.enroll.start({ actor, accountName: "a@example.com" });
 	const secret = secretBytesOfBase32(enrollment.secretBase32);
 	const code = totpCodeForStep(secret, timeStepAt(NOW));
@@ -54,6 +56,8 @@ async function accountWithAnUnboundConfirmedTotp(): Promise<{
 		`UPDATE ${schema}.totp_credential SET secret_enc = $2, key_version = $3 WHERE user_id = $1`,
 		[userId, unbound.ciphertext, unbound.keyVersion],
 	);
+	//the enrolment sealed the account and an account from before the seal has no seal row (E-3165)
+	await connection.query(`DELETE FROM ${schema}.security_state WHERE user_id = $1`, [userId]);
 	return { userId, code: totpCodeForStep(secret, timeStepAt(NOW) + 1) };
 }
 
@@ -88,7 +92,7 @@ describe("a reader built without a sealing mode refuses the old form (S-INTEG-1)
 		const refused = await accountWithAnUnboundConfirmedTotp();
 		await expect(
 			totpServiceWith().remove({ actor: actorOfTestUser(refused.userId), code: refused.code }),
-		).rejects.toMatchObject({ reason: "totp_not_confirmed" });
+		).rejects.toMatchObject({ reason: "broken_state_on_change" });
 		const [kept] = await connection.query(
 			`SELECT 1 FROM ${schema}.totp_credential WHERE user_id = $1`,
 			[refused.userId],

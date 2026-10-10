@@ -31,7 +31,12 @@ import {
 } from "../src/core/password/verify.js";
 import { actorOfTestUser } from "./db-fixtures.js";
 import { generateRootKey } from "./keys-fixtures.js";
-import { drawTestPassword, type StoredHashes, storedHashesFor } from "./password-fixtures.js";
+import {
+	drawTestPassword,
+	rehashSwapped,
+	type StoredHashes,
+	storedHashesFor,
+} from "./password-fixtures.js";
 
 const USER_ID = "11111111-2222-3333-4444-555555555555";
 const PASSWORD = drawTestPassword();
@@ -406,7 +411,7 @@ describe("needsRehash and the silent rehash", () => {
 		if (check.outcome !== "verified" || check.rehash === undefined) {
 			throw new Error("an imported bcrypt credential must ask to be rehashed");
 		}
-		expect(await check.rehash()).toBe(true);
+		expect(await rehashSwapped(environment.credentials, USER_ID, check.rehash)).toBe(true);
 
 		const after = recorder.rows.get(USER_ID) as PasswordCredentialRow;
 		expect(after.scheme).toBe("argon2id");
@@ -441,7 +446,7 @@ describe("needsRehash and the silent rehash", () => {
 		);
 		const chosen = recorder.rows.get(USER_ID);
 
-		expect(await check.rehash()).toBe(false);
+		expect(await rehashSwapped(environment.credentials, USER_ID, check.rehash)).toBe(false);
 		expect(recorder.rows.get(USER_ID)).toBe(chosen);
 		expect(
 			await checkPassword({ userId: USER_ID, plaintext: WRONG_PASSWORD }, environment),

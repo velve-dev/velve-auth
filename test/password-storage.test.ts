@@ -19,7 +19,12 @@ import {
 	openMigratedSchema,
 } from "./db-fixtures.js";
 import { generateRootKey } from "./keys-fixtures.js";
-import { drawTestPassword, type StoredHashes, storedHashesFor } from "./password-fixtures.js";
+import {
+	drawTestPassword,
+	rehashSwapped,
+	type StoredHashes,
+	storedHashesFor,
+} from "./password-fixtures.js";
 
 const PASSWORD = drawTestPassword();
 const WRONG_PASSWORD = drawTestPassword();
@@ -273,7 +278,7 @@ describe("3.3 step 6 — the silent rehash is a compare and swap (S-RACE-6)", ()
 		}
 		expect((await readRaw(userId)).scheme).toBe("bcrypt");
 
-		expect(await right.rehash()).toBe(true);
+		expect(await rehashSwapped(credentials, userId, right.rehash)).toBe(true);
 		const after = await readRaw(userId);
 		expect(after.scheme).toBe("argon2id");
 		expect(
@@ -286,7 +291,7 @@ describe("3.3 step 6 — the silent rehash is a compare and swap (S-RACE-6)", ()
 			}),
 		).toMatch(/^\$argon2id\$v=19\$m=19456,t=2,p=1\$/);
 
-		expect(await right.rehash()).toBe(false);
+		expect(await rehashSwapped(credentials, userId, right.rehash)).toBe(false);
 	}, 180_000);
 
 	it("loses to a password the user changed while it was running", async () => {
@@ -318,7 +323,7 @@ describe("3.3 step 6 — the silent rehash is a compare and swap (S-RACE-6)", ()
 		);
 		const chosen = await readRaw(userId);
 
-		expect(await check.rehash()).toBe(false);
+		expect(await rehashSwapped(credentials, userId, check.rehash)).toBe(false);
 		expect(Buffer.from((await readRaw(userId)).phc)).toEqual(Buffer.from(chosen.phc));
 		expect((await checkPassword({ userId, plaintext: WRONG_PASSWORD }, environment)).outcome).toBe(
 			"verified",

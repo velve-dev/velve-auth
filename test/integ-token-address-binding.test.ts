@@ -66,11 +66,14 @@ async function addressMovedDuring<T>(userId: string, moved: string, request: () 
 		userId,
 		moved,
 	]);
+	//with the seal following the move only the token's own address binding is left to refuse the link (E-3165)
+	await mounted.reseal(userId);
 	const answer = await request();
 	await mounted.connection.query(`UPDATE ${mounted.schema}.user SET email = $2 WHERE id = $1`, [
 		userId,
 		before?.email,
 	]);
+	await mounted.reseal(userId);
 	return answer;
 }
 

@@ -117,51 +117,19 @@ afterAll(async () => {
 describe("E-23, S-FIX-1: a re-issue is an INSERT and a DELETE in one transaction", () => {
 	it("runs one transaction holding one DELETE and one INSERT, and no UPDATE", async () => {
 		const previous = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
 		});
 		traced.reset();
 
-		await service.reissue({
-			authorisedBy: "read_under_lock",
+		await service.issueReplacingPresented({
+			authorisedBy: "unsealed",
 			completes: "totp_second_factor",
-			previousToken: previous.token,
+			presentedToken: previous.token,
 			userId,
 			factors: ["password", "totp"],
-			observed: NOWHERE,
-		});
-
-		//the account lock comes first and the select before the insert reads the epoch (S-INTEG-9, E-3141)
-		expect(traced.log).toEqual([
-			"BEGIN",
-			"tx SELECT",
-			"tx DELETE",
-			"tx SELECT",
-			"tx INSERT",
-			"COMMIT",
-		]);
-	});
-
-	it("does the same when every other session goes with it", async () => {
-		const here = await service.issue({
-			authorisedBy: "read_under_lock",
-			userId,
-			factors: ["password"],
-			observed: NOWHERE,
-		});
-		const resolved = await service.resolve(here.token);
-		if (resolved === null) {
-			throw new Error("the session under test did not resolve");
-		}
-		traced.reset();
-
-		await service.reissueAfterCredentialChange({
-			authorisedBy: "read_under_lock",
-			completes: "password_change",
-			resolved,
-			factors: ["password"],
 			observed: NOWHERE,
 		});
 
@@ -182,8 +150,8 @@ describe("E-23, S-FIX-1: a re-issue is an INSERT and a DELETE in one transaction
 		traced.reset();
 
 		await expect(
-			sessions.replaceSession({
-				previousTokenHash: previous.tokenHash,
+			sessions.replacePresentedSession({
+				presentedTokenHash: previous.tokenHash,
 				insert: sessionInsertFor(randomUUID()),
 			}),
 		).rejects.toBeDefined();
@@ -194,12 +162,15 @@ describe("E-23, S-FIX-1: a re-issue is an INSERT and a DELETE in one transaction
 
 	it("refuses a replacement whose owner differs, and keeps the row it was about to remove", async () => {
 		const previous = createSessionToken();
-		await sessions.insertSession(sessionInsertFor(userId, { tokenHash: previous.tokenHash }));
+		const named = await sessions.insertSession(
+			sessionInsertFor(userId, { tokenHash: previous.tokenHash }),
+		);
 		const before = await liveSessionsOf(strangerId);
 
 		await expect(
-			sessions.replaceSession({
-				previousTokenHash: previous.tokenHash,
+			sessions.replaceSessionOwnedBy({
+				actor: owner,
+				previousSessionId: named.id,
 				insert: sessionInsertFor(strangerId),
 			}),
 		).rejects.toBeInstanceOf(SessionOwnerMismatchError);
@@ -208,40 +179,18 @@ describe("E-23, S-FIX-1: a re-issue is an INSERT and a DELETE in one transaction
 		expect(await liveSessionsOf(strangerId)).toBe(before);
 	});
 
-	it("refuses the same at the service, so no caller can move a session between accounts", async () => {
-		const previous = await service.issue({
-			authorisedBy: "read_under_lock",
-			userId,
-			factors: ["password"],
-			observed: NOWHERE,
-		});
-
-		await expect(
-			service.reissue({
-				authorisedBy: "read_under_lock",
-				completes: "totp_second_factor",
-				previousToken: previous.token,
-				userId: strangerId,
-				factors: ["password"],
-				observed: NOWHERE,
-			}),
-		).rejects.toBeInstanceOf(SessionOwnerMismatchError);
-
-		expect(await rowsWithTokenHash(previous.token)).toBe(1);
-	});
-
 	it("leaves the previous token addressing nothing afterwards (S-FIX-3)", async () => {
 		const previous = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NOWHERE,
 		});
 
-		const next = await service.reissue({
-			authorisedBy: "read_under_lock",
+		const next = await service.issueReplacingPresented({
+			authorisedBy: "unsealed",
 			completes: "totp_second_factor",
-			previousToken: previous.token,
+			presentedToken: previous.token,
 			userId,
 			factors: ["password", "webauthn"],
 			observed: NOWHERE,
@@ -303,8 +252,12 @@ describe("S-FIX-2: the trigger is the second lock, and the code does not lean on
 		await quiet.deleteSessionOwnedBy({ sessionId: randomUUID(), actor: owner });
 		await quiet.deleteEverySessionOwnedBy({ actor: owner });
 		await quiet.deleteEveryOtherSessionOwnedBy({ actor: owner, keptSessionId: randomUUID() });
-		await quiet.replaceSession({ previousTokenHash: insert.tokenHash, insert }).catch(() => {});
-		await quiet.replaceEverySessionOfUser({ actor: owner, insert }).catch(() => {});
+		await quiet
+			.replacePresentedSession({ presentedTokenHash: insert.tokenHash, insert })
+			.catch(() => {});
+		await quiet
+			.replaceSessionOwnedBy({ actor: owner, previousSessionId: randomUUID(), insert })
+			.catch(() => {});
 
 		expect(assigning).toEqual([]);
 	});
@@ -319,17 +272,18 @@ describe("two re-issues of one session at the same moment", () => {
 			driver: second,
 			schema: migrated.schema,
 		});
-		const previous = createSessionToken();
 		await sessions.deleteEverySessionOwnedBy({ actor: owner });
-		await sessions.insertSession(sessionInsertFor(userId, { tokenHash: previous.tokenHash }));
+		const previous = await sessions.insertSession(sessionInsertFor(userId));
 
 		await Promise.allSettled([
-			sessions.replaceSession({
-				previousTokenHash: previous.tokenHash,
+			sessions.replaceSessionOwnedBy({
+				actor: owner,
+				previousSessionId: previous.id,
 				insert: sessionInsertFor(userId),
 			}),
-			other.replaceSession({
-				previousTokenHash: previous.tokenHash,
+			other.replaceSessionOwnedBy({
+				actor: owner,
+				previousSessionId: previous.id,
 				insert: sessionInsertFor(userId),
 			}),
 		]);

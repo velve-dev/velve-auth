@@ -9,6 +9,7 @@ import { createVelveAuth } from "../src/index.js";
 import { configFor, requestTo } from "./auth-fixtures.js";
 import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { resealDirectly, testSecurityState } from "./security-state-fixtures.js";
 import { pendingAuthenticationsOn, secretBytesOfBase32, testKeyRing } from "./totp-fixtures.js";
 
 //the old form opens only under migrating and only for an account without a seal row (E-3121)
@@ -91,6 +92,7 @@ describe("the seal-row half of S-INTEG-1", () => {
 		const userId = user?.id ?? "";
 		const actor = actorOfTestUser(userId);
 		const totp = createTotpService({
+			securityState: testSecurityState(connection, schema, keys),
 			driver: connection,
 			schema,
 			keys,
@@ -120,11 +122,8 @@ describe("the seal-row half of S-INTEG-1", () => {
 				)
 			).status;
 		};
-		await connection.query(
-			`INSERT INTO ${schema}.security_state (user_id, version, digest, key_version)
-			 VALUES ($1, 1, $2, 1)`,
-			[userId, randomBytes(32)],
-		);
+		//with the seal renewed over the old-form secret only the seal row's presence is left to refuse it (E-3165)
+		await resealDirectly(connection, schema, keys, userId);
 
 		expect(await verifyWithTheRightCode()).toBe(401);
 		await connection.query(`DELETE FROM ${schema}.security_state WHERE user_id = $1`, [userId]);

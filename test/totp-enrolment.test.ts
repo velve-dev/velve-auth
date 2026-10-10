@@ -15,6 +15,7 @@ import type { KeyProvider } from "../src/core/keys/provider.js";
 import { createTestClock, type TestClock } from "../src/testing/index.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { testSecurityState } from "./security-state-fixtures.js";
 import {
 	countRows,
 	pendingAuthenticationsOn,
@@ -52,6 +53,7 @@ beforeAll(async () => {
 	clock = createTestClock(FIXED_INSTANT);
 	keys = testKeyProvider();
 	totp = createTotpService({
+		securityState: testSecurityState(connection, schema, keys),
 		driver: connection,
 		schema,
 		keys,
@@ -179,6 +181,7 @@ describe("T-REST-4 and T-KEY-3, for the one column wave 3 can reach", () => {
 		const ring = testKeyRing(2);
 		const userId = await createUser(connection, schema);
 		const underVersionOne = createTotpService({
+			securityState: testSecurityState(connection, schema, ring.providerAt(1, [1])),
 			driver: connection,
 			schema,
 			keys: ring.providerAt(1, [1]),

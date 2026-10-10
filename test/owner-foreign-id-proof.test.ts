@@ -74,6 +74,7 @@ beforeAll(async () => {
 		identityId: await identityOf(owner.userId),
 		credentialId: await credentialOf(owner.userId),
 	};
+	await mount.reseal(owner.userId);
 });
 
 afterAll(async () => {
@@ -150,6 +151,7 @@ describe("T-OWNER-8: a foreign identifier and an invented one are one answer (S-
 			"factor.webauthn.rename": { credentialId: await credentialOf(caller.userId) },
 			"factor.webauthn.remove": { credentialId: await credentialOf(caller.userId) },
 		};
+		await mount.reseal(caller.userId);
 
 		for (const route of routesTakingAnId(mount.auth.routes)) {
 			const before = await rowsOf(caller.userId);

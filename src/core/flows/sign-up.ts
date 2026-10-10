@@ -8,8 +8,17 @@ import { VelveError } from "../http/error-map.js";
 import type { RequestContext } from "../http/route.js";
 import type { IdentifierRejection, IdentityColumns } from "../identity/columns.js";
 import { identityColumns } from "../identity/columns.js";
+import { CREATED_SCHEME } from "../password/scheme.js";
 import { hooksOnTheTransaction } from "../plugin/registry.js";
 import { createSessionUnderHooks } from "../plugin/sign-in.js";
+import { recordSealLater } from "../security-state/runtime.js";
+import {
+	componentsAfter,
+	NO_ANCHOR_FLOOR,
+	type SealWritten,
+	sealCreatedAccount,
+	sealUnderAccountLock,
+} from "../security-state/sealing.js";
 import { randomBytes } from "../token/random.js";
 import { type MintedArtefact, mintArtefact, sendOrUndo } from "./artefact.js";
 import {
@@ -33,6 +42,8 @@ interface Registration {
 	readonly result: SignUpResult;
 	readonly artefact: MintedArtefact | null;
 	readonly userId: string;
+	/** the seal the registration committed, which the anchors learn of afterwards */
+	readonly sealed: SealWritten<unknown> | null;
 }
 
 //the discard signal must not capture a stack the committing branch never captures (E-629)
@@ -93,7 +104,8 @@ async function register(
 	derived: DerivedPassword | null,
 	discard: boolean,
 ): Promise<Registration> {
-	const { driver, schema, keys, sessions, pluginRuntime } = flow.environment.services;
+	const { driver, schema, keys, sessions, pluginRuntime, securityState } =
+		flow.environment.services;
 	const written = discard ? coverColumns(columns) : columns;
 	const factors: readonly AuthenticationFactor[] = derived === null ? [] : ["password"];
 
@@ -120,21 +132,43 @@ async function register(
 						subject: { userId: created.id },
 						accountEmail: created.email,
 					});
+		//a new account is sealed in the transaction that creates it, in both sealing modes (S-INTEG-3)
+		const firstSeal = await sealCreatedAccount(transaction, created.id, { schema, keys });
 		const issued = await createSessionUnderHooks(hooks, { userId: created.id, factors }, () =>
 			sessions.boundTo(transaction).issue({
 				completes: "sign_up",
-				authorisedBy: "read_under_lock",
+				authorisedBy: { version: firstSeal.version, sessionEpoch: firstSeal.sessionEpoch },
 				userId: created.id,
 				factors,
 				observed: observedIn(context),
 			}),
 		);
-		if (derived !== null) {
-			await writePasswordOfCreatedAccount(
-				{ driver: transaction, keys, schema, password: flow.environment.services.password },
-				{ userId: created.id, derived, setBySessionId: issued.session.id },
-			);
-		}
+		const sealed =
+			derived === null
+				? firstSeal
+				: await sealUnderAccountLock(
+						transaction,
+						created.id,
+						{ schema, keys, sealing: securityState.sealing },
+						NO_ANCHOR_FLOOR,
+						{
+							epoch: "keep",
+							write: (tx) =>
+								writePasswordOfCreatedAccount(
+									{ driver: tx, keys, schema, password: flow.environment.services.password },
+									{ userId: created.id, derived, setBySessionId: issued.session.id },
+								),
+							after: (read, stored) =>
+								componentsAfter(read, {
+									password: {
+										phc: stored.ciphertext,
+										keyVersion: stored.keyVersion,
+										scheme: CREATED_SCHEME,
+										setBySessionId: issued.session.id,
+									},
+								}),
+						},
+					);
 		return {
 			//the answer must name the address the caller sent and never the cover (S-ENUM-3)
 			result: {
@@ -144,6 +178,7 @@ async function register(
 			},
 			artefact,
 			userId: created.id,
+			sealed: discard ? null : sealed,
 		};
 	};
 
@@ -152,6 +187,12 @@ async function register(
 			const registration = await run(transaction);
 			if (discard) {
 				throw new DiscardedRegistration(registration);
+			}
+			return registration;
+		})
+		.then((registration) => {
+			if (registration.sealed !== null) {
+				recordSealLater(securityState, registration.sealed, "change");
 			}
 			return registration;
 		})

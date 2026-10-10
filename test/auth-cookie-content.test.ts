@@ -24,6 +24,7 @@ const EXPECTED_ATTRIBUTES = ["HttpOnly", "Secure", "SameSite=Lax", "Path=/"];
 beforeAll(async () => {
 	mounted = await mountAuth("cookie", { keys: TOKEN_KEYS });
 	const userId = await createUser(mounted.connection, mounted.schema);
+	await mounted.reseal(userId);
 	const issued = createSessionToken();
 	sessionToken = issued.token;
 	await mounted.connection.query(

@@ -11,6 +11,7 @@ import { configFor, requestTo, testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import { asJavaScriptPlugin, createContextProbe, unreachableDriver } from "./plugin-fixtures.js";
+import { resealDirectly } from "./security-state-fixtures.js";
 import { sessionMacParameters } from "./session-fixtures.js";
 
 const TOKEN_KEYS = testKeyProvider();
@@ -157,6 +158,7 @@ describe("the plugin boundary against a real instance (S-CACHE-5, S-OWNER-10, S-
 		handler = toWebHandler(auth);
 
 		const userId = await createUser(connection, schema);
+		await resealDirectly(connection, schema, TOKEN_KEYS, userId);
 		const issued = createSessionToken();
 		await connection.query(
 			`INSERT INTO ${schema}.session

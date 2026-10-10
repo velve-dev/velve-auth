@@ -108,7 +108,7 @@ describe("rebinding token rows no resolve has rebound (S-KEY-5)", () => {
 			sessionTokens.push(
 				(
 					await before.sessions.issue({
-						authorisedBy: "read_under_lock",
+						authorisedBy: "unsealed",
 						userId,
 						factors: ["password"],
 						observed: NO_REQUEST,
@@ -304,7 +304,7 @@ describe("rebinding token rows no resolve has rebound (S-KEY-5)", () => {
 		const before = servicesUnder(ring.providerAt(1, [1]));
 		const userId = await createUser(migrated.connection, schema);
 		await before.sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -355,7 +355,7 @@ describe("the rows a pass reports under each key version (S-KEY-5, E-3277)", () 
 		const before = servicesUnder(ring.providerAt(1, [1]));
 		const userId = await createUser(migrated.connection, schema);
 		const genuine = await before.sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,

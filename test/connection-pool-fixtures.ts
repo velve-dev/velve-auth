@@ -16,11 +16,22 @@ interface ConnectionPool extends Driver {
  */
 export async function openConnectionPool(
 	size: number,
-	options: { readonly acquireTimeoutMs?: number } = {},
+	options: {
+		readonly acquireTimeoutMs?: number;
+		/** the isolation a connection's own transactions default to, as a server or role setting would */
+		readonly defaultIsolation?: "repeatable read";
+	} = {},
 ): Promise<ConnectionPool> {
 	const connections: TestConnection[] = [];
 	for (let index = 0; index < size; index += 1) {
-		connections.push(await openTestConnection());
+		const connection = await openTestConnection();
+		if (options.defaultIsolation !== undefined) {
+			await connection.query(
+				`SET default_transaction_isolation = '${options.defaultIsolation}'`,
+				[],
+			);
+		}
+		connections.push(connection);
 	}
 	const idle = [...connections];
 	const waiting: ((connection: TestConnection) => void)[] = [];

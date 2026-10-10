@@ -53,7 +53,7 @@ describe("an unusable key for the stored version refuses the row", () => {
 			schema,
 		});
 		const { token } = await sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: OBSERVED,
@@ -72,7 +72,7 @@ describe("an unusable key for the stored version refuses the row", () => {
 			schema,
 		});
 		await sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: OBSERVED,

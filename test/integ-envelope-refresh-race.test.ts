@@ -49,6 +49,7 @@ afterAll(async () => {
 	await connection.close();
 });
 
+//the accounts here stand for accounts from before the seal, which only mode "migrating" serves (E-3165)
 function handlerOn(database: Driver, trusted = false) {
 	return toWebHandler(
 		createVelveAuth(
@@ -56,6 +57,7 @@ function handlerOn(database: Driver, trusted = false) {
 				database,
 				schema,
 				keys,
+				securityState: { sealing: "migrating" },
 				oauth: oauthConfigFor({ openIdConnect: true, storeTokens: true, trusted }),
 				fetch: provider.fetch,
 				rateLimit: {
@@ -133,6 +135,9 @@ describe("a sign-in that refreshes provider tokens during the account rewrite (S
 			 id_token_enc = NULL, token_key_version = $3 WHERE id = $1`,
 			[identity?.id, old.ciphertext, old.keyVersion],
 		);
+		await connection.query(`DELETE FROM ${schema}.security_state WHERE user_id = $1`, [
+			identity?.user_id,
+		]);
 		const flow = await startedFlow(elsewhere);
 
 		let signIn: Promise<Response> | null = null;
