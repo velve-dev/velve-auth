@@ -353,6 +353,28 @@ describe("the anchor around a change", () => {
 		};
 	}
 
+	it("renews a seal taken under an older state-mac key even when the change changes nothing", async () => {
+		const older = generateRootKey();
+		const newer = generateRootKey();
+		const beforeRotation = rootKeyProvider({ currentVersion: 1, keysByVersion: { 1: older } });
+		const afterRotation = rootKeyProvider({
+			currentVersion: 2,
+			keysByVersion: { 1: older, 2: newer },
+		});
+		const userId = await seedAccount(connection, schema, { password: true });
+		await sealAccount({ ...services(), keys: beforeRotation }, userId, unchanged);
+		const before = await readOf(userId);
+
+		const outcome = await sealAccount({ ...services(), keys: afterRotation }, userId, unchanged);
+		const after = await readOf(userId);
+
+		expect(outcome.kind).toBe("sealed");
+		expect(before.seal?.keyVersion).toBe(1);
+		expect(after.seal?.keyVersion).toBe(2);
+		expect(after.seal?.version).toBe((before.seal?.version ?? 0) + 1);
+		expect((await checkSecurityState(afterRotation, after, "required")).verdict).toBe("valid");
+	});
+
 	it("keeps the verified seal when a change leaves every component and the epoch as they were", async () => {
 		const userId = await seedAccount(connection, schema, { password: true });
 		await sealAccount(services(), userId, unchanged);

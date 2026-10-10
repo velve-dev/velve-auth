@@ -8,9 +8,11 @@ import { unboundReadingOf } from "../auth/security-state.js";
 import type { Actor } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import type { IssueAuthorisation } from "../db/repositories/session.js";
+import type { SecondFactor } from "../factor/pending/repository.js";
 import type { Clock } from "../http/environment.js";
 import { ConcealedError, type ConcealedReason } from "../http/error-map.js";
 import { encodeBase64Url } from "../keys/base64url.js";
+import { KeyError, type KeyErrorCode } from "../keys/errors.js";
 import type { KeyProvider } from "../keys/provider.js";
 import type { PasswordCredentialRow } from "../password/credential.js";
 import type { PasswordScheme } from "../password/scheme.js";
@@ -93,7 +95,8 @@ export function createSecurityStateRuntime(input: {
 	};
 }
 
-function envelopesOf(read: SecurityStateRead): AccountEnvelopes {
+/** the stored envelopes of a verified read, in the shape the envelope rewrite takes */
+export function envelopesOf(read: SecurityStateRead): AccountEnvelopes {
 	return {
 		password:
 			read.password === null
@@ -113,7 +116,8 @@ function envelopesOf(read: SecurityStateRead): AccountEnvelopes {
 	};
 }
 
-function readWithEnvelopes(
+/** the verified read with the ciphertexts an envelope rewrite stored put in place of the old ones */
+export function readWithEnvelopes(
 	read: SecurityStateRead,
 	envelopes: AccountEnvelopes,
 ): SecurityStateRead {
@@ -137,7 +141,11 @@ function readWithEnvelopes(
 					},
 		identities: read.identities.map((identity) => {
 			const rewritten = envelopes.identities.find((stored) => stored.identityId === identity.id);
-			return rewritten === undefined ? identity : { ...identity, ...rewritten, id: identity.id };
+			if (rewritten === undefined) {
+				return identity;
+			}
+			const { identityId: _rewrittenRow, ...tokens } = rewritten;
+			return { ...identity, ...tokens };
 		}),
 	};
 }
@@ -173,6 +181,25 @@ export function recordSealLater(
 	);
 }
 
+const BINDING_FAILURES: ReadonlySet<KeyErrorCode> = new Set([
+	"authentication_failed",
+	"envelope_unbound",
+	"envelope_malformed",
+	"ciphertext_malformed",
+]);
+
+//an envelope that fails under its own binding was copied, moved or replaced past the seal (S-INTEG-1)
+export function reportEnvelopeRefusal(
+	runtime: SecurityStateRuntime,
+	userId: string | null,
+	occasion: SecurityStateAlarmOccasion,
+	failure: unknown,
+): void {
+	if (failure instanceof KeyError && BINDING_FAILURES.has(failure.code)) {
+		runtime.alarms.raise({ userId, occasion, reason: "envelope_binding_mismatch" });
+	}
+}
+
 function refusedAndReported(
 	runtime: SecurityStateRuntime,
 	userId: string,
@@ -194,6 +221,10 @@ function refusedAndReported(
 		}
 		throw new ConcealedError(refusal);
 	}
+	if (error instanceof KeyError && BINDING_FAILURES.has(error.code)) {
+		reportEnvelopeRefusal(runtime, userId, occasion, error);
+		throw new ConcealedError(refusal);
+	}
 	//a ciphertext swapped between the verified read and its rewrite is a broken state (E-3300)
 	if (error instanceof EnvelopeChangedSinceReadError) {
 		runtime.alarms.raise({ userId, occasion, reason: "seal_mismatch" });
@@ -206,9 +237,7 @@ function refusedAndReported(
 export type ChangedAccount = Actor | { readonly unproven: string };
 
 /** the version and epoch a session issued under a change's new seal is bound to */
-export function issueAuthorisationOf(
-	sealed: SealWritten<unknown>,
-): Exclude<IssueAuthorisation, "read_under_lock"> {
+export function issueAuthorisationOf(sealed: SealWritten<unknown>): IssueAuthorisation {
 	return sealed.leftUnsealed
 		? "unsealed"
 		: { version: sealed.version, sessionEpoch: sealed.sessionEpoch };
@@ -226,12 +255,14 @@ export async function sealChange<T>(
 		readonly refusal?: ConcealedReason;
 		/** the failure a path answers an account that does not exist with, where it has its own */
 		readonly accountMissing?: () => Error;
+		/** what the anchors answered, asked by a path that takes the account lock before the change does */
+		readonly anchorReading?: AnchorReading;
 	} = {},
 ): Promise<SealWritten<T>> {
 	const occasion = options.occasion ?? "change";
 	const refusal = options.refusal ?? "broken_state_on_change";
 	const userId = typeof account === "string" ? account : account.unproven;
-	const anchorReading = await consultAnchors(runtime.anchors, userId);
+	const anchorReading = options.anchorReading ?? (await consultAnchors(runtime.anchors, userId));
 	const context =
 		typeof account === "string"
 			? {
@@ -266,7 +297,7 @@ export type AccountCheck =
 	| {
 			readonly kind: "usable";
 			readonly read: SecurityStateRead;
-			readonly authorisedBy: Exclude<IssueAuthorisation, "read_under_lock">;
+			readonly authorisedBy: IssueAuthorisation;
 	  }
 	| { readonly kind: "broken" }
 	| { readonly kind: "missing" };
@@ -328,9 +359,13 @@ export async function checkAccount(
 	runtime: SecurityStateRuntime,
 	userId: string,
 	occasion: SecurityStateAlarmOccasion,
-	options: { readonly driver?: Driver } = {},
+	options: {
+		readonly driver?: Driver;
+		/** what the anchors answered, asked by a path before it took the account lock */
+		readonly anchorReading?: AnchorReading;
+	} = {},
 ): Promise<AccountCheck> {
-	const anchorReading = await consultAnchors(runtime.anchors, userId);
+	const anchorReading = options.anchorReading ?? (await consultAnchors(runtime.anchors, userId));
 	const read = await readSecurityState(options.driver ?? runtime.driver, runtime.schema, userId);
 	if (read === null) {
 		return { kind: "missing" };
@@ -427,6 +462,15 @@ export function passwordCredentialOf(
 				scheme: read.password.scheme as PasswordScheme,
 				unbound: unboundReadingOf(runtime.sealing, read.seal === null ? "absent" : "present"),
 			};
+}
+
+/** the second factors a verified read holds, which a sign-in offers and its pending row must still find */
+export function secondFactorsOf(read: SecurityStateRead): readonly SecondFactor[] {
+	return [
+		...(read.totp?.confirmed === true ? (["totp"] as const) : []),
+		...(read.passkeys.length > 0 ? (["webauthn"] as const) : []),
+		...(read.recoveryCodes.length > 0 ? (["recovery"] as const) : []),
+	];
 }
 
 /** the session epoch a pending authentication created after this check binds */

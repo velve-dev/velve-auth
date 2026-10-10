@@ -50,9 +50,11 @@ async function statementsAsTheyRun(): Promise<string[]> {
 	await sessions.deleteEveryOtherSessionOwnedBy({ actor: ACTOR, keptSessionId: SESSION_ID });
 	await sessions.listSessionsOwnedBy({ actor: ACTOR, currentSessionId: SESSION_ID });
 	await sessions
-		.replaceSession({ previousTokenHash: insert.tokenHash, insert })
+		.replacePresentedSession({ presentedTokenHash: insert.tokenHash, insert })
 		.catch(() => undefined);
-	await sessions.replaceEverySessionOfUser({ actor: ACTOR, insert }).catch(() => undefined);
+	await sessions
+		.replaceSessionOwnedBy({ actor: ACTOR, previousSessionId: SESSION_ID, insert })
+		.catch(() => undefined);
 
 	return statements;
 }

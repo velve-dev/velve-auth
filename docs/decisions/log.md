@@ -17879,6 +17879,86 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** A seal records a state, and a change that leaves the state as it was has nothing new to record.
 **Price.** One encoding of the account's components more per change; the anchor is told the same seal again after such a change.
 
+<a id="e-3403"></a>
+
+### No session issue stands on the read its own lock takes
+`E-3403` · security-state-seal · session issue, settled
+
+**Context.** E-3487 let an issue that no seal check named yet insert under the version and epoch it read itself under the account lock, as `"read_under_lock"`, until the seal branch named every issue. E-3163 named them all, and nothing in `src/` passed the value any more, yet the repository still took it. `IssueAuthorisation` is now the checked `{ version, sessionEpoch }` or `"unsealed"`, and `conditionOf` takes nothing else. `reissue` and `reissueAfterCredentialChange` of the session service, which no path called since the password change and the second factors issue through `issueReplacingPresented` and the sealing change, are removed with the repository's `replaceSession` and `replaceEverySessionOfUser` that only they used. Tests that issued directly with `"read_under_lock"` now take what a check of the account would read, through `authorisationOf` in `test/session-fixtures.ts`. `test/session-issue-paths-lock.test.ts` held each issuing path to binding the epoch a concurrent revocation leaves, which was E-3141's design; each path now waits for the lock and inserts nothing, as E-3377 decided. The sign-in races of `test/integ-session-epoch-race.test.ts` stood in for the library's revocation and move to the library-level races of E-3404.
+**Rejected.** Keeping `"read_under_lock"` for tests, which would leave a production type member whose only callers are tests and whose meaning the specification no longer has.
+**Reason.** A member that authorises an issue without a check is the gap S-INTEG-9 closes, and a gap kept for convenience is still a gap.
+**Price.** About thirty test files change how they issue a session directly.
+
+<a id="e-3405"></a>
+
+### The OAuth sign-in asks the anchor before it locks the account
+`E-3405` · security-state-seal · anchor, settled
+
+**Context.** S-INTEG-6 and E-3304 have the anchor asked before the account lock, since `minimumVersion` is the application's own code and may wait on a network. The OAuth sign-in through a linked identity and the automatic link take the account lock themselves before the check and the sealing change, and both asked the anchor inside, under the lock. `accountForSignIn` now calls `consultAnchors` before `theIdentityUnderItsAccountLock` and before `theJoinableAccountUnderItsLock`, and hands the reading to `checkAccount` and `sealChange` through a new `anchorReading` option. `test/oauth-anchor-before-lock.test.ts` holds the order in the source and that neither lock function asks an anchor.
+**Rejected.** Moving the lock into the check and the change, which would put the subject lookup the lock protects after the check.
+**Reason.** A lock held while the application answers stalls every other change of the account for as long as the application takes.
+**Price.** A floor read before the lock can be older than the state the lock then reads, which the anchor comparison already allows for: a seal ahead of the floor is recorded again.
+
+<a id="e-3406"></a>
+
+### The second factors a sign-in offers come from its verified read
+`E-3406` · security-state-seal · second factor, settled
+
+**Context.** S-INTEG-4 has what a path evaluates come from its one verified read. After the password, magic-link and OAuth sign-ins checked the seal, the pending row's insert read the confirmed TOTP secret, the passkeys and the recovery codes a second time and offered what that read found, so a writer who deleted the TOTP row between the check and the insert turned a sign-in that needed a second factor into a session on the first. `secondFactorsOf(read)` in `src/core/security-state/runtime.ts` takes the factors from the verified read, and `pending.begin` takes them as `offered` with the path's ordinary failure. The insert still reads the enrolments in its statement; a factor the check read and the insert no longer finds deletes the new pending row, reports `seal_mismatch` with the occasion `sign_in`, and refuses the sign-in with that failure. `test/security-state-offered-factors.test.ts` deletes the confirmed TOTP row just before the pending insert and holds the answer to a wrong password's, with no session and no pending cookie.
+**Rejected.** Answering with `second_factor_required` and the factors of the read, which would hand out a pending row naming a factor the account no longer has.
+**Reason.** A factor that disappears between two reads of one sign-in was removed past the seal.
+**Price.** A factor added in that window is not offered by that sign-in; the next one offers it.
+
+<a id="e-3407"></a>
+
+### A bound envelope that fails to open raises envelope_binding_mismatch with its path's occasion
+`E-3407` · security-state-seal · alarm, settled
+
+**Context.** S-INTEG-1 and T-INTEG-1 expect one alarm `envelope_binding_mismatch` for every copied ciphertext, and the alarm module named the reason, but no path raised it: the password check fell back to the dummy credential, the TOTP check answered a factor nobody holds, the callback answered an unknown state, and the rewrite of an unsealed account's envelopes failed with whatever the key module threw. `reportEnvelopeRefusal` in `src/core/security-state/runtime.ts` raises the alarm for a `KeyError` that says the envelope does not belong where it was found — `authentication_failed`, `envelope_unbound`, `envelope_malformed` or `ciphertext_malformed` — and not for a key version the ring lacks, which E-428 answers on its own. The password check calls it with `sign_in` or `change`, the TOTP check with `factor_check`, its enrolment and removal with `change`, the PKCE verifier with `sign_in` or, for a link, `change`, and `sealChange` for every rewrite it runs, where the identity tokens are opened. `test/security-state-envelope-alarm.test.ts` copies one account's TOTP ciphertext onto another without a seal row and holds the one alarm.
+**Rejected.** Raising it inside the key module, which knows neither the account nor the path.
+**Reason.** A refusal the operator never hears of protects the account and leaves the writer free to try again elsewhere.
+**Price.** The answer each path gives is unchanged; only the alarm is new.
+
+<a id="e-3408"></a>
+
+### A change that changes nothing still renews a seal taken under an older state-mac key
+`E-3408` · security-state-seal · sealing transaction, settled
+
+**Context.** E-3402 keeps the verified seal for a change that leaves every component and the epoch as they were. A seal stays verifiable under the key version it names, so after a rotation of `state-mac` such a change left the seal under the old key, and the administration branch's rekey, which reseals every account through this sealing path, could never retire the old key from the ring. `sealUnderAccountLock` now keeps the verified seal only when its `key_version` is also the ring's current `state-mac` version, and otherwise writes a new seal under the current key with the version raised. `test/security-state-sealing.test.ts` seals an account under version 1, runs a change that changes nothing under a ring at version 2, and holds the new seal at key version 2 with the version raised by one.
+**Rejected.** A separate rekey path beside the sealing change, which would be a second writer of the seal row with its own order.
+**Reason.** A key can leave the ring only once nothing is sealed under it.
+**Price.** The first change of each account after a rotation writes a seal even when it changes nothing.
+
+<a id="e-3409"></a>
+
+### The envelope helpers of the runtime are exported, and a rewritten identity no longer carries the rewrite's row key
+`E-3409` · security-state-seal · runtime, settled
+
+**Context.** The administration branch rewrites envelopes through the same read the seal verifies and had copied `envelopesOf` and `readWithEnvelopes` from `src/core/security-state/runtime.ts`. Both are now exported with a doc comment, and `test/security-state-read.test.ts` uses them. The test found that `readWithEnvelopes` spread the rewrite's `identityId` into each rewritten identity of the read, a field the read does not have; it now takes only the token columns and their key version.
+**Rejected.** Leaving the duplicates, which would let the two copies of one conversion drift.
+**Reason.** One conversion between the read and the rewrite is one place to keep right.
+**Price.** None.
+
+<a id="e-3404"></a>
+
+### The library's sign-in and resolution race session.revokeAll, alarms and logs are searched for secrets, and the broken-state timing runs nightly
+`E-3404` · security-state-seal · tests, settled
+
+**Context.** E-3400 left three parts of the test plan unbuilt. `test/security-state-revocation-race.test.ts` now runs T-INTEG-3's two library races over the mounted handler on a pool whose connections default to `repeatable read`: 50 password sign-ins each started together with `session.revokeAll` of the same account, and 50 session resolutions each started together with a `session.revokeAll` from another session of the account. The first run found 12 of 50 sign-ins answered `invalid_pending_authentication`, a code no password sign-in otherwise gives: the pending row a sign-in writes and withdraws when it names no factor binds the check's epoch, and its consumption refused the row once the revocation had raised the epoch. The password and magic-link sign-ins now withdraw that row with `cancel`, as the OAuth sign-in already did by E-563, and the session issue bound to the check alone decides the race. Every sign-in now ends with a session that resolves or with `invalid_credentials`, every resolution with the session or as a missing one, the presented session never survives, and neither race raises an alarm. `openConnectionPool` gains a `defaultIsolation` option for it. `test/security-state-checking.test.ts` searches the alarms and the log lines of its eleven refusals for every presented and mailed token, the password, and the stored token hashes, ciphertexts, recovery-code HMACs and digests in hex and base64, and finds none. `test/security-state-broken-timing.test.ts` is T-INTEG-5's timing part on the nightly tier: a broken account's correct password against an intact account's wrong one, through the handler, sampled and decided as T-TIM-1 is. The 40 wrong codes and the old-key rebind of T-INTEG-3 on repeatable-read connections stay with the token branch's tests of them.
+**Rejected.** Mapping `pending_consumed` to the path's failure where the sign-in consumes, which would keep a consumption that decides nothing the issue does not decide already.
+**Reason.** A race the specification lets end without a session must end with the path's ordinary failure, and the race tests are where that is seen.
+**Price.** The withdrawn row is no longer verified on its way out; it named no factor and its token never left the server.
+
+<a id="e-3410"></a>
+
+### T-KEY-5 waits for its sign-in's rehash before the factor check, because its one test connection interleaves them
+`E-3410` · security-state-seal · tests, settled
+
+**Context.** `test/key-rotation-restart-proof.test.ts` failed on CI at the TOTP check after a password sign-in under the rotated ring, answering `invalid_factor_code`. Run eight times at once on the development machine, one run failed the same way, logging the reason `broken_state_on_totp_second_factor` with the alarm `seal_mismatch` at `factor_check`. The sign-in's background rehash rewrites the password and reseals in one transaction, and the test hands every instance one `TestConnection`, which opens a transaction with `BEGIN` on its single socket and lets any other caller's statement run in between. The factor check's one statement therefore ran inside the open rehash, after its password write and before its seal write, and read a state that never committed. With a pool, as a real driver has, the check runs on another connection and reads either side of the commit. The test now waits for the rehash to land, as it already did further down, before it checks the factor.
+**Rejected.** Retrying the case, and handing this test a pool, which would change what the restart case measures for a race it does not test.
+**Reason.** The failure is the harness's, and the library's one-statement read is right on a connection of its own.
+**Price.** None; the case asserted the same rewrite a few lines later.
+
 <a id="e-3170"></a>
 
 ### The anchor member joins the plugin type, and the registry turns it into one port per plugin

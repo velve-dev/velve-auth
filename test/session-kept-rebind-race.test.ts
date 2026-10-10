@@ -53,7 +53,7 @@ describe("signing out every other session while the same session resolves during
 			schema,
 		});
 		const { token } = await before.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,

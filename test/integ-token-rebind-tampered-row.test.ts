@@ -36,13 +36,13 @@ describe.each(["infinity", "-infinity", "9999-12-31 00:00:00+00"])(
 			});
 			const userId = await createUser(migrated.connection, schema);
 			await sessions.issue({
-				authorisedBy: "read_under_lock",
+				authorisedBy: "unsealed",
 				userId,
 				factors: ["password"],
 				observed: OBSERVED,
 			});
 			await sessions.issue({
-				authorisedBy: "read_under_lock",
+				authorisedBy: "unsealed",
 				userId,
 				factors: ["password"],
 				observed: OBSERVED,
@@ -88,7 +88,7 @@ describe.each(["infinity", "-infinity", "9999-12-31 00:00:00+00"])(
 			});
 			const userId = await createUser(migrated.connection, schema);
 			await sessions.issue({
-				authorisedBy: "read_under_lock",
+				authorisedBy: "unsealed",
 				userId,
 				factors: ["password"],
 				observed: OBSERVED,

@@ -248,7 +248,13 @@ export async function sealUnderAccountLock<T>(
 	const sessionEpoch = epoch === "raise" ? drawSessionEpochOtherThan(currentEpoch) : currentEpoch;
 	const written = await change.write(guarded, read, { version, sessionEpoch });
 	const after = change.after(read, written);
-	if (current !== null && epoch === "keep" && sameComponents(read, after)) {
+	//a seal under an older state-mac key is renewed even by a change that changes nothing (E-3408)
+	if (
+		current !== null &&
+		epoch === "keep" &&
+		sameComponents(read, after) &&
+		current.keyVersion === (await context.keys.current("state-mac")).version
+	) {
 		return unchanged(guarded, change, current, read, written);
 	}
 	const { keyVersion, digest } = await computeSeal(context.keys, {

@@ -15,7 +15,7 @@ import {
 	type MigratedSchema,
 	openMigratedSchema,
 } from "./db-fixtures.js";
-import { aFreshEpochOtherThan } from "./session-fixtures.js";
+import { aFreshEpochOtherThan, authorisationOf } from "./session-fixtures.js";
 import { testKeyRing } from "./totp-fixtures.js";
 
 // S-INTEG-9: the whole 32-byte MAC is compared. A row whose MAC differs in a late byte only, and
@@ -57,7 +57,7 @@ describe("a MAC that differs from the genuine one in a late byte only", () => {
 		});
 		const userId = await createUser(migrated.connection, schema);
 		const issued = await sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: await authorisationOf(migrated.connection, schema, userId),
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -122,7 +122,7 @@ describe("the session list of an account whose epoch is above 1", () => {
 			[userId, randomBytes(32)],
 		);
 		const old = await sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: await authorisationOf(migrated.connection, schema, userId),
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -132,7 +132,7 @@ describe("the session list of an account whose epoch is above 1", () => {
 			[userId, aFreshEpochOtherThan(1)],
 		);
 		const current = await sessions.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: await authorisationOf(migrated.connection, schema, userId),
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,
@@ -161,7 +161,7 @@ describe('the session list of an account without a seal row in "required"', () =
 		});
 		const userId = await createUser(migrated.connection, schema);
 		await migrating.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: await authorisationOf(migrated.connection, schema, userId),
 			userId,
 			factors: ["password"],
 			observed: NO_REQUEST,

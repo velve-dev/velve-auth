@@ -4,7 +4,6 @@ import {
 	createSessionRepository,
 	type IssueAuthorisation,
 	type MissedIssue,
-	PreviousSessionMissingError,
 	type SealVerification,
 	type SecurityStateSealing,
 	type SessionInsert,
@@ -13,7 +12,7 @@ import {
 } from "../db/repositories/session.js";
 import { isRowIdentifier } from "../db/row-identifier.js";
 import type { AuthenticationFactor, Session } from "../http/caller.js";
-import { ConcealedError, VelveError } from "../http/error-map.js";
+import { VelveError } from "../http/error-map.js";
 import type { KeyProvider } from "../keys/provider.js";
 import {
 	bindToken,
@@ -136,23 +135,6 @@ export interface SessionService {
 		readonly factors: readonly AuthenticationFactor[];
 		readonly observed: ObservedRequest;
 	}): Promise<IssuedSession>;
-	reissue(input: {
-		readonly completes: SessionIssuePath;
-		/** what the check that authorised the issue read of the seal row */
-		readonly authorisedBy: IssueAuthorisation;
-		readonly previousToken: string;
-		readonly userId: string;
-		readonly factors: readonly AuthenticationFactor[];
-		readonly observed: ObservedRequest;
-	}): Promise<IssuedSession>;
-	reissueAfterCredentialChange(input: {
-		readonly completes: SessionIssuePath;
-		/** what the check that authorised the issue read of the seal row */
-		readonly authorisedBy: IssueAuthorisation;
-		readonly resolved: SessionResolution;
-		readonly factors: readonly AuthenticationFactor[];
-		readonly observed: ObservedRequest;
-	}): Promise<IssuedSession>;
 	/** replaces the one named session and leaves every other session of the account alone */
 	reissueSessionOfUser(input: {
 		readonly completes: SessionIssuePath;
@@ -188,14 +170,6 @@ interface VerifiedSession {
 	readonly found: SessionWithOwner;
 	readonly stored: StoredTokenMac;
 	readonly rebound: StoredTokenMac | null;
-}
-
-//a session that vanished before its replacement is one the caller no longer has
-function replacedSessionFailure(cause: unknown): never {
-	if (cause instanceof PreviousSessionMissingError) {
-		throw new ConcealedError("session_not_found");
-	}
-	throw cause;
 }
 
 //the brand of a resolved session is asserted here and nowhere else (S-OWNER-7)
@@ -391,42 +365,6 @@ export function createSessionService(options: SessionServiceOptions): SessionSer
 					),
 					...(sessionId === undefined ? {} : { sessionId }),
 				},
-			});
-			return { token: issued.token, session };
-		},
-
-		//every change of the trust level must end the old session and begin a new one (S-FIX-1)
-		async reissue({ completes, authorisedBy, previousToken, userId, factors, observed }) {
-			const issued = createSessionToken();
-			const session = await sessions
-				.replaceSession({
-					previousTokenHash: sessionTokenHash(previousToken),
-					insert: insertFor(
-						userId,
-						factors,
-						observed,
-						issued.tokenHash,
-						MISSED_ISSUE_BY_PATH[completes],
-						authorisedBy,
-					),
-				})
-				.catch(replacedSessionFailure);
-			return { token: issued.token, session };
-		},
-
-		//a credential change must end every other session and nothing turns that off (S-FIX-6)
-		async reissueAfterCredentialChange({ completes, authorisedBy, resolved, factors, observed }) {
-			const issued = createSessionToken();
-			const session = await sessions.replaceEverySessionOfUser({
-				actor: actorOfResolvedSession(resolved),
-				insert: insertFor(
-					resolved.userId,
-					factors,
-					observed,
-					issued.tokenHash,
-					MISSED_ISSUE_BY_PATH[completes],
-					authorisedBy,
-				),
 			});
 			return { token: issued.token, session };
 		},

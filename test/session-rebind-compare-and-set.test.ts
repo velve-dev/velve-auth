@@ -48,7 +48,7 @@ async function setup() {
 		schema,
 	});
 	await sessions.issue({
-		authorisedBy: "read_under_lock",
+		authorisedBy: "unsealed",
 		userId,
 		factors: ["password"],
 		observed: OBSERVED,

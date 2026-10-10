@@ -4,7 +4,7 @@ import type {
 	PendingAuthentication,
 	ResolvedPendingAuthentication,
 } from "../../http/caller.js";
-import { ConcealedError } from "../../http/error-map.js";
+import { ConcealedError, type ConcealedReason } from "../../http/error-map.js";
 import type { KeyProvider } from "../../keys/provider.js";
 import {
 	bindToken,
@@ -24,6 +24,7 @@ import {
 	type PendingAuthenticationRepository,
 	type PendingAuthenticationWithOwner,
 	type PendingCandidate,
+	type SecondFactor,
 } from "./repository.js";
 import { createPendingToken, hashPendingToken, type PendingToken } from "./token.js";
 
@@ -69,12 +70,20 @@ export interface PendingAuthenticationServiceOptions {
 	readonly reportTokenBindingRefusal?: TokenBindingRefusalReport;
 }
 
+/** the second factors a verified read holds, which the pending row must still find when it is written */
+export interface OfferedFactors {
+	readonly factors: readonly SecondFactor[];
+	readonly refusal: ConcealedReason;
+}
+
 export interface PendingAuthenticationService {
 	begin(input: {
 		readonly userId: string;
 		readonly factorsCompleted: readonly AuthenticationFactor[];
 		/** the epoch the first factor's check read; the account's current one where not given */
 		readonly sessionEpoch?: number;
+		/** the second factors the first factor's check read, and what a sign-in that loses one answers */
+		readonly offered?: OfferedFactors;
 	}): Promise<IssuedPendingAuthentication>;
 	resolve(token: PendingToken): Promise<PendingResolution | null>;
 	consume(token: PendingToken): Promise<ConsumedPendingAuthentication>;
@@ -291,9 +300,29 @@ export function createPendingAuthenticationService(
 		};
 	}
 
+	//a factor the check read and the insert no longer finds was removed past the seal (S-INTEG-4)
+	async function refuseAFactorGoneSinceTheCheck(
+		userId: string,
+		tokenHash: Uint8Array,
+		offered: OfferedFactors,
+		available: readonly SecondFactor[],
+	): Promise<void> {
+		if (offered.factors.every((factor) => available.includes(factor))) {
+			return;
+		}
+		await repository.deletePendingAuthenticationByTokenHash(tokenHash);
+		options.reportTokenBindingRefusal?.({
+			userId,
+			occasion: "sign_in",
+			reason: "seal_mismatch",
+			verdict: "mismatch",
+		});
+		throw new ConcealedError(offered.refusal);
+	}
+
 	const service: PendingAuthenticationService = {
 		//the factors on offer are the account's state so the write reads them itself (E-735)
-		async begin({ userId, factorsCompleted, sessionEpoch }) {
+		async begin({ userId, factorsCompleted, sessionEpoch, offered }) {
 			const token = createPendingToken();
 			const tokenHash = hashPendingToken(token);
 			const storedFactors = factorsCompleted.filter(
@@ -314,11 +343,14 @@ export function createPendingAuthenticationService(
 					}),
 				)),
 			});
+			if (offered !== undefined) {
+				await refuseAFactorGoneSinceTheCheck(userId, tokenHash, offered, stored.availableFactors);
+			}
 			return {
 				token,
 				pending: {
 					factorsCompleted: stored.factorsCompleted,
-					availableFactors: stored.availableFactors,
+					availableFactors: offered?.factors ?? stored.availableFactors,
 					attemptsRemaining: attemptsRemainingAfter(stored.attempts),
 					expiresAt: stored.expiresAt,
 				},

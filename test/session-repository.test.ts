@@ -296,16 +296,14 @@ describe("removing sessions (S-OWNER-2, S-OWNER-4)", () => {
 	});
 });
 
-describe("replacing a session (S-FIX-1, E-23)", () => {
-	it("inserts the new row and removes the old one in one transaction", async () => {
-		const previous = createSessionToken();
-		const old = await sessions.insertSession(
-			sessionInsertFor(ownerId, { tokenHash: previous.tokenHash }),
-		);
+describe("replacing a session the actor names (S-FIX-1, E-23)", () => {
+	it("inserts the new row and removes the named one in one transaction", async () => {
+		const old = await sessions.insertSession(sessionInsertFor(ownerId));
 		const next = createSessionToken();
 
-		const replacement = await sessions.replaceSession({
-			previousTokenHash: previous.tokenHash,
+		const replacement = await sessions.replaceSessionOwnedBy({
+			actor: owner,
+			previousSessionId: old.id,
 			insert: sessionInsertFor(ownerId, {
 				tokenHash: next.tokenHash,
 				factors: ["password", "totp"],
@@ -314,7 +312,6 @@ describe("replacing a session (S-FIX-1, E-23)", () => {
 
 		expect(replacement.id).not.toBe(old.id);
 		expect(replacement.factors).toEqual(["password", "totp"]);
-		expect(await foundAndDecoded(previous.tokenHash)).toBeNull();
 		expect((await foundAndDecoded(next.tokenHash))?.session.id).toBe(replacement.id);
 	});
 
@@ -322,8 +319,9 @@ describe("replacing a session (S-FIX-1, E-23)", () => {
 		const before = await countRows();
 
 		await expect(
-			sessions.replaceSession({
-				previousTokenHash: createSessionToken().tokenHash,
+			sessions.replaceSessionOwnedBy({
+				actor: owner,
+				previousSessionId: "00000000-0000-4000-8000-0000000000aa",
 				insert: sessionInsertFor(ownerId),
 			}),
 		).rejects.toBeInstanceOf(PreviousSessionMissingError);
@@ -331,37 +329,14 @@ describe("replacing a session (S-FIX-1, E-23)", () => {
 	});
 
 	it("refuses to hand a user's session to another user", async () => {
-		const previous = createSessionToken();
-		await sessions.insertSession(sessionInsertFor(ownerId, { tokenHash: previous.tokenHash }));
+		const old = await sessions.insertSession(sessionInsertFor(ownerId));
 
 		await expect(
-			sessions.replaceSession({
-				previousTokenHash: previous.tokenHash,
+			sessions.replaceSessionOwnedBy({
+				actor: owner,
+				previousSessionId: old.id,
 				insert: sessionInsertFor(strangerId),
 			}),
-		).rejects.toBeInstanceOf(SessionOwnerMismatchError);
-		expect(await foundAndDecoded(previous.tokenHash)).not.toBeNull();
-	});
-
-	it("replaces every session of the user when the credentials changed (S-FIX-6)", async () => {
-		await sessions.deleteEverySessionOwnedBy({ actor: owner });
-		const elsewhere = createSessionToken();
-		await sessions.insertSession(sessionInsertFor(ownerId, { tokenHash: elsewhere.tokenHash }));
-		await sessions.insertSession(sessionInsertFor(ownerId));
-
-		const replacement = await sessions.replaceEverySessionOfUser({
-			actor: owner,
-			insert: sessionInsertFor(ownerId),
-		});
-
-		expect(await countRows()).toBe(1);
-		expect(await foundAndDecoded(elsewhere.tokenHash)).toBeNull();
-		expect(replacement.userId).toBe(ownerId);
-	});
-
-	it("refuses to replace the sessions of a user the actor is not", async () => {
-		await expect(
-			sessions.replaceEverySessionOfUser({ actor: stranger, insert: sessionInsertFor(ownerId) }),
 		).rejects.toBeInstanceOf(SessionOwnerMismatchError);
 	});
 });

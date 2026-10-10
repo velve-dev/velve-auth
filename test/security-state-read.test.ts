@@ -9,6 +9,7 @@ import {
 	readSecurityState,
 	type SecurityStateVerdict,
 } from "../src/core/security-state/read.js";
+import { envelopesOf, readWithEnvelopes } from "../src/core/security-state/runtime.js";
 import { createVelveAuth } from "../src/index.js";
 import { configFor } from "./auth-fixtures.js";
 import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
@@ -448,4 +449,27 @@ describe("every change T-INTEG-2 lists makes the check refuse the account (S-INT
 			]);
 		});
 	}
+});
+
+//an envelope rewrite is handed the read's ciphertexts and its stored ones replace them in the read (E-3300)
+describe("the envelopes of a verified read", () => {
+	it("hands the rewrite the read's ciphertexts and takes its result back into the read", async () => {
+		const userId = await seedAccount(connection, schema, EVERY_COMPONENT);
+		const read = await readSecurityState(connection, schema, userId);
+		if (read === null) {
+			throw new Error("the account vanished");
+		}
+		const envelopes = envelopesOf(read);
+		const rewritten = { keyVersion: 2, ciphertext: Uint8Array.from(randomBytes(48)) };
+
+		expect(readWithEnvelopes(read, envelopes)).toStrictEqual(read);
+		expect(envelopes.password?.ciphertext).toStrictEqual(read.password?.phc);
+		expect(envelopes.identities.map((identity) => identity.identityId)).toStrictEqual(
+			read.identities.map((identity) => identity.id),
+		);
+		const replaced = readWithEnvelopes(read, { ...envelopes, totpSecret: rewritten });
+		expect(replaced.totp?.secretEnc).toStrictEqual(rewritten.ciphertext);
+		expect(replaced.totp?.keyVersion).toBe(2);
+		expect(replaced.password).toStrictEqual(read.password);
+	});
 });

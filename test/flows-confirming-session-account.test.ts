@@ -41,7 +41,7 @@ async function firstConfirmationDeletesThePassword(
 	});
 	const userId = await createUser(connection, schema);
 	const issued = await sessions.issue({
-		authorisedBy: "read_under_lock",
+		authorisedBy: "unsealed",
 		userId,
 		factors: ["password"],
 		observed: NO_REQUEST,

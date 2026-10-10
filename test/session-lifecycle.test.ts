@@ -49,7 +49,7 @@ async function ageBeyondFreshness(sessionId: string): Promise<void> {
 
 async function signIn(): Promise<{ token: string; sessionId: string }> {
 	const issued = await service.issue({
-		authorisedBy: "read_under_lock",
+		authorisedBy: "unsealed",
 		userId,
 		factors: ["password"],
 		observed: NOWHERE,
@@ -95,7 +95,7 @@ describe("issuing a session", () => {
 
 	it("stores the metadata truncated unless told otherwise (L-10)", async () => {
 		const issued = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: A_BROWSER,
@@ -115,7 +115,7 @@ describe("issuing a session", () => {
 		});
 
 		const issued = await full.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId,
 			factors: ["password"],
 			observed: A_BROWSER,
@@ -130,10 +130,10 @@ describe("re-issuing on a change of trust level (S-FIX-1, S-FIX-3)", () => {
 	it("gives a new token and leaves no row under the old one", async () => {
 		const first = await signIn();
 
-		const second = await service.reissue({
-			authorisedBy: "read_under_lock",
+		const second = await service.issueReplacingPresented({
+			authorisedBy: "unsealed",
 			completes: "totp_second_factor",
-			previousToken: first.token,
+			presentedToken: first.token,
 			userId,
 			factors: ["password", "totp"],
 			observed: NOWHERE,
@@ -147,10 +147,10 @@ describe("re-issuing on a change of trust level (S-FIX-1, S-FIX-3)", () => {
 
 	it("answers a request with the previous token exactly as one without a cookie", async () => {
 		const first = await signIn();
-		await service.reissue({
-			authorisedBy: "read_under_lock",
+		await service.issueReplacingPresented({
+			authorisedBy: "unsealed",
 			completes: "totp_second_factor",
-			previousToken: first.token,
+			presentedToken: first.token,
 			userId,
 			factors: ["password", "totp"],
 			observed: NOWHERE,
@@ -168,50 +168,15 @@ describe("re-issuing on a change of trust level (S-FIX-1, S-FIX-3)", () => {
 			code: "freshness_required",
 		});
 
-		const second = await service.reissue({
-			authorisedBy: "read_under_lock",
+		const second = await service.issueReplacingPresented({
+			authorisedBy: "unsealed",
 			completes: "totp_second_factor",
-			previousToken: first.token,
+			presentedToken: first.token,
 			userId,
 			factors: ["password", "webauthn"],
 			observed: NOWHERE,
 		});
 		expect(await service.list({ resolved: await resolvedNow(second.token) })).not.toEqual([]);
-	});
-});
-
-describe("a credential change (S-FIX-6)", () => {
-	it("takes every other session of the user with it", async () => {
-		const elsewhere = await signIn();
-		const here = await signIn();
-
-		const replacement = await service.reissueAfterCredentialChange({
-			authorisedBy: "read_under_lock",
-			completes: "password_change",
-			resolved: await resolvedNow(here.token),
-			factors: ["password"],
-			observed: NOWHERE,
-		});
-
-		expect(await service.resolve(elsewhere.token)).toBeNull();
-		expect(await service.resolve(here.token)).toBeNull();
-		expect((await resolvedNow(replacement.token)).session.id).toBe(replacement.session.id);
-	});
-
-	it("offers no parameter that would keep the other sessions", async () => {
-		const here = await signIn();
-
-		await service.reissueAfterCredentialChange({
-			authorisedBy: "read_under_lock",
-			completes: "password_change",
-			resolved: await resolvedNow(here.token),
-			factors: ["password"],
-			observed: NOWHERE,
-			// @ts-expect-error S-FIX-6: revoking the other sessions is not a switch.
-			revokeOtherSessions: false,
-		});
-
-		expect(await service.resolve(here.token)).toBeNull();
 	});
 });
 
@@ -232,7 +197,7 @@ describe("revoking (S-OWNER-4, 3.15 B.2)", () => {
 
 	it("changes nothing for a session of another user or one that never existed", async () => {
 		const stranger = await service.issue({
-			authorisedBy: "read_under_lock",
+			authorisedBy: "unsealed",
 			userId: strangerId,
 			factors: ["password"],
 			observed: NOWHERE,
