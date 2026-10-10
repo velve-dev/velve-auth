@@ -18088,3 +18088,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Renaming the field, which would contradict 3.15 B. Catching the refusal by its name instead of its class, which would pass the scan by hiding from it.
 **Reason.** Each scan guards a rule the maintenance module keeps, and each exception is the one fact that makes it keep it.
 **Price.** Three test files carry an exception for one module each, and a later misuse inside that module of the same pattern would pass the scan.
+
+<a id="e-3411"></a>
+
+### The single test connection holds other callers back while a transaction is open, and E-3410's wait goes again
+`E-3411` · security-state-seal · tests, settled
+
+**Context.** E-3410 traced a T-KEY-5 failure to the one `TestConnection` letting another caller's statement run inside an open transaction, and moved the case's wait instead of the harness. The next CI run failed the same way in `test/integ-bound-envelopes.test.ts`: a password sign-in on the rotated ring started its background rehash, and the TOTP check that followed read inside it. `PostgresConnection` in `test/db-postgres-connection.ts` now does what a pooled connection's isolation does: a caller outside the open transaction waits until it commits or rolls back, while the transaction's own work, told apart by an `AsyncLocalStorage` that `transaction` runs its work in, goes straight through, so a test that writes from inside an intercepted statement keeps working. A first version that made every statement outside the transaction's driver object wait failed 44 cases that write from inside such a callback through the connection itself. With the harness fixed, E-3410's wait in `test/key-rotation-restart-proof.test.ts` is removed again. Twenty-four runs of that file and `test/integ-bound-envelopes.test.ts` started twelve at a time passed, where one of eight had failed before. One run of the second file failed on a 30-second step boundary instead: its enrolment uses the real clock and a code for the previous step, which falls outside the tolerance when the step changes twice before the check, so the enrolment now waits out the last ten seconds of a step.
+**Rejected.** A pool in the cases that met it, which would leave every other test on the one connection exposed to the same interleaving.
+**Reason.** A harness that lets statements of two callers mix inside one transaction tests a database no driver gives.
+**Price.** A test that starts a transaction and then waits on a query of another caller on the same connection now waits forever, and has to use a second connection, as it would have to on a pool.
