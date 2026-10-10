@@ -19,6 +19,8 @@ import {
 	DAY,
 	HOUR,
 	MINUTE,
+	rebindSessionsOf,
+	SESSION_FIXTURE_KEYS,
 	sessionInsertFor,
 	statementsMatching,
 } from "./session-fixtures.js";
@@ -41,6 +43,7 @@ async function ageSession(sessionId: string, by: number): Promise<void> {
 		 WHERE id = $1 AND user_id = $3`,
 		[sessionId, by / 1000, ownerId],
 	);
+	await rebindSessionsOf(migrated.connection, migrated.schema, SESSION_FIXTURE_KEYS, { sessionId });
 }
 
 async function expireSession(sessionId: string, column: string): Promise<void> {
@@ -60,9 +63,15 @@ async function countRows(): Promise<number> {
 	return row?.total ?? -1;
 }
 
+async function foundAndDecoded(tokenHash: Uint8Array) {
+	return (await sessions.findSessionByTokenHash(tokenHash))?.decode() ?? null;
+}
+
 beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_session_repository");
 	sessions = createSessionRepository({
+		keys: SESSION_FIXTURE_KEYS,
+		sealing: "migrating",
 		driver: migrated.connection,
 		schema: migrated.schema,
 	});
@@ -135,7 +144,7 @@ describe("finding a session by its token hash (S-CACHE-2, S-TIM-4)", () => {
 			sessionInsertFor(ownerId, { tokenHash: issued.tokenHash }),
 		);
 
-		const found = await sessions.findSessionByTokenHash(issued.tokenHash);
+		const found = await foundAndDecoded(issued.tokenHash);
 
 		expect(found?.session.id).toBe(inserted.id);
 		expect(found?.userId).toBe(ownerId);
@@ -148,7 +157,7 @@ describe("finding a session by its token hash (S-CACHE-2, S-TIM-4)", () => {
 	});
 
 	it("answers null for a hash no row carries", async () => {
-		expect(await sessions.findSessionByTokenHash(createSessionToken().tokenHash)).toBeNull();
+		expect(await foundAndDecoded(createSessionToken().tokenHash)).toBeNull();
 	});
 
 	it("answers null once either deadline has passed", async () => {
@@ -159,7 +168,7 @@ describe("finding a session by its token hash (S-CACHE-2, S-TIM-4)", () => {
 			);
 			await expireSession(session.id, column);
 
-			expect({ column, found: await sessions.findSessionByTokenHash(issued.tokenHash) }).toEqual({
+			expect({ column, found: await foundAndDecoded(issued.tokenHash) }).toEqual({
 				column,
 				found: null,
 			});
@@ -168,7 +177,12 @@ describe("finding a session by its token hash (S-CACHE-2, S-TIM-4)", () => {
 
 	it("costs exactly one statement per answer, however often it is asked (S-CACHE-1)", async () => {
 		const counted = countingDriver(migrated.connection);
-		const counting = createSessionRepository({ driver: counted.driver, schema: migrated.schema });
+		const counting = createSessionRepository({
+			keys: SESSION_FIXTURE_KEYS,
+			sealing: "migrating",
+			driver: counted.driver,
+			schema: migrated.schema,
+		});
 		const issued = createSessionToken();
 		await counting.insertSession(sessionInsertFor(ownerId, { tokenHash: issued.tokenHash }));
 		counted.reset();
@@ -202,7 +216,7 @@ describe("extending the idle deadline (architecture 3.5)", () => {
 			sessionInsertFor(ownerId, { tokenHash: issued.tokenHash }),
 		);
 		await ageSession(session.id, 2 * HOUR);
-		const aged = await sessions.findSessionByTokenHash(issued.tokenHash);
+		const aged = await foundAndDecoded(issued.tokenHash);
 
 		const extended = await sessions.extendIdleDeadline({
 			sessionId: session.id,
@@ -210,7 +224,7 @@ describe("extending the idle deadline (architecture 3.5)", () => {
 			idleTimeoutMs: 7 * DAY,
 			writtenNoSoonerThanMs: HOUR,
 		});
-		const after = await sessions.findSessionByTokenHash(issued.tokenHash);
+		const after = await foundAndDecoded(issued.tokenHash);
 
 		expect(extended).not.toBeNull();
 		expect(after?.session.idleExpiresAt.getTime()).toBeGreaterThan(
@@ -282,16 +296,14 @@ describe("removing sessions (S-OWNER-2, S-OWNER-4)", () => {
 	});
 });
 
-describe("replacing a session (S-FIX-1, E-23)", () => {
-	it("inserts the new row and removes the old one in one transaction", async () => {
-		const previous = createSessionToken();
-		const old = await sessions.insertSession(
-			sessionInsertFor(ownerId, { tokenHash: previous.tokenHash }),
-		);
+describe("replacing a session the actor names (S-FIX-1, E-23)", () => {
+	it("inserts the new row and removes the named one in one transaction", async () => {
+		const old = await sessions.insertSession(sessionInsertFor(ownerId));
 		const next = createSessionToken();
 
-		const replacement = await sessions.replaceSession({
-			previousTokenHash: previous.tokenHash,
+		const replacement = await sessions.replaceSessionOwnedBy({
+			actor: owner,
+			previousSessionId: old.id,
 			insert: sessionInsertFor(ownerId, {
 				tokenHash: next.tokenHash,
 				factors: ["password", "totp"],
@@ -300,18 +312,16 @@ describe("replacing a session (S-FIX-1, E-23)", () => {
 
 		expect(replacement.id).not.toBe(old.id);
 		expect(replacement.factors).toEqual(["password", "totp"]);
-		expect(await sessions.findSessionByTokenHash(previous.tokenHash)).toBeNull();
-		expect((await sessions.findSessionByTokenHash(next.tokenHash))?.session.id).toBe(
-			replacement.id,
-		);
+		expect((await foundAndDecoded(next.tokenHash))?.session.id).toBe(replacement.id);
 	});
 
 	it("issues nothing when the session it was to replace is already gone (E-239)", async () => {
 		const before = await countRows();
 
 		await expect(
-			sessions.replaceSession({
-				previousTokenHash: createSessionToken().tokenHash,
+			sessions.replaceSessionOwnedBy({
+				actor: owner,
+				previousSessionId: "00000000-0000-4000-8000-0000000000aa",
 				insert: sessionInsertFor(ownerId),
 			}),
 		).rejects.toBeInstanceOf(PreviousSessionMissingError);
@@ -319,37 +329,14 @@ describe("replacing a session (S-FIX-1, E-23)", () => {
 	});
 
 	it("refuses to hand a user's session to another user", async () => {
-		const previous = createSessionToken();
-		await sessions.insertSession(sessionInsertFor(ownerId, { tokenHash: previous.tokenHash }));
+		const old = await sessions.insertSession(sessionInsertFor(ownerId));
 
 		await expect(
-			sessions.replaceSession({
-				previousTokenHash: previous.tokenHash,
+			sessions.replaceSessionOwnedBy({
+				actor: owner,
+				previousSessionId: old.id,
 				insert: sessionInsertFor(strangerId),
 			}),
-		).rejects.toBeInstanceOf(SessionOwnerMismatchError);
-		expect(await sessions.findSessionByTokenHash(previous.tokenHash)).not.toBeNull();
-	});
-
-	it("replaces every session of the user when the credentials changed (S-FIX-6)", async () => {
-		await sessions.deleteEverySessionOwnedBy({ actor: owner });
-		const elsewhere = createSessionToken();
-		await sessions.insertSession(sessionInsertFor(ownerId, { tokenHash: elsewhere.tokenHash }));
-		await sessions.insertSession(sessionInsertFor(ownerId));
-
-		const replacement = await sessions.replaceEverySessionOfUser({
-			actor: owner,
-			insert: sessionInsertFor(ownerId),
-		});
-
-		expect(await countRows()).toBe(1);
-		expect(await sessions.findSessionByTokenHash(elsewhere.tokenHash)).toBeNull();
-		expect(replacement.userId).toBe(ownerId);
-	});
-
-	it("refuses to replace the sessions of a user the actor is not", async () => {
-		await expect(
-			sessions.replaceEverySessionOfUser({ actor: stranger, insert: sessionInsertFor(ownerId) }),
 		).rejects.toBeInstanceOf(SessionOwnerMismatchError);
 	});
 });

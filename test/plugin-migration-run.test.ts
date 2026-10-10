@@ -105,7 +105,7 @@ describe("a plugin's migrations run in the same runner (3.11)", () => {
 
 		const report = await migrated.migrate([auditPlugin()]);
 
-		expect(report.currentVersion).toBe(2);
+		expect(report.currentVersion).toBe(4);
 		expect(await tablesIn(migrated)).toContain("audit_entry");
 		expect(await pluginLedgerOf(migrated)).toStrictEqual(["audit@1"]);
 	});

@@ -25,8 +25,8 @@ describe("nothing reaches one_time_token after taking the account row (E-1616)",
 		expect(tokenReachedAfterAccountLock(source)).toStrictEqual(["one_time_token"]);
 	});
 
-	it.each(["replaceOneTimeToken", "consumeOneTimeToken"])(
-		"reports %s, because the repository method is the only other way to that table",
+	it.each(["replaceOneTimeToken", "consumeOneTimeToken", "mintArtefact"])(
+		"reports %s, because it is one of the other ways to that table",
 		(method) => {
 			expect(tokenReachedAfterAccountLock(`${LOCK}\nawait tokens.${method}({});`)).toStrictEqual([
 				method,
@@ -65,5 +65,36 @@ describe("nothing reaches one_time_token after taking the account row (E-1616)",
 			"replaceOneTimeToken",
 			"consumeOneTimeToken",
 		]);
+	});
+
+	/** A helper imported under another name is called by that name, which the plain names miss. */
+	it("reports a mint helper the import renames, under the name it was exported as", () => {
+		const source = [
+			'import { mintArtefact as mint } from "./artefact.js";',
+			LOCK,
+			"await mint(transaction, schema, {});",
+		].join("\n");
+
+		expect(tokenReachedAfterAccountLock(source)).toStrictEqual(["mintArtefact"]);
+	});
+
+	it("reads a renamed lock as taking the account row", () => {
+		const source = [
+			'import { lockAccountRow as holdAccount } from "../db/lock.js";',
+			"await holdAccount(transaction, schema, userId);",
+			"await tokens.consumeOneTimeToken({});",
+		].join("\n");
+
+		expect(tokenReachedAfterAccountLock(source)).toStrictEqual(["consumeOneTimeToken"]);
+	});
+
+	it("does not read a renamed import of anything else as reaching for the table", () => {
+		const source = [
+			'import { createSessionRepository as sessions } from "../db/session.js";',
+			LOCK,
+			"await sessions(transaction);",
+		].join("\n");
+
+		expect(tokenReachedAfterAccountLock(source)).toStrictEqual([]);
 	});
 });

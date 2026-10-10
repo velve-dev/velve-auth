@@ -3,7 +3,8 @@ import { initialSchema } from "../src/core/db/migrations/initial-schema.js";
 import { dropSchema, type MigratedSchema, openMigratedSchema, readColumns } from "./db-fixtures.js";
 
 // Every entry is one column of the schema in architecture 3.2 with the differences
-// from 3.17 (L-2, L-12, L-3, import_mapping, password_reset_required) already applied.
+// from 3.17 (L-2, L-12, L-3, import_mapping, password_reset_required) and the table of
+// 3.18 (security_state, migration 3, and the token MAC columns, migration 4) already applied.
 // `password_credential.set_by_session_id` and `oauth_flow.link_from_session_id` were
 // once carried by neither section; the specification was amended to declare both, so
 // this list is again what its first sentence says it is (E-1095, E-1097).
@@ -42,6 +43,8 @@ const SPECIFIED_COLUMNS: readonly string[] = [
 	"one_time_token.expires_at timestamp with time zone NOT NULL",
 	"one_time_token.payload jsonb",
 	"one_time_token.purpose text NOT NULL",
+	"one_time_token.token_mac bytea NOT NULL",
+	"one_time_token.token_mac_key_version integer NOT NULL",
 	"one_time_token.token_sha256 bytea NOT NULL",
 	"one_time_token.user_id uuid",
 	"password_credential.created_at timestamp with time zone NOT NULL DEFAULT",
@@ -56,10 +59,14 @@ const SPECIFIED_COLUMNS: readonly string[] = [
 	"password_reset_required.reason text NOT NULL",
 	"password_reset_required.source text NOT NULL",
 	"password_reset_required.user_id uuid NOT NULL",
+	"pending_authentication.attempt_generation bigint NOT NULL",
 	"pending_authentication.attempts integer NOT NULL DEFAULT",
 	"pending_authentication.created_at timestamp with time zone NOT NULL DEFAULT",
 	"pending_authentication.expires_at timestamp with time zone NOT NULL",
 	"pending_authentication.factors_completed text[] NOT NULL",
+	"pending_authentication.session_epoch bigint NOT NULL",
+	"pending_authentication.token_mac bytea NOT NULL",
+	"pending_authentication.token_mac_key_version integer NOT NULL",
 	"pending_authentication.token_sha256 bytea NOT NULL",
 	"pending_authentication.user_id uuid NOT NULL",
 	"rate_bucket.bucket_key text NOT NULL",
@@ -74,6 +81,21 @@ const SPECIFIED_COLUMNS: readonly string[] = [
 	"schema_migration.checksum text NOT NULL",
 	"schema_migration.name text NOT NULL",
 	"schema_migration.version integer NOT NULL",
+	"security_state.attempt_generation bigint NOT NULL DEFAULT",
+	"security_state.attempt_last bytea",
+	"security_state.components_version bigint NOT NULL DEFAULT",
+	"security_state.digest bytea NOT NULL",
+	"security_state.email_change_generation bigint NOT NULL DEFAULT",
+	"security_state.email_verify_generation bigint NOT NULL DEFAULT",
+	"security_state.key_version integer NOT NULL",
+	"security_state.magic_link_generation bigint NOT NULL DEFAULT",
+	"security_state.password_reset_generation bigint NOT NULL DEFAULT",
+	"security_state.sealed_at timestamp with time zone NOT NULL DEFAULT",
+	"security_state.session_epoch bigint NOT NULL DEFAULT",
+	"security_state.session_generation bigint NOT NULL DEFAULT",
+	"security_state.token_last bytea",
+	"security_state.user_id uuid NOT NULL",
+	"security_state.version bigint NOT NULL",
 	"session.absolute_expires_at timestamp with time zone NOT NULL",
 	"session.created_at timestamp with time zone NOT NULL DEFAULT",
 	"session.factors text[] NOT NULL DEFAULT",
@@ -81,6 +103,8 @@ const SPECIFIED_COLUMNS: readonly string[] = [
 	"session.idle_expires_at timestamp with time zone NOT NULL",
 	"session.ip inet",
 	"session.last_used_at timestamp with time zone NOT NULL DEFAULT",
+	"session.token_mac bytea NOT NULL",
+	"session.token_mac_key_version integer NOT NULL",
 	"session.token_sha256 bytea NOT NULL",
 	"session.user_agent text",
 	"session.user_id uuid NOT NULL",
@@ -106,6 +130,8 @@ const SPECIFIED_COLUMNS: readonly string[] = [
 	"webauthn_challenge.created_at timestamp with time zone NOT NULL DEFAULT",
 	"webauthn_challenge.expires_at timestamp with time zone NOT NULL",
 	"webauthn_challenge.purpose text NOT NULL",
+	"webauthn_challenge.token_mac bytea NOT NULL",
+	"webauthn_challenge.token_mac_key_version integer NOT NULL",
 	"webauthn_challenge.user_id uuid",
 	"webauthn_credential.aaguid uuid",
 	"webauthn_credential.backup_eligible boolean NOT NULL",
@@ -135,17 +161,21 @@ const SPECIFIED_INDEXES: readonly string[] = [
 	"CREATE INDEX oauth_flow_sweep_idx ON SCHEMA.oauth_flow USING btree (expires_at)",
 	"CREATE UNIQUE INDEX one_time_token_pkey ON SCHEMA.one_time_token USING btree (token_sha256)",
 	"CREATE INDEX one_time_token_sweep_idx ON SCHEMA.one_time_token USING btree (expires_at)",
+	"CREATE INDEX one_time_token_token_mac_key_version_idx ON SCHEMA.one_time_token USING btree (token_mac_key_version)",
 	"CREATE INDEX one_time_token_user_purpose_idx ON SCHEMA.one_time_token USING btree (user_id, purpose)",
 	"CREATE UNIQUE INDEX password_credential_pkey ON SCHEMA.password_credential USING btree (user_id)",
 	"CREATE UNIQUE INDEX password_reset_required_pkey ON SCHEMA.password_reset_required USING btree (user_id)",
 	"CREATE UNIQUE INDEX pending_authentication_pkey ON SCHEMA.pending_authentication USING btree (token_sha256)",
 	"CREATE INDEX pending_authentication_sweep_idx ON SCHEMA.pending_authentication USING btree (expires_at)",
+	"CREATE INDEX pending_authentication_token_mac_key_version_idx ON SCHEMA.pending_authentication USING btree (token_mac_key_version)",
 	"CREATE UNIQUE INDEX rate_bucket_pkey ON SCHEMA.rate_bucket USING btree (bucket_key)",
 	"CREATE INDEX rate_bucket_sweep_idx ON SCHEMA.rate_bucket USING btree (expires_at)",
 	"CREATE UNIQUE INDEX recovery_code_pkey ON SCHEMA.recovery_code USING btree (user_id, code_hmac)",
 	"CREATE UNIQUE INDEX schema_migration_pkey ON SCHEMA.schema_migration USING btree (version)",
+	"CREATE UNIQUE INDEX security_state_pkey ON SCHEMA.security_state USING btree (user_id)",
 	"CREATE UNIQUE INDEX session_pkey ON SCHEMA.session USING btree (id)",
 	"CREATE INDEX session_sweep_idx ON SCHEMA.session USING btree (absolute_expires_at)",
+	"CREATE INDEX session_token_mac_key_version_idx ON SCHEMA.session USING btree (token_mac_key_version)",
 	"CREATE UNIQUE INDEX session_token_unique ON SCHEMA.session USING btree (token_sha256)",
 	"CREATE INDEX session_user_id_idx ON SCHEMA.session USING btree (user_id)",
 	"CREATE UNIQUE INDEX totp_credential_pkey ON SCHEMA.totp_credential USING btree (user_id)",
@@ -156,12 +186,13 @@ const SPECIFIED_INDEXES: readonly string[] = [
 	'CREATE UNIQUE INDEX user_username_key_key ON SCHEMA."user" USING btree (username_key) WHERE (username_key IS NOT NULL)',
 	"CREATE UNIQUE INDEX webauthn_challenge_pkey ON SCHEMA.webauthn_challenge USING btree (challenge_sha256)",
 	"CREATE INDEX webauthn_challenge_sweep_idx ON SCHEMA.webauthn_challenge USING btree (expires_at)",
+	"CREATE INDEX webauthn_challenge_token_mac_key_version_idx ON SCHEMA.webauthn_challenge USING btree (token_mac_key_version)",
 	"CREATE UNIQUE INDEX webauthn_credential_id_unique ON SCHEMA.webauthn_credential USING btree (credential_id)",
 	"CREATE UNIQUE INDEX webauthn_credential_pkey ON SCHEMA.webauthn_credential USING btree (id)",
 	"CREATE INDEX webauthn_credential_user_idx ON SCHEMA.webauthn_credential USING btree (user_id)",
 ];
 
-const SPECIFIED_TABLES = 16;
+const SPECIFIED_TABLES = 17;
 
 let migrated: MigratedSchema;
 
@@ -174,13 +205,13 @@ afterAll(async () => {
 	await migrated.connection.close();
 });
 
-describe("migration 1 against architecture 3.2 and 3.17", () => {
+describe("the shipped migrations against architecture 3.2, 3.17 and 3.18", () => {
 	it("creates every table in its final form rather than altering it afterwards", () => {
 		expect(initialSchema.sql).not.toMatch(/\bALTER\s+TABLE\b/i);
 		expect(initialSchema.sql).not.toMatch(/\bDROP\s+COLUMN\b/i);
 	});
 
-	it("leaves the schema with sixteen tables", async () => {
+	it("leaves the schema with seventeen tables", async () => {
 		const rows = await migrated.connection.query<{ present: number }>(
 			`SELECT count(*)::int AS present FROM information_schema.tables
 			 WHERE table_schema = $1 AND table_type = 'BASE TABLE'`,

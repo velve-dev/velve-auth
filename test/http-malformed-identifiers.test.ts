@@ -1,9 +1,18 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import { createSessionToken } from "../src/core/session/token.js";
-import { type MountedAuth, mountAuth, requestTo, TEST_ORIGIN } from "./auth-fixtures.js";
+import {
+	type MountedAuth,
+	mountAuth,
+	requestTo,
+	TEST_ORIGIN,
+	testKeyProvider,
+} from "./auth-fixtures.js";
 import { createUser, dropSchema } from "./db-fixtures.js";
 import { createStubProvider, oauthConfigFor } from "./oauth-provider.js";
+import { sessionMacParameters } from "./session-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 /* ------------------------------------------------------------------ *
  * S-OWNER-8. An identifier that cannot name a row is answered exactly
@@ -46,6 +55,7 @@ beforeAll(async () => {
 		claims: { sub: "malformed-ids", email: "malformed-ids@example.com", email_verified: true },
 	});
 	mounted = await mountAuth("malformedids", {
+		keys: TOKEN_KEYS,
 		oauth: oauthConfigFor({ openIdConnect: false }),
 		fetch: provider.fetch,
 		webauthn: {
@@ -75,9 +85,18 @@ async function signedInCaller(withPassword: boolean): Promise<string> {
 	const issued = createSessionToken();
 	await mounted.connection.query(
 		`INSERT INTO ${mounted.schema}.session
-		   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors)
-		 VALUES ($1, $2, now() + interval '7 days', now() + interval '30 days', '{password}'::text[])`,
-		[userId, issued.tokenHash],
+		   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors,
+			    token_mac, token_mac_key_version, created_at, id)
+		 VALUES ($1, $2, $7::timestamptz, $8::timestamptz, '{password}'::text[], $3, $4, $5::timestamptz, $6::uuid)`,
+		[
+			userId,
+			issued.tokenHash,
+			...(await sessionMacParameters(TOKEN_KEYS, {
+				userId,
+				tokenHash: issued.tokenHash,
+				factors: ["password"],
+			})),
+		],
 	);
 	return `${DEFAULT_COOKIE_NAMES.session}=${issued.token}`;
 }

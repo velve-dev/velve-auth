@@ -16,6 +16,7 @@ export type {
 	RateLimitConfig,
 	RecoveryCodesConfig,
 	RecoveryCodesRequirement,
+	SecurityStateConfig,
 	SignInLookup,
 	TotpConfig,
 	VelveAuthConfig,
@@ -43,6 +44,12 @@ export {
 	SECURITY_OPTIONS,
 	type SecurityOption,
 } from "./core/auth/security-options.js";
+export {
+	type RowsUnderSecurityStateKeyVersion,
+	type SealedSecurityState,
+	SecurityStateMaintenanceError,
+	type SecurityStateReport,
+} from "./core/auth/security-state-maintenance.js";
 export { type RouteConflict, THE_CORE, VelveStartupError } from "./core/auth/startup.js";
 export {
 	TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS,
@@ -114,6 +121,8 @@ export type { UsernameRules } from "./core/identity/configuration.js";
 export { type KeyProvider, rootKeyProvider } from "./core/keys/index.js";
 export type * from "./core/oauth/index.js";
 export type * from "./core/plugin/index.js";
+export type { SecurityStateAlarm } from "./core/security-state/alarm.js";
+export type { LimitsConfig } from "./core/security-state/limits.js";
 export type { SessionToken } from "./core/session/token.js";
 
 //this is the one place in the package where a clock is read (E-231)

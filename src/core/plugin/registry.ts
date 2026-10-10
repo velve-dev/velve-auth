@@ -4,7 +4,6 @@ import type { Driver } from "../db/driver.js";
 import { assertIdentifier, InvalidIdentifierError } from "../db/identifier.js";
 import type { OwnedMigration } from "../db/migration.js";
 import { namesTableOfPlugin } from "../db/migrations/index.js";
-import { createSessionRepository } from "../db/repositories/session.js";
 import { type AnyErrorCode, type PluginErrorCode, VELVE_ERROR_CODES } from "../http/error-map.js";
 import { type BucketRule, isUsableBucketRule, type RateLimitRule } from "../http/rate-limit.js";
 import {
@@ -13,6 +12,8 @@ import {
 	type RouteDeclaration,
 	type RouteMetadata,
 } from "../http/route.js";
+import type { SecurityStateAnchorPort } from "../security-state/anchor.js";
+import { asOneReadingOfTheAnchor, securityStateAnchorPortsOf } from "./anchor-ports.js";
 import type {
 	FrozenContext,
 	PluginHooks,
@@ -61,6 +62,8 @@ export interface PluginRuntime {
 	ownerOf(route: RouteMetadata): string;
 	/** whether any plugin listens at a point, to skip building an event nobody hears */
 	listensTo(point: keyof PluginHooks): boolean;
+	/** one port per plugin that contributes a security-state anchor, in dependency order */
+	readonly securityStateAnchors: readonly SecurityStateAnchorPort[];
 }
 
 interface RegisteredPlugin {
@@ -81,6 +84,7 @@ const DECLARED_PLUGIN_FIELDS: readonly string[] = [
 	"hooks",
 	"errorCodes",
 	"rateLimitRules",
+	"securityStateAnchor",
 ];
 
 const HOOK_POINTS: readonly (keyof PluginHooks)[] = [
@@ -311,6 +315,7 @@ function hooksOf(hooks: PluginHooks | undefined): PluginHooks {
 //everything past this reads plain data and never the object the application handed over (E-900)
 function asOneReadingOfThePlugin(plugin: VelvePlugin): VelvePlugin {
 	const rules = plainRecordOf<RateLimitRule>(plugin.rateLimitRules ?? {});
+	const anchor = asOneReadingOfTheAnchor(plugin.securityStateAnchor);
 	return {
 		id: plugin.id,
 		dependsOn: [...(plugin.dependsOn ?? [])],
@@ -326,6 +331,7 @@ function asOneReadingOfThePlugin(plugin: VelvePlugin): VelvePlugin {
 		hooks: hooksOf(plugin.hooks),
 		errorCodes: [...(plugin.errorCodes ?? [])],
 		rateLimitRules: rules,
+		...(anchor === undefined ? {} : { securityStateAnchor: anchor }),
 	};
 }
 
@@ -468,7 +474,7 @@ function servicesBoundTo(services: FrozenContextServices, lent: Driver): FrozenC
 		...services,
 		driver: lent,
 		users: createUserRepository({ driver: lent, schema: services.schema }),
-		sessions: createSessionRepository({ driver: lent, schema: services.schema }),
+		sessions: services.sessions.boundTo(lent),
 		insideATransaction: true,
 	};
 }
@@ -668,5 +674,6 @@ export function createPluginRuntime(options: {
 		contextOf: (route) => contextByRoute.get(route) ?? coreContext,
 		ownerOf: (route) => ownerByRoute.get(route) ?? THE_CORE,
 		listensTo,
+		securityStateAnchors: securityStateAnchorPortsOf(registered),
 	};
 }

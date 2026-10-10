@@ -1,5 +1,9 @@
 //a plugin export is added here and never in the shared barrel
 export type {
+	SecurityStateFloor,
+	SecurityStateSealedEvent,
+} from "../security-state/anchor.js";
+export type {
 	FrozenContext,
 	FrozenRepositories,
 	PluginActor,
@@ -7,6 +11,7 @@ export type {
 	PluginMigration,
 	PluginRoute,
 	RevokeReason,
+	SecurityStateAnchor,
 	SessionCreatedEvent,
 	SessionCreateEvent,
 	SessionRevokeEvent,

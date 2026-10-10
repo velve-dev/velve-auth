@@ -9,8 +9,11 @@ import {
 	type WebAuthnService,
 	type WebAuthnServiceOptions,
 } from "../src/core/factor/webauthn/service.js";
+import type { KeyProvider } from "../src/core/keys/provider.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { testSecurityState } from "./security-state-fixtures.js";
 import { createVirtualAuthenticator, type VirtualAuthenticator } from "./webauthn-simulator.js";
 
 export const RELYING_PARTY_ID = "example.com";
@@ -26,6 +29,8 @@ export interface WebAuthnFixture {
 	readonly connection: TestConnection;
 	readonly schema: string;
 	readonly service: WebAuthnService;
+	/** the keys the service binds its challenges under, for a test that issues one directly */
+	readonly keys: KeyProvider;
 	close(): Promise<void>;
 }
 
@@ -34,12 +39,20 @@ export async function openWebAuthnFixture(
 	config: WebAuthnConfig = TEST_WEBAUTHN_CONFIG,
 ): Promise<WebAuthnFixture> {
 	const { connection, schema } = await openMigratedSchema(prefix);
-	const options: WebAuthnServiceOptions = { driver: connection, schema, webauthn: config };
+	const keys = testKeyProvider();
+	const options: WebAuthnServiceOptions = {
+		driver: connection,
+		schema,
+		keys,
+		webauthn: config,
+		securityState: testSecurityState(connection, schema, keys),
+	};
 	const service = createWebAuthnService(options);
 	return {
 		connection,
 		schema,
 		service,
+		keys,
 		async close() {
 			await dropSchema(connection, schema);
 			await connection.close();
@@ -108,6 +121,7 @@ export async function beginSecondFactor(
 ): Promise<PendingResolution> {
 	const pendingAuthentications = createPendingAuthenticationService({
 		driver: fixture.connection,
+		keys: testKeyProvider(),
 		schema: fixture.schema,
 	});
 	const { token } = await pendingAuthentications.begin({

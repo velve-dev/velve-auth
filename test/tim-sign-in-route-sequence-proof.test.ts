@@ -135,11 +135,23 @@ beforeAll(async () => {
 	await handler(postTo("/sign-in/password", { email: "warmup@example.com", password: PASSWORD }));
 }, 120_000);
 
+async function userIdOf(email: string): Promise<string> {
+	const [row] = await opened.connection.query<{ id: string }>(
+		`SELECT id FROM ${opened.schema}.user WHERE email = $1`,
+		[email],
+	);
+	if (row === undefined) {
+		throw new Error(`no account carries ${email}`);
+	}
+	return row.id;
+}
+
 //an import the cost ceilings refuse must cost what an absent user costs (S-TIM-2)
 async function storeOverTheCeiling(email: string): Promise<void> {
 	const filler = encodeStandardBase64(new Uint8Array(32).fill(1));
 	const sealed = await sealPhc(
 		keys,
+		await userIdOf(email),
 		`$argon2id$v=19$m=${MAXIMUM_CONFIGURABLE_MEMORY_KIB + 1},t=2,p=1$${filler}$${filler}`,
 	);
 	await opened.connection.query(
@@ -168,7 +180,7 @@ const MALFORMED_UNDER_THE_CEILINGS: Record<string, { phc: string; scheme: string
 };
 
 async function storeCredential(email: string, phc: string, scheme: string): Promise<void> {
-	const sealed = await sealPhc(keys, phc);
+	const sealed = await sealPhc(keys, await userIdOf(email), phc);
 	await opened.connection.query(
 		`UPDATE ${opened.schema}.password_credential SET phc = $2, key_version = $3, scheme = $4
 		 WHERE user_id = (SELECT id FROM ${opened.schema}.user WHERE email = $1)`,

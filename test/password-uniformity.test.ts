@@ -187,12 +187,17 @@ beforeAll(async () => {
 
 beforeEach(async () => {
 	probe = await createProbe();
-	const sealed = await credential.sealPhc(probe.environment.keys, stored.byScheme.argon2id);
+	const sealed = await credential.sealPhc(
+		probe.environment.keys,
+		USER_WITH_CREDENTIAL,
+		stored.byScheme.argon2id,
+	);
 	probe.rows.set(USER_WITH_CREDENTIAL, {
 		userId: USER_WITH_CREDENTIAL,
 		phc: sealed.ciphertext,
 		keyVersion: sealed.keyVersion,
 		scheme: "argon2id",
+		unbound: "refused",
 	});
 	probe.reset();
 }, 120_000);
@@ -228,12 +233,17 @@ describe("S-TIM-1 / L-1 — one code path that does the same work whatever the o
 	}, 120_000);
 
 	it("keeps the sequence identical when the stored scheme is one the configuration refuses", async () => {
-		const sealed = await credential.sealPhc(probe.environment.keys, stored.byScheme.bcrypt);
+		const sealed = await credential.sealPhc(
+			probe.environment.keys,
+			USER_WITH_CREDENTIAL,
+			stored.byScheme.bcrypt,
+		);
 		probe.rows.set(USER_WITH_CREDENTIAL, {
 			userId: USER_WITH_CREDENTIAL,
 			phc: sealed.ciphertext,
 			keyVersion: sealed.keyVersion,
 			scheme: "bcrypt",
+			unbound: "refused",
 		});
 
 		const narrowed: PasswordEnvironment = {
@@ -319,12 +329,17 @@ describe("S-TIM-2 — the dummy is a real credential read by the real verifier",
 
 describe("S-TIM-5 — a rehash never lengthens the sign-in that triggered it", () => {
 	it("runs no derivation of its own until the caller asks for it", async () => {
-		const sealed = await credential.sealPhc(probe.environment.keys, stored.byScheme.bcrypt);
+		const sealed = await credential.sealPhc(
+			probe.environment.keys,
+			USER_WITH_CREDENTIAL,
+			stored.byScheme.bcrypt,
+		);
 		probe.rows.set(USER_WITH_CREDENTIAL, {
 			userId: USER_WITH_CREDENTIAL,
 			phc: sealed.ciphertext,
 			keyVersion: sealed.keyVersion,
 			scheme: "bcrypt",
+			unbound: "refused",
 		});
 
 		probe.reset();
@@ -348,12 +363,17 @@ describe("S-TIM-5 — a rehash never lengthens the sign-in that triggered it", (
 	}, 120_000);
 
 	it("never writes anything on a failed sign-in", async () => {
-		const sealed = await credential.sealPhc(probe.environment.keys, stored.byScheme.bcrypt);
+		const sealed = await credential.sealPhc(
+			probe.environment.keys,
+			USER_WITH_CREDENTIAL,
+			stored.byScheme.bcrypt,
+		);
 		probe.rows.set(USER_WITH_CREDENTIAL, {
 			userId: USER_WITH_CREDENTIAL,
 			phc: sealed.ciphertext,
 			keyVersion: sealed.keyVersion,
 			scheme: "bcrypt",
+			unbound: "refused",
 		});
 
 		for (const attemptInput of [

@@ -34,6 +34,7 @@ import {
 	type TotpService,
 	totpToleranceOf,
 } from "./totp/index.js";
+import type { CheckedSecondFactor } from "./totp/service.js";
 import type { WebAuthnCredential } from "./webauthn/credential-repository.js";
 import {
 	createWebAuthnService,
@@ -177,6 +178,7 @@ async function signedInBySecondFactor(
 	spent: {
 		readonly held: HeldPendingState;
 		readonly factor: "totp" | "webauthn" | "recovery";
+		readonly authorisedBy: CheckedSecondFactor["authorisedBy"];
 		readonly signCountRegressed?: boolean;
 	},
 ): Promise<SignInResult> {
@@ -191,6 +193,7 @@ async function signedInBySecondFactor(
 			services.completeSecondFactor.complete({
 				pendingToken: toPendingToken(spent.held.token),
 				factor: spent.factor,
+				authorisedBy: spent.authorisedBy,
 				presentedSessionToken: context.sessionToken,
 				observed,
 			}),
@@ -282,10 +285,14 @@ function totpRoutes(services: RouteServices, totp: TotpService) {
 		handler: async (input, context): Promise<SignInResult> => {
 			const held = heldPendingState(context);
 			await spendAccountToken(services, context, held.resolution.userId);
-			await totp.verify({ pendingToken: toPendingToken(held.token), code: input.code });
+			const checked = await totp.verify({
+				pendingToken: toPendingToken(held.token),
+				code: input.code,
+			});
 			return signedInBySecondFactor(services, context, {
 				held,
 				factor: "totp",
+				authorisedBy: checked.authorisedBy,
 			});
 		},
 	});
@@ -340,10 +347,14 @@ function recoveryRoutes(services: RouteServices, recovery: RecoveryCodeService) 
 		handler: async (input, context): Promise<SignInResult> => {
 			const held = heldPendingState(context);
 			await spendAccountToken(services, context, held.resolution.userId);
-			await recovery.verify({ pendingToken: toPendingToken(held.token), code: input.code });
+			const checked = await recovery.verify({
+				pendingToken: toPendingToken(held.token),
+				code: input.code,
+			});
 			return signedInBySecondFactor(services, context, {
 				held,
 				factor: "recovery",
+				authorisedBy: checked.authorisedBy,
 			});
 		},
 	});
@@ -458,6 +469,7 @@ function webAuthnRoutes(services: RouteServices, webauthn: WebAuthnService) {
 			return signedInBySecondFactor(services, context, {
 				held,
 				factor: "webauthn",
+				authorisedBy: assertion.authorisedBy,
 				signCountRegressed: assertion.signCountRegressed,
 			});
 		},
@@ -574,6 +586,8 @@ function passkeyRoutes(services: RouteServices, webauthn: WebAuthnService) {
 				{ userId: assertion.userId, factors: ["webauthn"] },
 				() =>
 					services.sessions.issueReplacingPresented({
+						completes: "passkey_sign_in",
+						authorisedBy: assertion.authorisedBy,
 						presentedToken: context.sessionToken,
 						userId: assertion.userId,
 						factors: ["webauthn"],
@@ -618,6 +632,7 @@ export function factorRoutes(services: RouteServices): readonly AnyRoute[] {
 		pending: services.pending,
 		issuer: totpIssuerOf(services),
 		toleranceInSteps: totpToleranceOf(services.totp?.stepToleranceInSteps),
+		securityState: services.securityState,
 	});
 	const recovery: RecoveryCodeService = createRecoveryCodeService({
 		driver: services.driver,
@@ -625,6 +640,7 @@ export function factorRoutes(services: RouteServices): readonly AnyRoute[] {
 		keys: services.keys,
 		pending: services.pending,
 		shape: recoveryCodeShapeOf(services.recoveryCodes),
+		securityState: services.securityState,
 	});
 	const alwaysMounted = [...totpRoutes(services, totp), ...recoveryRoutes(services, recovery)];
 	if (services.webauthn === undefined) {
@@ -633,7 +649,10 @@ export function factorRoutes(services: RouteServices): readonly AnyRoute[] {
 	const webauthn: WebAuthnService = createWebAuthnService({
 		driver: services.driver,
 		schema: services.schema,
+		keys: services.keys,
 		webauthn: services.webauthn,
+		securityState: services.securityState,
+		reportTokenBindingRefusal: services.reportTokenBindingRefusal,
 	});
 	return [
 		...alwaysMounted,

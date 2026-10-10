@@ -25,6 +25,10 @@ afterAll(async () => {
 	await connection.close();
 });
 
+/** the versions the shipped plan applies, so an added core migration moves the test's own steps past it */
+const SHIPPED_VERSIONS = coreMigrations("email").map((migration) => migration.version);
+const FIRST_FREE_VERSION = Math.max(...SHIPPED_VERSIONS) + 1;
+
 async function ledgerVersions(schema: string): Promise<number[]> {
 	const rows = await connection.query<{ version: number }>(
 		`SELECT version FROM ${schema}.schema_migration ORDER BY version`,
@@ -52,7 +56,7 @@ describe("an applied migration is history (E-08, checksum ledger)", () => {
 			throw new Error("the shipped plan lost a migration");
 		}
 		const later: Migration = {
-			version: 3,
+			version: FIRST_FREE_VERSION,
 			name: "later_step",
 			sql: "CREATE TABLE velve.later_step (id uuid PRIMARY KEY DEFAULT gen_random_uuid());",
 		};
@@ -65,7 +69,7 @@ describe("an applied migration is history (E-08, checksum ledger)", () => {
 			}),
 		).rejects.toMatchObject({ code: "migration_checksum_changed" });
 
-		expect(await ledgerVersions(schema)).toEqual([1, 2]);
+		expect(await ledgerVersions(schema)).toEqual(SHIPPED_VERSIONS);
 		expect(await tableExists(schema, "later_step")).toBe(false);
 	});
 
@@ -119,7 +123,7 @@ describe("a migration that fails halfway (E-08, one transaction per step)", () =
 	it("leaves neither the tables it created nor a ledger row", async () => {
 		const schema = freshSchema("velve_halfway");
 		const failing: Migration = {
-			version: 3,
+			version: FIRST_FREE_VERSION,
 			name: "half_applied",
 			sql: `CREATE TABLE velve.half_applied_first (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
 CREATE TABLE velve.half_applied_second (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
@@ -136,18 +140,18 @@ SELECT 1 / 0;`,
 
 		expect(await tableExists(schema, "half_applied_first")).toBe(false);
 		expect(await tableExists(schema, "half_applied_second")).toBe(false);
-		expect(await ledgerVersions(schema)).toEqual([1, 2]);
+		expect(await ledgerVersions(schema)).toEqual(SHIPPED_VERSIONS);
 	});
 
 	it("keeps the steps that completed before the failing one", async () => {
 		const schema = freshSchema("velve_partial_plan");
 		const good: Migration = {
-			version: 3,
+			version: FIRST_FREE_VERSION,
 			name: "good_step",
 			sql: "CREATE TABLE velve.good_step (id uuid PRIMARY KEY DEFAULT gen_random_uuid());",
 		};
 		const bad: Migration = {
-			version: 4,
+			version: FIRST_FREE_VERSION + 1,
 			name: "bad_step",
 			sql: "CREATE TABLE velve.bad_step (id uuid PRIMARY KEY DEFAULT gen_random_uuid()); SELECT 1 / 0;",
 		};
@@ -162,7 +166,7 @@ SELECT 1 / 0;`,
 
 		expect(await tableExists(schema, "good_step")).toBe(true);
 		expect(await tableExists(schema, "bad_step")).toBe(false);
-		expect(await ledgerVersions(schema)).toEqual([1, 2, 3]);
+		expect(await ledgerVersions(schema)).toEqual([...SHIPPED_VERSIONS, FIRST_FREE_VERSION]);
 	});
 });
 
@@ -170,7 +174,7 @@ describe("renaming the schema rewrites only the schema (finding: it rewrites the
 	it("leaves a string literal that happens to read velve alone", async () => {
 		const schema = freshSchema("velve_literal");
 		const literal: Migration = {
-			version: 3,
+			version: FIRST_FREE_VERSION,
 			name: "literal_step",
 			sql: `CREATE TABLE velve.literal_step (source text NOT NULL);
 INSERT INTO velve.literal_step (source) VALUES ('velve');`,
@@ -192,7 +196,7 @@ INSERT INTO velve.literal_step (source) VALUES ('velve');`,
 	it("leaves a column that happens to be named velve alone", async () => {
 		const schema = freshSchema("velve_column");
 		const named: Migration = {
-			version: 3,
+			version: FIRST_FREE_VERSION,
 			name: "named_step",
 			sql: "CREATE TABLE velve.named_step (velve text NOT NULL);",
 		};

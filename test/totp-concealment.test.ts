@@ -11,6 +11,7 @@ import { toVisibleFailure } from "../src/core/http/error-map.js";
 import { createTestClock, type TestClock } from "../src/testing/index.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { resealDirectly, testSecurityState } from "./security-state-fixtures.js";
 import {
 	beginPendingState,
 	pendingAuthenticationsOn,
@@ -57,6 +58,7 @@ beforeAll(async () => {
 	clock = createTestClock(FIXED_INSTANT);
 	pending = pendingAuthenticationsOn(connection, schema);
 	totp = createTotpService({
+		securityState: testSecurityState(connection, schema, testKeyProvider()),
 		driver: connection,
 		schema,
 		keys: testKeyProvider(),
@@ -138,6 +140,7 @@ describe("the verify path tells nothing about whether the factor exists", () => 
 	it("answers a secret it cannot read the way it answers a wrong code", async () => {
 		const ring = testKeyRing(2);
 		const underVersionOne = createTotpService({
+			securityState: testSecurityState(connection, schema, ring.providerAt(1, [1])),
 			driver: connection,
 			schema,
 			keys: ring.providerAt(1, [1]),
@@ -146,6 +149,7 @@ describe("the verify path tells nothing about whether the factor exists", () => 
 			clock,
 		});
 		const afterTheVersionWasDropped = createTotpService({
+			securityState: testSecurityState(connection, schema, ring.providerAt(2, [2])),
 			driver: connection,
 			schema,
 			keys: ring.providerAt(2, [2]),
@@ -180,6 +184,7 @@ describe("the verify path tells nothing about whether the factor exists", () => 
 	it("answers the same on the two paths a session reaches, so no route gains a 500", async () => {
 		const ring = testKeyRing(2);
 		const underVersionOne = createTotpService({
+			securityState: testSecurityState(connection, schema, ring.providerAt(1, [1])),
 			driver: connection,
 			schema,
 			keys: ring.providerAt(1, [1]),
@@ -188,6 +193,7 @@ describe("the verify path tells nothing about whether the factor exists", () => 
 			clock,
 		});
 		const afterTheVersionWasDropped = createTotpService({
+			securityState: testSecurityState(connection, schema, ring.providerAt(2, [2])),
 			driver: connection,
 			schema,
 			keys: ring.providerAt(2, [2]),
@@ -212,6 +218,10 @@ describe("the verify path tells nothing about whether the factor exists", () => 
 			accountName: "confirming@example.com",
 		});
 
+		//the seals follow the ring and only the secrets stay under the dropped version (E-3165)
+		for (const actor of [confirmed, unconfirmed]) {
+			await resealDirectly(connection, schema, ring.providerAt(2, [2]), actor);
+		}
 		const onRemove = await afterTheVersionWasDropped
 			.remove({ actor: confirmed, code: "000000" })
 			.then(() => null)

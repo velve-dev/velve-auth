@@ -5,7 +5,7 @@ import { isStorableKeyVersion } from "./key-version.js";
 import type { KeyProvider } from "./provider.js";
 import { type EncryptionKeyPurpose, isEncryptionPurpose, type KeyPurpose } from "./purpose.js";
 
-const ENVELOPE_ALGORITHM = "A256GCM";
+export const ENVELOPE_ALGORITHM = "A256GCM";
 const KEY_VERSION_BYTES = 4;
 
 const utf8 = new TextEncoder();
@@ -22,6 +22,16 @@ export async function encryptWithPurposeKey(
 	purpose: EncryptionKeyPurpose,
 	plaintext: Uint8Array<ArrayBuffer>,
 ): Promise<PurposeCiphertext> {
+	return encryptUnderAdditionalData(keys, purpose, writeEnvelopeHeader, plaintext);
+}
+
+/** encrypts under the current key with the additional data the key version it chose yields */
+export async function encryptUnderAdditionalData(
+	keys: KeyProvider,
+	purpose: EncryptionKeyPurpose,
+	additionalDataFor: (keyVersion: number) => Uint8Array<ArrayBuffer>,
+	plaintext: Uint8Array<ArrayBuffer>,
+): Promise<PurposeCiphertext> {
 	refuseSigningPurpose(purpose);
 
 	const { version, key } = await keys.current(purpose);
@@ -31,7 +41,7 @@ export async function encryptWithPurposeKey(
 
 	const engine = await selectAesGcmEngine();
 	const nonce = randomBytes(NONCE_BYTES);
-	const sealed = await engine.encrypt(key, nonce, writeEnvelopeHeader(version), plaintext);
+	const sealed = await engine.encrypt(key, nonce, additionalDataFor(version), plaintext);
 
 	return { keyVersion: version, ciphertext: concatBytes(nonce, sealed) };
 }
@@ -41,6 +51,21 @@ export async function decryptWithPurposeKey(
 	purpose: EncryptionKeyPurpose,
 	keyVersion: number,
 	ciphertext: Uint8Array<ArrayBuffer>,
+): Promise<Uint8Array<ArrayBuffer>> {
+	return decryptUnderAdditionalData(
+		keys,
+		purpose,
+		{ keyVersion, ciphertext },
+		writeEnvelopeHeader(keyVersion),
+	);
+}
+
+/** decrypts a nonce and its ciphertext under the stored key version and the given additional data */
+export async function decryptUnderAdditionalData(
+	keys: KeyProvider,
+	purpose: EncryptionKeyPurpose,
+	{ keyVersion, ciphertext }: PurposeCiphertext,
+	additionalData: Uint8Array<ArrayBuffer>,
 ): Promise<Uint8Array<ArrayBuffer>> {
 	refuseSigningPurpose(purpose);
 
@@ -60,7 +85,7 @@ export async function decryptWithPurposeKey(
 		return await engine.decrypt(
 			key,
 			ciphertext.subarray(0, NONCE_BYTES),
-			writeEnvelopeHeader(keyVersion),
+			additionalData,
 			ciphertext.subarray(NONCE_BYTES),
 		);
 	} catch (failure) {

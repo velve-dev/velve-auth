@@ -1,3 +1,4 @@
+import { type StoredPayload, type StoredTokenMac, storedPayloadOf } from "../../token/binding.js";
 import {
 	ONE_TIME_TOKEN_LIFETIME_SECONDS,
 	ONE_TIME_TOKEN_PURPOSES,
@@ -6,7 +7,7 @@ import {
 	type OneTimeTokenSubject,
 } from "../../token/purpose.js";
 import { randomUuid } from "../../token/random.js";
-import type { RedeemedOneTimeToken } from "../actor.js";
+import type { Actor, RedeemedOneTimeToken } from "../actor.js";
 import type { Driver } from "../driver.js";
 import { toEntityId } from "../entity-id.js";
 import { assertSchemaName, qualifiedTableName } from "../identifier.js";
@@ -20,8 +21,14 @@ export interface OneTimeTokenRepositoryOptions {
 export type OneTimeTokenReplacement = {
 	readonly tokenSha256: Uint8Array;
 	readonly purpose: OneTimeTokenPurpose;
-	readonly payload: OneTimeTokenPayload | null;
+	/** the payload and its MAC under the account's token generation the inserting transaction reads, null for no account */
+	bindUnder(tokenGeneration: number | null): Promise<BoundPayload>;
 } & OneTimeTokenSubject;
+
+/** a payload and the token MAC taken over it */
+interface BoundPayload extends StoredTokenMac {
+	readonly payload: OneTimeTokenPayload | null;
+}
 
 export interface OneTimeTokenLookup {
 	readonly tokenSha256: Uint8Array;
@@ -29,14 +36,27 @@ export interface OneTimeTokenLookup {
 }
 
 //the removal proved the owner so this is a lawful provenance of an actor (E-234)
-export type StoredOneTimeToken = RedeemedOneTimeToken & {
+type StoredOneTimeToken = RedeemedOneTimeToken & {
 	readonly payload: OneTimeTokenPayload | null;
 };
 
+interface ConsumedOneTimeToken extends StoredTokenMac {
+	readonly storedPayload: StoredPayload;
+}
+
+/** a removed row whose MAC is still to be checked before its owner or payload is used */
+export type OneTimeTokenCandidate = ConsumedOneTimeToken &
+	({ readonly userId: null } | { readonly userId: string; accept(): StoredOneTimeToken });
+
 export interface OneTimeTokenRepository {
 	replaceOneTimeToken(input: OneTimeTokenReplacement): Promise<{ expiresAt: Date }>;
-	//a row that names no account is answered exactly as no row is (S-TOKEN-4)
-	consumeOneTimeToken(input: OneTimeTokenLookup): Promise<StoredOneTimeToken | null>;
+	//a row that names no account is still checked and then answered exactly as no row is (S-TOKEN-4)
+	consumeOneTimeToken(input: OneTimeTokenLookup): Promise<OneTimeTokenCandidate | null>;
+	//a confirmed change of address withdraws every link still mailed to the old one (S-INTEG-9)
+	withdrawTokensOf(input: {
+		readonly actor: Actor;
+		readonly purpose: OneTimeTokenPurpose;
+	}): Promise<void>;
 }
 
 export type OneTimeTokenErrorCode =
@@ -94,15 +114,17 @@ function redeemedBy(userId: string, payload: OneTimeTokenPayload | null): Stored
 	return { userId: toEntityId<"user">(userId), payload } as StoredOneTimeToken;
 }
 
-//a driver may return jsonb decoded or as text so both are accepted
-function readPayload(value: unknown): OneTimeTokenPayload | null {
-	if (value === null || value === undefined) {
-		return null;
-	}
-	if (typeof value === "string") {
-		return JSON.parse(value) as OneTimeTokenPayload;
-	}
-	return value as OneTimeTokenPayload;
+interface ConsumedRowShape {
+	readonly user_id: string | null;
+	readonly payload_text: string | null;
+	readonly token_mac: Uint8Array;
+	readonly token_mac_key_version: number;
+}
+
+//a generation the column could hold beyond the exact integers is read as none and fails the mac
+function generationOfColumn(value: string | null | undefined): number | null {
+	const generation = value === null || value === undefined ? Number.NaN : Number(value);
+	return Number.isSafeInteger(generation) ? generation : null;
 }
 
 export function createOneTimeTokenRepository(
@@ -112,25 +134,37 @@ export function createOneTimeTokenRepository(
 	const table = qualifiedTableName(schema, "one_time_token");
 
 	//requests about one subject run in turn as the delete cannot see newer rows (S-TOKEN-3)
+	//the generation a link binds is read in the statement every request runs, account or none (S-TIM-6)
 	const serialiseAndReadOwnerStatement = `SELECT pg_advisory_xact_lock(hashtextextended($2, 0)) AS serialised,
-	(SELECT 1 FROM ${schema}.user owner WHERE owner.id = $1) AS owner_exists`;
+	(SELECT 1 FROM ${schema}.user owner WHERE owner.id = $1) AS owner_exists,
+	(SELECT COALESCE(
+		(SELECT CASE $3::text
+			WHEN 'email_verify' THEN st.email_verify_generation
+			WHEN 'password_reset' THEN st.password_reset_generation
+			WHEN 'email_change' THEN st.email_change_generation
+			WHEN 'magic_link' THEN st.magic_link_generation END
+		 FROM ${schema}.security_state st WHERE st.user_id = owner.id), 1)
+	 FROM ${schema}.user owner WHERE owner.id = $1)::text AS token_generation`;
 
 	const replaceStatement = `WITH superseded AS (
 	DELETE FROM ${table} WHERE user_id = $1 AND purpose = $2
 )
-INSERT INTO ${table} (token_sha256, purpose, user_id, payload, expires_at)
-VALUES ($3, $2, $6, $4, now() + make_interval(secs => $5::double precision))
+INSERT INTO ${table}
+	(token_sha256, purpose, user_id, payload, expires_at, token_mac, token_mac_key_version)
+VALUES ($3, $2, $6, $4, now() + make_interval(secs => $5::double precision), $7, $8)
 RETURNING expires_at`;
 
 	//the consume statement must stay the specified one apart from its marker (E-142)
 	const consumeStatement = `DELETE FROM ${table}
 /* no owner predicate: S-TOKEN-4 */
 WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now()
-RETURNING user_id, payload`;
+RETURNING user_id, payload::text AS payload_text, token_mac, token_mac_key_version`;
+
+	const withdrawStatement = `DELETE FROM ${table} WHERE user_id = $1 AND purpose = $2`;
 
 	return {
 		async replaceOneTimeToken(replacement) {
-			const { tokenSha256, purpose, userId, payload } = replacement;
+			const { tokenSha256, purpose, userId } = replacement;
 			//an unknown purpose must not reach the constraint whose error names the table (E-263)
 			if (!ONE_TIME_TOKEN_PURPOSES.includes(purpose)) {
 				throw new OneTimeTokenError("one_time_token_purpose_unknown", null);
@@ -138,13 +172,15 @@ RETURNING user_id, payload`;
 			const lookupId = userId ?? anAccountThatCannotExist();
 			const subject = userId === null ? replacement.serialisedOn : userId;
 			return options.driver.transaction(async (tx) => {
-				const [read] = await tx.query<{ owner_exists: unknown }>(serialiseAndReadOwnerStatement, [
-					lookupId,
-					subject,
-				]);
+				const [read] = await tx.query<{ owner_exists: unknown; token_generation: string | null }>(
+					serialiseAndReadOwnerStatement,
+					[lookupId, subject, purpose],
+				);
 				if (userId !== null && (read?.owner_exists ?? null) === null) {
 					throw new OneTimeTokenError("one_time_token_owner_unknown", purpose);
 				}
+				const tokenGeneration = userId === null ? null : generationOfColumn(read?.token_generation);
+				const { payload, ...mac } = await replacement.bindUnder(tokenGeneration);
 				//an account deleted since the read must still fail with its own code (E-263)
 				const [row] = await tx
 					.query<{ expires_at: unknown }>(replaceStatement, [
@@ -154,6 +190,8 @@ RETURNING user_id, payload`;
 						payload === null ? null : JSON.stringify(payload),
 						ONE_TIME_TOKEN_LIFETIME_SECONDS[purpose],
 						userId,
+						mac.tokenMac,
+						mac.tokenMacKeyVersion,
 					])
 					.catch((failure: unknown) => {
 						if (isForeignKeyViolation(failure)) {
@@ -169,13 +207,27 @@ RETURNING user_id, payload`;
 		},
 
 		async consumeOneTimeToken({ tokenSha256, purpose }) {
-			const [row] = await options.driver.query<{ user_id: string | null; payload: unknown }>(
-				consumeStatement,
-				[tokenSha256, purpose],
-			);
-			return row === undefined || row.user_id === null
-				? null
-				: redeemedBy(row.user_id, readPayload(row.payload));
+			const [row] = await options.driver.query<ConsumedRowShape>(consumeStatement, [
+				tokenSha256,
+				purpose,
+			]);
+			if (row === undefined) {
+				return null;
+			}
+			const userId = row.user_id;
+			const storedPayload = storedPayloadOf(row.payload_text);
+			const consumed = {
+				storedPayload,
+				tokenMac: row.token_mac,
+				tokenMacKeyVersion: row.token_mac_key_version,
+			};
+			return userId === null
+				? { ...consumed, userId }
+				: { ...consumed, userId, accept: () => redeemedBy(userId, storedPayload?.payload ?? null) };
+		},
+
+		async withdrawTokensOf({ actor, purpose }) {
+			await options.driver.query(withdrawStatement, [actor, purpose]);
 		},
 	};
 }

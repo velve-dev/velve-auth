@@ -13,6 +13,8 @@ import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 import { postTo } from "./flows-fixtures.js";
 
+const TOKEN_KEYS = testKeyProvider();
+
 const KNOWN = "held.account@example.com";
 const UNKNOWN = "absent.account@example.com";
 /** A second unknown address, so the control compares two branches that are the same branch. */
@@ -209,15 +211,15 @@ describe("a request for a known address takes no lock of its own on that account
 			const onUnknown = requesting(1, UNKNOWN);
 			const owned = settling(
 				onlooker.query(
-					`INSERT INTO ${schema}.one_time_token (token_sha256, purpose, user_id, expires_at)
-					 VALUES ($1, 'magic_link', $2, now() + interval '1 hour')`,
+					`INSERT INTO ${schema}.one_time_token (token_sha256, purpose, user_id, expires_at, token_mac, token_mac_key_version)
+					 VALUES ($1, 'magic_link', $2, now() + interval '1 hour', decode(repeat('ab', 32), 'hex'), 1)`,
 					[Buffer.alloc(32, 1), victim],
 				),
 			);
 			const ownerless = settling(
 				(connections[2] as TestConnection).query(
-					`INSERT INTO ${schema}.one_time_token (token_sha256, purpose, user_id, expires_at)
-					 VALUES ($1, 'magic_link', NULL, now() + interval '1 hour')`,
+					`INSERT INTO ${schema}.one_time_token (token_sha256, purpose, user_id, expires_at, token_mac, token_mac_key_version)
+					 VALUES ($1, 'magic_link', NULL, now() + interval '1 hour', decode(repeat('ab', 32), 'hex'), 1)`,
 					[Buffer.alloc(32, 2)],
 				),
 			);
@@ -358,6 +360,7 @@ describe("an account that goes between the read and the insert", () => {
 				driver: deletingTheOwnerAfterTheRead(connections[3] as TestConnection, userId),
 				schema,
 			}),
+			{ keys: TOKEN_KEYS },
 		)
 			.issue({ purpose: "password_reset", userId })
 			.then(() => null)

@@ -565,6 +565,22 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-2990 … E-3019 | outside the waves · `log-migration` — the German entries of docs/decisions/log.md translated into English in the one central pass §1 promises, and the rule change that pass needs. Reserved together before the owner's three rulings on PR #96 are carried out, counted over the rows standing at 2c66a79 |
 | E-3020 … E-3049 | outside the waves · `release-2-0-0` — the release cut as 2.0.0 instead of 1.2.0, the empty subpaths removed and the deprecated lookup dropped. Reserved together before the owner's three rulings on PR #96 are carried out, counted over the rows standing at 2c66a79 |
 | E-3050 … E-3079 | outside the waves · `webauthn-counter` — the stored WebAuthn signature counter kept at the highest value seen. Reserved together before the owner's three rulings on PR #96 are carried out, counted over the rows standing at 2c66a79 |
+| E-3080 … E-3109 | outside the waves · `security-state` — the database-write attacker: the specification, the state-mac and token-mac key purposes and the velve.security_state table every later security-state branch builds on. Reserved together before the security-state work on feature/security-state-integrity starts, counted over the rows standing at 4be78c6 |
+| E-3110 … E-3129 | outside the waves · `security-state-envelopes` — every envelope bound to its owner, its row and its purpose (S-INTEG-1). Reserved together before the security-state work on feature/security-state-integrity starts, counted over the rows standing at 4be78c6 |
+| E-3130 … E-3149 | outside the waves · `security-state-tokens` — session, one-time and pending tokens stored with a keyed hash bound to owner and purpose (S-INTEG-9). Reserved together before the security-state work on feature/security-state-integrity starts, counted over the rows standing at 4be78c6 |
+| E-3150 … E-3169 | outside the waves · `security-state-seal` — the seal over every sign-in method, its reseal on every change and its verification before use (S-INTEG-2 to S-INTEG-6). Reserved together before the security-state work on feature/security-state-integrity starts, counted over the rows standing at 4be78c6 |
+| E-3170 … E-3189 | outside the waves · `security-state-administration` — the maintenance step that seals existing accounts and the administrator reseal (S-INTEG-7, S-INTEG-8). Reserved together before the security-state work on feature/security-state-integrity starts, counted over the rows standing at 4be78c6 |
+| E-3190 … E-3219 | outside the waves · `security-state`, second range — the foundation's answers to its second review. Its first range, E-3080 … E-3109, was used up to E-3108 when the second review arrived; counted over the rows standing at 6b8847b. From E-3205 on it also holds the items the branches queued after the second review and, from E-3207, the answers to the third review, which this row did not say until E-3291 |
+| E-3220 … E-3249 | outside the waves · `security-state-envelopes`, second range — the bound envelopes' answers to their second review. Counted over the rows standing at 2addb33 |
+| E-3250 … E-3279 | outside the waves · `security-state-tokens`, second range — the keyed token hashes' answers to their review. Counted over the rows standing at 2addb33 |
+| E-3280 … E-3309 | outside the waves · `security-state`, third range — the foundation's answers to its fourth review. Counted over the rows standing at 87fd8f9 |
+| E-3310 … E-3339 | outside the waves · `security-state`, fourth range — the foundation's answers to its sixth review. Counted over the rows standing at b718387 |
+| E-3340 … E-3369 | outside the waves · `security-state`, fifth range — the foundation's answers to its seventh review. Counted over the rows standing at 5096503 |
+| E-3370 … E-3399 | outside the waves · `security-state`, sixth range — the foundation's answers to its ninth and later reviews. Counted over the rows standing at d377d43 |
+| E-3400 … E-3449 | outside the waves · `security-state-seal`, second range — the seal's build and its reviews. Counted over the rows standing at d9561d9 |
+| E-3450 … E-3479 | outside the waves · `security-state-administration`, second range — administration and migration's build and its reviews. Counted over the rows standing at d9561d9 |
+| E-3480 … E-3509 | outside the waves · `security-state-tokens`, third range — the keyed token hashes' answers to their third and later reviews and the foundation's final round. Counted over the rows standing at 8bdfd1e |
+| E-3510 … E-3539 | outside the waves · `security-state`, seventh range — the specification brought into step with what the branches built. Counted over the rows standing at 8bdfd1e |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
@@ -600,7 +616,8 @@ These follow from architecture section 2 and are not open for local decision:
 - **`velve.user` is locked first, `FOR NO KEY UPDATE`, and a lock declares what
   it locks.** A transaction that writes rows in more than one user-owned table
   takes `SELECT 1 FROM ${schema}.user WHERE id = $1 FOR NO KEY UPDATE /* locks:
-  ${schema}.user */` as its first statement, and reaches it through
+  ${schema}.user */` as its first statement after the isolation statement
+  (E-3310), and reaches it through
   `src/core/db/lock.ts` — the only file that writes a row lock, so the mode
   cannot vary between call sites.
 - **The mode is not a local choice.** `FOR NO KEY UPDATE` is the strongest
@@ -616,8 +633,8 @@ These follow from architecture section 2 and are not open for local decision:
 - **A second ordering holds, and `pnpm check:token-after-lock` checks it within a
   file (E-1616).** Four redeem flows consume a
   `one_time_token` row *before* they reach `lockAccountRow`, so for them the
-  account lock is not the transaction's first statement — `velve.one_time_token`
-  is written first. What keeps that safe is that `one_time_token` is ordered
+  account lock is not the transaction's first statement after the isolation
+  statement — `velve.one_time_token` is written first. What keeps that safe is that `one_time_token` is ordered
   **before** `velve.user` everywhere: every mint runs in a transaction of its
   own and every redemption runs first, and no transaction that takes the account
   row touches that table at all.
@@ -659,9 +676,10 @@ pnpm check:lock-order
 pnpm check:token-after-lock
                  velve.one_time_token is ordered before velve.user, so no
                  transaction takes the account row and then reaches that table —
-                 raw SQL or either repository method, comments and imports
-                 stripped first so prose about the rule and a named import are
-                 not read as reaching for it.
+                 raw SQL, either repository method or the flows' mintArtefact,
+                 also under a name an import gives it or the lock, comments and
+                 imports stripped first so prose about the rule and a named
+                 import are not read as reaching for it.
 pnpm check:egress
                  only src/core/oauth/outbound.ts calls out, through the fetch
                  config.fetch injects, and only src/core/oauth/providers.ts

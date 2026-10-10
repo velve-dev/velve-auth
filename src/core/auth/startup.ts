@@ -1,8 +1,13 @@
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { isUsableBucketRule } from "../http/rate-limit.js";
-import { KEY_PURPOSES, type KeyProvider } from "../keys/index.js";
+import { KEY_PURPOSES, type KeyProvider, type KeyPurpose } from "../keys/index.js";
+import { isStorableKeyVersion } from "../keys/key-version.js";
+import { isKeyShaped, keyTakesMac, sameKeyFingerprintOf } from "../keys/mac.js";
+import { type IntegrityKeyPurpose, isIntegrityPurpose } from "../keys/purpose.js";
 import { type GenericProviderConfig, KNOWN_PROVIDERS } from "../oauth/config.js";
+import { resolveLimits } from "../security-state/limits.js";
 import type { BaseConfig } from "./config.js";
+import { isStartableSecurityState } from "./security-state.js";
 
 type StartupErrorCode =
 	| "keys_missing"
@@ -18,6 +23,7 @@ type StartupErrorCode =
 	| "plugin_dependency_cycle"
 	| "plugin_route_conflict"
 	| "plugin_field_unknown"
+	| "plugin_anchor_incomplete"
 	| "plugin_route_reads_a_core_cookie"
 	| "plugin_route_exempts_the_origin_check"
 	| "plugin_route_without_address_rate_limit"
@@ -30,10 +36,12 @@ type StartupErrorCode =
 	| "plugin_database_and_role_both_set"
 	| "plugin_database_reaches_the_core"
 	| "route_namespace_conflict"
-	| "route_name_segment_reserved";
+	| "route_name_segment_reserved"
+	| "security_state_sealing_unknown"
+	| "limits_unusable";
 
 const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> = {
-	keys_missing: "keys is required: the six purpose keys are derived from a root key of 32 bytes",
+	keys_missing: "keys is required: every purpose key is derived from a root key of 32 bytes",
 	keys_unusable: "keys did not answer for every purpose, so no protected value could be written",
 	origins_empty:
 		"origins must name at least one allowed origin; an empty list is not a blanket permission",
@@ -55,6 +63,8 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		"a plugin route collides with a core route or with another plugin's; 3.11 makes that a start error and not a warning",
 	plugin_field_unknown:
 		"a plugin carries a field the interface does not enumerate; the extension points are enumerated and the security middleware is not one of them (S-CSRF-6)",
+	plugin_anchor_incomplete:
+		"a plugin's securityStateAnchor is not an object carrying the functions recordSeal and minimumVersion, so it could not be asked for a floor and every check would be refused",
 	plugin_route_reads_a_core_cookie:
 		'a plugin route declares caller "pending", pendingCookie or oauthStateCookie; 3.6 names the four routes __Host-velve_pending authorises and the two that read it, and a plugin route is none of them',
 	plugin_route_exempts_the_origin_check:
@@ -81,6 +91,10 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		"two route names fold onto the same object path, so one server method would shadow the other",
 	route_name_segment_reserved:
 		"a route name has a segment every object already carries — __proto__, constructor or prototype — and the object path it folds into is not the library's to give away",
+	security_state_sealing_unknown:
+		'securityState.sealing must be "required" or "migrating"; any other value leaves unsaid whether an account must carry a seal',
+	limits_unusable:
+		"limits.passkeysPerAccount and limits.identitiesPerAccount must each be a whole number of at least 1, since every check of the seal reads and encodes them all",
 };
 
 /** the two contributors a route conflict names in its start error */
@@ -219,6 +233,13 @@ function assertPluginSqlHasOneDestination(config: {
 	}
 }
 
+//a javascript caller can name a sealing mode the type does not and it must not read as either (S-INTEG-1)
+function assertSealingModeIsKnown(securityState: unknown): void {
+	if (!isStartableSecurityState(securityState)) {
+		throw new VelveStartupError("security_state_sealing_unknown");
+	}
+}
+
 //checks that need the database cannot run here, as building the instance is synchronous (E-179)
 export function assertConfigurationIsStartable<M extends IdentityMode>(
 	config: BaseConfig<M> & { readonly recoveryCodes?: unknown },
@@ -231,14 +252,71 @@ export function assertConfigurationIsStartable<M extends IdentityMode>(
 	assertEveryUnknownProviderCarriesItsEndpoints(config.oauth);
 	assertEveryConfiguredBucketIsUsable(config.rateLimit);
 	assertPluginSqlHasOneDestination(config);
+	assertSealingModeIsKnown(config.securityState);
+	assertLimitsAreUsable(config.limits);
+}
+
+//a limit that is no count of at least one would refuse every registration or none (S-INTEG-10)
+function assertLimitsAreUsable(limits: unknown): void {
+	if (
+		limits !== undefined &&
+		(typeof limits !== "object" || limits === null || resolveLimits(limits) === null)
+	) {
+		throw new VelveStartupError("limits_unusable");
+	}
+}
+
+//an operator must learn which stored version made the start refuse (E-3289)
+const WHAT_STORES_A_VERSION: Readonly<Record<IntegrityKeyPurpose, readonly [string, string]>> = {
+	"state-mac": ["a stored seal names", "no seal"],
+	"token-mac": ["a stored token row names", "no token row"],
+};
+
+export function storedIntegrityKeyUnusable(
+	stored: IntegrityKeyPurpose,
+	keyVersion: number,
+): VelveStartupError {
+	const [naming, nothing] = WHAT_STORES_A_VERSION[stored];
+	const refusal = new VelveStartupError("keys_unusable");
+	refusal.message = `keys answered ${stored} version ${keyVersion}, which ${naming}, with a key that cannot take HMAC-SHA256, so ${nothing} under that version could be checked`;
+	return refusal;
+}
+
+export function storedIntegrityKeySharedWith(
+	stored: IntegrityKeyPurpose,
+	keyVersion: number,
+	otherKey: string,
+): VelveStartupError {
+	const refusal = new VelveStartupError("keys_unusable");
+	refusal.message = `keys answered ${stored} version ${keyVersion}, which ${WHAT_STORES_A_VERSION[stored][0]}, with ${otherKey}`;
+	return refusal;
+}
+
+function keySharedByTwoPurposes(first: KeyPurpose, second: KeyPurpose): VelveStartupError {
+	const refusal = new VelveStartupError("keys_unusable");
+	refusal.message = `keys answered ${first} and ${second} with the same key, so a value taken for one purpose would verify for the other`;
+	return refusal;
 }
 
 //a key provider that answers for no purpose protects nothing and must refuse the start
 export async function assertKeysAnswerForEveryPurpose(keys: KeyProvider): Promise<void> {
+	const purposeByFingerprint = new Map<string, KeyPurpose>();
 	for (const purpose of KEY_PURPOSES) {
 		const current = await keys.current(purpose).catch(() => null);
-		if (current === null || !Number.isInteger(current.version) || current.version < 1) {
+		//a version no key_version column holds would refuse every write under it (E-3329)
+		if (current === null || !isStorableKeyVersion(current.version) || !isKeyShaped(current.key)) {
 			throw new VelveStartupError("keys_unusable");
+		}
+		if (isIntegrityPurpose(purpose) && !(await keyTakesMac(current.key))) {
+			throw new VelveStartupError("keys_unusable");
+		}
+		const fingerprint = await sameKeyFingerprintOf(current.key);
+		const sharedWith = fingerprint === null ? undefined : purposeByFingerprint.get(fingerprint);
+		if (sharedWith !== undefined) {
+			throw keySharedByTwoPurposes(sharedWith, purpose);
+		}
+		if (fingerprint !== null) {
+			purposeByFingerprint.set(fingerprint, purpose);
 		}
 	}
 }

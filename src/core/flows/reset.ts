@@ -1,23 +1,44 @@
 import type { EmailConfig } from "../auth/config.js";
-import { type Actor, actorOfConsumedRecoveryCode } from "../db/actor.js";
+import {
+	type Actor,
+	actorOfConsumedRecoveryCode,
+	actorOfRedeemedOneTimeToken,
+} from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { lockAccountRow } from "../db/lock.js";
-import { createSessionRepository } from "../db/repositories/session.js";
 import { pepperRecoveryCode, pepperRecoveryCodeUnder } from "../factor/recovery/pepper.js";
 import { createRecoveryCodeRepository } from "../factor/recovery/repository.js";
-import { ConcealedError } from "../http/error-map.js";
+import { ConcealedError, type ConcealedReason } from "../http/error-map.js";
 import type { RequestContext } from "../http/route.js";
 import { comparisonFormOf } from "../identity/fold.js";
 import { normaliseEmail } from "../identity/normalise.js";
 import { findUserByIdentifier } from "../identity/resolution.js";
+import { equalsInConstantTime } from "../keys/constant-time.js";
+import { CREATED_SCHEME } from "../password/scheme.js";
 import { hooksOnTheTransaction } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
 import { tellAfterSessionCreate } from "../plugin/sign-in.js";
-import { mintArtefact, redeemOrRefuse, sendOrUndo, subjectOfAddress } from "./artefact.js";
+import type { SecurityStateRead } from "../security-state/read.js";
+import { type ChangedAccount, recordSealLater, sealChange } from "../security-state/runtime.js";
+import {
+	componentsAfter,
+	type GenerationMoves,
+	SealingRefusedError,
+	type SealWritten,
+} from "../security-state/sealing.js";
+import { sessionRowsOn } from "../session/rows.js";
+import { randomUuid } from "../token/random.js";
+import {
+	mintArtefact,
+	movesOfSpentToken,
+	redeemOrRefuse,
+	refuseATokenWrittenBack,
+	refuseUnlessTheAddressIsStillTheAccounts,
+	sendOrUndo,
+	subjectOfAddress,
+} from "./artefact.js";
 import { type DerivedPassword, derivePassword, writePassword } from "./credential.js";
 import {
-	A_DISABLED_ACCOUNT,
-	accountOrDisabledOfRedemption,
 	type FlowEnvironment,
 	mailerOf,
 	observedIn,
@@ -39,12 +60,13 @@ export async function requestReset(
 	await context.enforceAccountRateLimit(address);
 
 	const owner = await environment.services.users.findUserByEmail(address);
-	const { driver, schema } = environment.services;
+	const { driver } = environment.services;
 	//the unknown branch must mint a row too and call send exactly once (E-597)
 	const minted = await driver.transaction((transaction) =>
-		mintArtefact(transaction, schema, {
+		mintArtefact(transaction, environment.services, {
 			purpose: "password_reset",
 			subject: subjectOfAddress(owner, address),
+			accountEmail: owner?.email ?? address,
 		}),
 	);
 	await sendOrUndo(
@@ -62,57 +84,146 @@ export async function requestReset(
 	);
 }
 
-//revocation, new session and credential are one transaction and the revocation comes first (E-610)
+/** what the path proves under the account lock before the password is replaced */
+interface ClaimedUnderLock {
+	readonly actor: Actor;
+	/** the recovery code the reset spent, which leaves the sealed set */
+	readonly spentCode: Uint8Array<ArrayBuffer> | null;
+	readonly disabled: boolean;
+}
+
+const SPENT_ON_A_DISABLED_ACCOUNT = Symbol("a reset spent on a disabled account");
+
+function withoutTheSpentCode(read: SecurityStateRead, spent: Uint8Array<ArrayBuffer> | null) {
+	if (spent === null) {
+		return read.recoveryCodes;
+	}
+	let removed = false;
+	return read.recoveryCodes.filter((code) => {
+		if (!removed && equalsInConstantTime(code.codeHmac, spent)) {
+			removed = true;
+			return false;
+		}
+		return true;
+	});
+}
+
+/** what a password replacement left, and the seal its caller records once the transaction commits */
+interface ReplacedPassword {
+	readonly result: SetPasswordResult | typeof SPENT_ON_A_DISABLED_ACCOUNT;
+	readonly toRecord: SealWritten<unknown>;
+}
+
+//revocation, new session and credential are one sealing transaction and the revocation comes first (E-610)
 async function replacePassword(
 	environment: FlowEnvironment,
 	context: RequestContext,
 	input: {
 		readonly transaction: Driver;
-		readonly actor: Actor;
 		readonly userId: string;
+		/** the proof of ownership a conversion of an unsealed account runs under, where the path holds one before the lock */
+		readonly account: ChangedAccount;
 		readonly derived: DerivedPassword;
+		readonly refusal: ConcealedReason;
+		readonly occasion: "token_redemption" | "change";
+		readonly claim: (tx: Driver, read: SecurityStateRead) => Promise<ClaimedUnderLock>;
+		/** the generation the spent artefact moves, where the replacement redeems a link */
+		readonly moves?: GenerationMoves;
 	},
-): Promise<SetPasswordResult> {
-	const { schema, keys, sessions, pluginRuntime } = environment.services;
-	//the account row is locked first as a first confirmation writes these tables reversed (E-1602)
-	await lockAccountRow(input.transaction, schema, input.userId);
-	//a refused session refuses the reset before any revocation is announced (E-2796)
-	await hooksOnTheTransaction(pluginRuntime.hooks, input.transaction).beforeSessionCreate({
-		userId: input.userId,
-		factors: ["password"],
-	});
-	const sessionRows = createSessionRepository({ driver: input.transaction, schema });
-	//a reset learns its account inside the transaction so a refusal rolls the redemption back too (E-2580)
-	if (pluginRuntime.listensTo("beforeSessionRevoke")) {
-		await announceEachRevocation(
-			pluginRuntime,
-			{
-				userId: input.userId,
-				sessionIds: await sessionRows.listEverySessionIdOwnedBy({ actor: input.actor }),
-				reason: "password_reset",
+): Promise<ReplacedPassword> {
+	const { schema, keys, sessions, pluginRuntime, securityState } = environment.services;
+	const sessionId = randomUuid();
+	const outcome: { result?: SetPasswordResult } = {};
+	const sealed = await sealChange(
+		securityState,
+		input.account,
+		{
+			epoch: "raise",
+			moves: () => input.moves ?? {},
+			write: async (tx, read) => {
+				const claimed = await input.claim(tx, read);
+				if (claimed.disabled) {
+					return { claimed, stored: null, revoked: 0 };
+				}
+				//a refused session refuses the reset before any revocation is announced (E-2796)
+				await hooksOnTheTransaction(pluginRuntime.hooks, tx).beforeSessionCreate({
+					userId: input.userId,
+					factors: ["password"],
+				});
+				const sessionRows = sessionRowsOn(sessions, tx);
+				//a refusal of the reset rolls its redemption back as well (E-2580)
+				if (pluginRuntime.listensTo("beforeSessionRevoke")) {
+					await announceEachRevocation(
+						pluginRuntime,
+						{
+							userId: input.userId,
+							sessionIds: await sessionRows.listEverySessionIdOwnedBy({ actor: claimed.actor }),
+							reason: "password_reset",
+						},
+						tx,
+					);
+				}
+				const revoked = await sessionRows.deleteEverySessionOwnedBy({ actor: claimed.actor });
+				//the storing session must be written with the password in one statement (E-626)
+				const stored = await writePassword(
+					{ driver: tx, keys, schema, password: environment.services.password },
+					{ actor: claimed.actor, derived: input.derived, setBySessionId: sessionId },
+				);
+				return { claimed, stored, revoked };
 			},
-			input.transaction,
-		);
-	}
-	const revokedOtherSessionsCount = await sessionRows.deleteEverySessionOwnedBy({
-		actor: input.actor,
-	});
-	const issued = await sessions.boundTo(input.transaction).issueReplacingPresented({
-		presentedToken: context.sessionToken,
-		userId: input.userId,
-		factors: ["password"],
-		observed: observedIn(context),
-	});
-	//the storing session must be written with the password in one statement (E-626)
-	await writePassword(
-		{ driver: input.transaction, keys, schema, password: environment.services.password },
-		{ actor: input.actor, derived: input.derived, setBySessionId: issued.session.id },
+			after: (read, written) =>
+				componentsAfter(read, {
+					recoveryCodes: withoutTheSpentCode(read, written.claimed.spentCode),
+					...(written.stored === null
+						? {}
+						: {
+								password: {
+									phc: written.stored.ciphertext,
+									keyVersion: written.stored.keyVersion,
+									scheme: CREATED_SCHEME,
+									setBySessionId: sessionId,
+								},
+							}),
+				}),
+			afterSeal: async (tx, next, written) => {
+				if (written.stored === null) {
+					return;
+				}
+				const issued = await sessions.boundTo(tx).issueReplacingPresented({
+					completes: "password_reset",
+					authorisedBy: next,
+					presentedToken: context.sessionToken,
+					userId: input.userId,
+					factors: ["password"],
+					observed: observedIn(context),
+					sessionId,
+				});
+				outcome.result = {
+					sessionToken: issued.token,
+					session: issued.session,
+					revokedOtherSessionsCount: written.revoked,
+				};
+			},
+		},
+		{ driver: input.transaction, refusal: input.refusal, occasion: input.occasion },
 	);
-	return {
-		sessionToken: issued.token,
-		session: issued.session,
-		revokedOtherSessionsCount,
-	};
+	if (sealed.written.claimed.disabled) {
+		return { result: SPENT_ON_A_DISABLED_ACCOUNT, toRecord: sealed };
+	}
+	if (outcome.result === undefined) {
+		throw new ConcealedError(input.refusal);
+	}
+	return { result: outcome.result, toRecord: sealed };
+}
+
+//a seal written in the redemption's transaction reaches the anchor only once that transaction committed (S-INTEG-6)
+function recordedAfterCommit(
+	environment: FlowEnvironment,
+	replaced: ReplacedPassword,
+	occasion: "token_redemption" | "change",
+): SetPasswordResult | typeof SPENT_ON_A_DISABLED_ACCOUNT {
+	recordSealLater(environment.services.securityState, replaced.toRecord, occasion);
+	return replaced.result;
 }
 
 export async function redeemReset(
@@ -126,26 +237,35 @@ export async function redeemReset(
 		environment.services.password,
 		environment.semaphore,
 	);
-	const { driver, schema } = environment.services;
+	const { driver } = environment.services;
 
-	const result = await driver.transaction(async (transaction) => {
-		const redeemed = await redeemOrRefuse(transaction, schema, {
+	const replaced = await driver.transaction(async (transaction) => {
+		const redeemed = await redeemOrRefuse(transaction, environment.services, {
 			token: input.token,
 			purpose: "password_reset",
 		});
-		const account = await accountOrDisabledOfRedemption(environment, transaction, redeemed);
-		//a token presented for a disabled account stays spent once it is enabled again (E-2879)
-		if (account === A_DISABLED_ACCOUNT) {
-			return account;
-		}
 		return replacePassword(environment, context, {
 			transaction,
-			actor: account.actor,
-			userId: account.user.id,
+			userId: redeemed.userId,
+			account: actorOfRedeemedOneTimeToken(redeemed),
 			derived,
+			refusal: "broken_state_on_token_redemption",
+			occasion: "token_redemption",
+			moves: movesOfSpentToken(redeemed.spent),
+			claim: async (_tx, read) => {
+				refuseUnlessTheAddressIsStillTheAccounts(environment.services, redeemed, read.email);
+				refuseATokenWrittenBack(environment.services, redeemed.userId, redeemed.spent, read);
+				//a token presented for a disabled account stays spent once it is enabled again (E-2879)
+				return {
+					actor: actorOfRedeemedOneTimeToken(redeemed),
+					spentCode: null,
+					disabled: read.disabled,
+				};
+			},
 		});
 	});
-	if (result === A_DISABLED_ACCOUNT) {
+	const result = recordedAfterCommit(environment, replaced, "token_redemption");
+	if (result === SPENT_ON_A_DISABLED_ACCOUNT) {
 		refuseADisabledAccount();
 	}
 
@@ -153,8 +273,6 @@ export async function redeemReset(
 	context.cookies.setSession(result.sessionToken);
 	return result;
 }
-
-const SPENT_ON_A_DISABLED_ACCOUNT = Symbol("a recovery code spent on a disabled account");
 
 //a consumed recovery code must not be replaced by a newly generated one
 export async function redeemResetWithRecoveryCode(
@@ -197,27 +315,50 @@ export async function redeemResetWithRecoveryCode(
 					.filter((peppered) => peppered !== null)
 					.map((peppered) => peppered.codeHmac);
 
-	const result = await driver.transaction(async (transaction) => {
-		//the account row must be locked before the code is consumed or it closes a cycle (E-1601)
-		await lockAccountRow(transaction, schema, userId);
-		const consumed = await createRecoveryCodeRepository({
-			driver: transaction,
-			schema,
-		}).consumeCode({ userId, candidateHmacs: candidates });
-		if (consumed === null || found === null) {
-			throw new ConcealedError("recovery_code_not_found");
-		}
-		//a code presented for a disabled account stays spent once it is enabled again (E-2872)
-		if (found.disabled) {
-			return SPENT_ON_A_DISABLED_ACCOUNT;
-		}
-		return replacePassword(environment, context, {
-			transaction,
-			actor: actorOfConsumedRecoveryCode(consumed),
-			userId: found.id,
-			derived,
+	if (found === null) {
+		//an unknown account still locks and consumes as a known one does (S-TIM-6)
+		await driver.transaction(async (transaction) => {
+			await lockAccountRow(transaction, schema, userId);
+			await createRecoveryCodeRepository({ driver: transaction, schema }).consumeCode({
+				userId,
+				candidateHmacs: candidates,
+			});
 		});
-	});
+		throw new ConcealedError("recovery_code_not_found");
+	}
+	const replaced = await driver.transaction((transaction) =>
+		replacePassword(environment, context, {
+			transaction,
+			userId: found.id,
+			//the code that proves the account is the caller's is consumed under the lock after any conversion (E-3162)
+			account: { unproven: found.id },
+			derived,
+			refusal: "recovery_code_not_found",
+			occasion: "change",
+			//the code is consumed under the account lock and must be one of the codes the seal covers (E-1601)
+			claim: async (tx, read) => {
+				const consumed = await createRecoveryCodeRepository({ driver: tx, schema }).consumeCode({
+					userId: found.id,
+					candidateHmacs: candidates,
+				});
+				if (consumed === null) {
+					throw new ConcealedError("recovery_code_not_found");
+				}
+				if (
+					!read.recoveryCodes.some((code) => equalsInConstantTime(code.codeHmac, consumed.codeHmac))
+				) {
+					throw new SealingRefusedError("seal_mismatch");
+				}
+				//a code presented for a disabled account stays spent once it is enabled again (E-2872)
+				return {
+					actor: actorOfConsumedRecoveryCode(consumed.consumed),
+					spentCode: consumed.codeHmac,
+					disabled: read.disabled,
+				};
+			},
+		}),
+	);
+	const result = recordedAfterCommit(environment, replaced, "change");
 	//a disabled account must answer as a wrong code does
 	if (result === SPENT_ON_A_DISABLED_ACCOUNT) {
 		throw new ConcealedError("recovery_code_not_found");

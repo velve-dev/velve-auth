@@ -25,7 +25,7 @@ const repositoryPath = `${coreDirectory}/db/repositories/token.ts`;
 /** Every scan in this file reads statements, markers and raised errors. A comment carries none of
  * those, and reading whole file text let one comment stand in for the consume statement and redden
  * three cases about S-REPLAY-2, S-TOKEN-4 and S-RACE-2 at once (E-1653). Markers survive: the
- * sixteen of them live inside statements, which this keeps verbatim. */
+ * eighteen of them live inside statements, which this keeps verbatim. */
 function sourceTextOf(path: string): string {
 	return withoutComments(readFileSync(path, "utf8"));
 }
@@ -101,14 +101,21 @@ describe("the CSPRNG has exactly one caller in the core (S-RAND-5)", () => {
 
 describe("one_time_token is reached from one file (S-TOKEN-1)", () => {
 	it("names the table in the schema that creates it and in the repository, nowhere else", () => {
-		// L-11 adds a third: the sweep deletes expired rows from the seven tables with a `*_sweep_idx`,
+		// Migration 4 names it to add the MAC columns of S-INTEG-9. L-11 adds another: the sweep deletes expired rows from the seven tables with a `*_sweep_idx`,
 		// and naming them is what it does. What it is allowed to do there is pinned below, because
 		// admitting a file to this list without that would move the sweep out of every scan in this
 		// file — each of the others reads the repository source alone (E-353).
 		expect(pathsMatching(/one_time_token/)).toStrictEqual([
+			//the start reads which token-mac versions the rows name and nothing else (E-3148)
+			`${coreDirectory}/auth/integrity-key-ring.ts`,
 			`${coreDirectory}/auth/maintenance.ts`,
+			//the maintenance step names the table only to hand it to the rebinding pass (E-3177)
+			`${coreDirectory}/auth/security-state-maintenance.ts`,
 			`${coreDirectory}/db/migrations/initial-schema.ts`,
+			`${coreDirectory}/db/migrations/token-mac.ts`,
 			repositoryPath,
+			//the maintenance seam rebinds the token MACs of the three tables it names (E-3148)
+			`${coreDirectory}/token/rebind.ts`,
 		]);
 	});
 
@@ -139,15 +146,15 @@ describe("one_time_token is reached from one file (S-TOKEN-1)", () => {
 		expect(sweep).toContain('["one_time_token", "expires_at"]');
 	});
 
-	it("writes three statements, two of them against the table", () => {
-		expect(statements, listing(statements)).toHaveLength(3);
-		expect(tokenStatements, listing(tokenStatements)).toHaveLength(2);
+	it("writes four statements, three of them against the table", () => {
+		expect(statements, listing(statements)).toHaveLength(4);
+		expect(tokenStatements, listing(tokenStatements)).toHaveLength(3);
 		expect(ownerStatements, listing(ownerStatements)).toHaveLength(1);
 	});
 
 	it("filters on the purpose in every predicate it writes against the table", () => {
 		const predicates = tokenStatements.flatMap(predicatesIn);
-		expect(predicates).toHaveLength(2);
+		expect(predicates).toHaveLength(3);
 		expect(predicates.filter((predicate) => !predicate.includes("purpose = $2"))).toStrictEqual([]);
 	});
 
@@ -162,7 +169,7 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 		const consume = statements.find((statement) => /^\s*DELETE\b/i.test(statement)) ?? "";
 		expect(asWritten(consume)).toBe(
 			"DELETE FROM velve.one_time_token WHERE token_sha256 = $1 AND purpose = $2 " +
-				"AND expires_at > now() RETURNING user_id, payload",
+				"AND expires_at > now() RETURNING user_id, payload::text AS payload_text, token_mac, token_mac_key_version",
 		);
 	});
 
@@ -176,7 +183,7 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 		expect(consume).toContain("/* no owner predicate: S-TOKEN-4 */");
 	});
 
-	it("carries the marker on no other statement of this repository, and is one of sixteen overall", () => {
+	it("carries the marker on no other statement of this repository, and is one of eighteen overall", () => {
 		const carrying = sources.filter((source) => /no owner predicate/.test(source.text));
 		const markers = sources.flatMap((source) => source.text.match(/no owner predicate/g) ?? []);
 
@@ -197,11 +204,12 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 			.join("\n");
 		const declaring = statements.filter((statement) => /no owner predicate/.test(statement));
 
-		expect(markers, perFile).toHaveLength(16);
+		//the maintenance step lists every account and counts every seal row by key version (E-3177)
+		expect(markers, perFile).toHaveLength(18);
 		expect(
 			carrying.map((source) => source.path),
 			perFile,
-		).toHaveLength(9);
+		).toHaveLength(10);
 		expect(declaring, listing(declaring)).toHaveLength(1);
 	});
 });
@@ -220,12 +228,19 @@ describe("nothing reads the row before removing it (S-RACE-2)", () => {
 		expect(tokenStatements.filter((statement) => /\bSELECT\b/i.test(statement))).toStrictEqual([]);
 	});
 
-	// The one read in the file is a lock on a different table (S-TOKEN-3, E-259); it decides
-	// nothing about the row it precedes, which is what S-RACE-2 forbids.
-	it("reads only the owner row, and takes no row lock while doing it", () => {
+	// The one read in the file is a lock on a different table (S-TOKEN-3, E-259) with the owner's
+	// token generation the new row binds (E-3522); it decides nothing about the row it precedes,
+	// which is what S-RACE-2 forbids.
+	it("reads only the owner row and its seal row, and takes no row lock while doing it", () => {
 		expect(ownerStatements.map(asWritten)).toStrictEqual([
 			"SELECT pg_advisory_xact_lock(hashtextextended($2, 0)) AS serialised, " +
-				"(SELECT 1 FROM velve.user owner WHERE owner.id = $1) AS owner_exists",
+				"(SELECT 1 FROM velve.user owner WHERE owner.id = $1) AS owner_exists, " +
+				"(SELECT COALESCE( (SELECT CASE $3::text WHEN 'email_verify' THEN st.email_verify_generation " +
+				"WHEN 'password_reset' THEN st.password_reset_generation " +
+				"WHEN 'email_change' THEN st.email_change_generation " +
+				"WHEN 'magic_link' THEN st.magic_link_generation END " +
+				"FROM velve.security_state st WHERE st.user_id = owner.id), 1) " +
+				"FROM velve.user owner WHERE owner.id = $1)::text AS token_generation",
 		]);
 		expect(repositorySource).not.toMatch(/\bFOR (NO KEY )?UPDATE\b/);
 	});

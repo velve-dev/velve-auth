@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import type { OpenTransaction } from "../src/core/auth/account-envelopes.js";
 import type {
 	Actor,
 	ConsumedOAuthFlow,
@@ -8,6 +9,7 @@ import type {
 	RedeemedOneTimeToken,
 	ResolvedSession,
 } from "../src/core/db/actor.js";
+import type { Driver } from "../src/core/db/driver.js";
 import type { UserId } from "../src/core/db/entity-id.js";
 import type { PendingToken } from "../src/core/factor/pending/token.js";
 import type { RedirectPath } from "../src/core/http/redirect.js";
@@ -63,6 +65,10 @@ const BRAND_MARKERS: ReadonlyMap<
 	string,
 	{ readonly asserts: string | null; readonly note: string }
 > = new Map([
+	[
+		"core/auth/account-envelopes.ts:openTransactionBrand",
+		{ asserts: "OpenTransaction", note: "a pool is not an open transaction (E-3129)" },
+	],
 	["core/db/actor.ts:actorBrand", { asserts: "Actor", note: "a bare string is not an owner" }],
 	[
 		"core/db/actor.ts:consumedOAuthFlowBrand",
@@ -132,7 +138,7 @@ type BaseIsRefusedBy<Brand, Base, Name extends string> = [Base] extends [Brand]
  *
  * What this does not reach: it says a base does not widen into a brand, never that only the vetting
  * function mints one — every brand here is minted by a cast, and `test/db-entity-id.test.ts` pins
- * the minting site of three of the twelve. Two brands collapsing into each other while each still
+ * the minting site of three of the thirteen. Two brands collapsing into each other while each still
  * refuses its base is invisible (E-1375), and so is a brand spelled in a way the census cannot read.
  *
  * The refusal tests below assert the error **class** and not which refusal fired, and here that is
@@ -173,6 +179,7 @@ const BRAND_REFUSES_ITS_BASE: {
 	readonly SecretToken: BaseIsRefusedBy<SecretToken, string, "SecretToken">;
 	readonly SessionToken: BaseIsRefusedBy<SessionToken, string, "SessionToken">;
 	readonly UserId: BaseIsRefusedBy<UserId, string, "UserId">;
+	readonly OpenTransaction: BaseIsRefusedBy<OpenTransaction, Driver, "OpenTransaction">;
 } = {
 	Actor: true,
 	ConsumedOAuthFlow: true,
@@ -186,9 +193,10 @@ const BRAND_REFUSES_ITS_BASE: {
 	SessionToken: true,
 	ResolvedSession: true,
 	UserId: true,
+	OpenTransaction: true,
 };
 
-/** Without this the twelve above pass for machinery that has stopped deciding anything. */
+/** Without this the thirteen above pass for machinery that has stopped deciding anything. */
 const A_DECORATIVE_BRAND_IS_REPORTED: BaseIsRefusedBy<
 	ABrandThatBrandsNothing,
 	string,

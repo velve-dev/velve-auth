@@ -7,9 +7,11 @@ import {
 	toPendingToken,
 } from "../src/core/factor/pending/index.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
-import { type MountedAuth, mountAuth, TEST_ORIGIN } from "./auth-fixtures.js";
+import { type MountedAuth, mountAuth, TEST_ORIGIN, testKeyProvider } from "./auth-fixtures.js";
 import { dropSchema } from "./db-fixtures.js";
 import { mountWidest, signUpOn, type WidestMount } from "./widest-mount-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 /**
  * S-CSRF-1 on the instance itself rather than on server methods rebuilt from the route table: every
@@ -208,7 +210,7 @@ describe("pending.cancel runs the route's pipeline on the direct call (3.11, E-5
 	let mounted: MountedAuth;
 
 	beforeAll(async () => {
-		mounted = await mountAuth("pendingcancel");
+		mounted = await mountAuth("pendingcancel", { keys: TOKEN_KEYS });
 	});
 
 	afterAll(async () => {
@@ -260,6 +262,7 @@ describe("pending.cancel runs the route's pipeline on the direct call (3.11, E-5
 
 	async function createPendingFor(userId: string): Promise<PendingToken> {
 		const service = createPendingAuthenticationService({
+			keys: TOKEN_KEYS,
 			driver: mounted.connection,
 			schema: mounted.schema,
 		});

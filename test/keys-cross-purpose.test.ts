@@ -1,21 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { NONCE_BYTES } from "../src/core/keys/aes-gcm.js";
+import { openEnvelope, sealEnvelope } from "../src/core/keys/envelope.js";
 import {
 	type EncryptionKeyPurpose,
 	KEY_PURPOSES,
 	type KeyPurpose,
-	openEnvelope,
 	rootKeyProvider,
-	sealEnvelope,
 } from "../src/core/keys/index.js";
 import { randomBytes } from "../src/core/token/index.js";
 import { generateRootKey } from "./keys-fixtures.js";
 
-// T-KEY-2 fixes the threshold as all 30 ordered pairs of the six purposes failing. Two purposes
+// T-KEY-2 fixes the threshold as all 56 ordered pairs of the eight purposes failing. Four purposes
 // sign and four encrypt, so "produce and consume" is spelled out for each combination rather than
 // only for the four encryption purposes.
 
-const SIGNING_PURPOSES: readonly KeyPurpose[] = ["cookie-sig", "token-pepper"];
+const SIGNING_PURPOSES: readonly KeyPurpose[] = [
+	"cookie-sig",
+	"token-pepper",
+	"state-mac",
+	"token-mac",
+];
 
 const keys = rootKeyProvider({ currentVersion: 1, keysByVersion: { 1: generateRootKey() } });
 
@@ -64,8 +68,8 @@ const ORDERED_PAIRS = KEY_PURPOSES.flatMap((produced) =>
 );
 
 describe("cross-purpose use of a purpose key (S-KEY-2)", () => {
-	it("enumerates every ordered pair of the six purposes", () => {
-		expect(ORDERED_PAIRS).toHaveLength(30);
+	it("enumerates every ordered pair of the eight purposes", () => {
+		expect(ORDERED_PAIRS).toHaveLength(56);
 	});
 
 	it("reads back a value under the purpose that produced it", async () => {

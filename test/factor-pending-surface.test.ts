@@ -1,8 +1,8 @@
 import { describe, expectTypeOf, it } from "vitest";
 import type { Actor, ResolvedSession } from "../src/core/db/actor.js";
+import type { BookedAttempt } from "../src/core/factor/pending/booking.js";
 import type {
 	ConsumedPendingAuthentication,
-	CountedAttempt,
 	FailedAttempt,
 	IssuedPendingAuthentication,
 	PendingAuthenticationInsert,
@@ -51,17 +51,16 @@ describe("the surface the pending module publishes", () => {
 		>();
 	});
 
-	it("separates the outcome of a failed attempt from a count nobody has to interpret", () => {
+	it("separates the outcome of a failed attempt from the booking that counted it (E-3140)", () => {
 		expectTypeOf<FailedAttempt>().toExtend<{ outcome: "attempts_remain" | "exhausted" }>();
-		expectTypeOf<CountedAttempt>().toEqualTypeOf<{
-			readonly attempts: number;
-			readonly exhausted: boolean;
-		}>();
+		expectTypeOf<BookedAttempt["outcome"]>().toEqualTypeOf<"missing" | "exhausted" | "booked">();
 	});
 
 	it("carries the same option shape the session service takes, and no clock (E-247)", () => {
 		expectTypeOf<PendingAuthenticationServiceOptions>().toHaveProperty("driver");
-		expectTypeOf<keyof PendingAuthenticationServiceOptions>().toEqualTypeOf<"driver" | "schema">();
+		expectTypeOf<keyof PendingAuthenticationServiceOptions>().toEqualTypeOf<
+			"driver" | "keys" | "schema" | "reportTokenBindingRefusal" | "attemptSeal"
+		>();
 		expectTypeOf<keyof PendingAuthenticationRepositoryOptions>().toEqualTypeOf<
 			"driver" | "schema"
 		>();
@@ -77,7 +76,11 @@ describe("the surface the pending module publishes", () => {
 
 	it("publishes the repository and service contracts the factor features build against", () => {
 		expectTypeOf<PendingAuthenticationService["begin"]>().toBeFunction();
-		expectTypeOf<PendingAuthenticationRepository["countFailedAttempt"]>().toBeFunction();
+		//a failure is counted only through the booking that preceded it (E-3140)
+		expectTypeOf<PendingAuthenticationService>().not.toHaveProperty("registerFailedAttempt");
+		//the booking is internal and stays off the shipped service contract (E-3259)
+		expectTypeOf<PendingAuthenticationService>().not.toHaveProperty("bookAttempt");
+		expectTypeOf<PendingAuthenticationRepository["bookAttempt"]>().toBeFunction();
 		expectTypeOf<PendingAuthenticationInsert["lifetimeInSeconds"]>().toBeNumber();
 		expectTypeOf<PendingAuthenticationWithOwner["availableFactors"]>().toEqualTypeOf<
 			readonly SecondFactor[]

@@ -7,8 +7,11 @@ import {
 	type PendingToken,
 	type SecondFactorCompletion,
 } from "../src/core/factor/pending/index.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 let connection: TestConnection;
 let schema: string;
@@ -35,8 +38,13 @@ beforeAll(async () => {
 	const migrated = await openMigratedSchema("pendingrace");
 	connection = migrated.connection;
 	schema = migrated.schema;
-	pending = createPendingAuthenticationService({ driver: connection, schema });
-	completion = createSecondFactorCompletion({ driver: connection, schema });
+	pending = createPendingAuthenticationService({ keys: TOKEN_KEYS, driver: connection, schema });
+	completion = createSecondFactorCompletion({
+		sealing: "migrating",
+		keys: TOKEN_KEYS,
+		driver: connection,
+		schema,
+	});
 });
 
 afterAll(async () => {
@@ -69,6 +77,7 @@ describe("finishing a second factor (S-FIX-1, S-RACE-5)", () => {
 		const token = await beginPending();
 
 		const issued = await completion.complete({
+			authorisedBy: "unsealed",
 			pendingToken: token,
 			factor: "totp",
 			presentedSessionToken: null,
@@ -98,7 +107,13 @@ describe("finishing a second factor (S-FIX-1, S-RACE-5)", () => {
 		};
 
 		await expect(
-			createSecondFactorCompletion({ driver: refusing, schema }).complete({
+			createSecondFactorCompletion({
+				sealing: "migrating",
+				keys: TOKEN_KEYS,
+				driver: refusing,
+				schema,
+			}).complete({
+				authorisedBy: "unsealed",
 				pendingToken: token,
 				factor: "totp",
 				presentedSessionToken: null,
@@ -123,7 +138,13 @@ describe("finishing a second factor (S-FIX-1, S-RACE-5)", () => {
 		try {
 			const outcomes = await Promise.allSettled(
 				racers.map((racer) =>
-					createSecondFactorCompletion({ driver: racer, schema }).complete({
+					createSecondFactorCompletion({
+						sealing: "migrating",
+						keys: TOKEN_KEYS,
+						driver: racer,
+						schema,
+					}).complete({
+						authorisedBy: "unsealed",
 						pendingToken: token,
 						factor: "totp",
 						presentedSessionToken: null,

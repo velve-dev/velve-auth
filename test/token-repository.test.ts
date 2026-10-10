@@ -3,6 +3,7 @@ import type { Driver } from "../src/core/db/driver.js";
 import { InvalidIdentifierError } from "../src/core/db/identifier.js";
 import {
 	createOneTimeTokenRepository,
+	type OneTimeTokenCandidate,
 	OneTimeTokenError,
 } from "../src/core/db/repositories/token.js";
 import {
@@ -15,7 +16,7 @@ interface Call {
 	readonly params: readonly unknown[];
 }
 
-const OWNER_FOUND = [{ owner_exists: 1 }];
+const OWNER_FOUND = [{ owner_exists: 1, token_generation: "1" }];
 
 function driverReturning(
 	rows: readonly unknown[],
@@ -41,8 +42,14 @@ function repositoryReturning(rows: readonly unknown[], ownerRows?: readonly unkn
 
 const HASH = new Uint8Array(32).fill(7);
 
+const MAC = { tokenMac: new Uint8Array(32).fill(9), tokenMacKeyVersion: 1 };
+
 /** A driver decodes `timestamptz` into a `Date`, and E-598 makes the repository read one. */
 const EXPIRY = new Date("2026-09-08T00:00:00.000Z");
+
+function acceptedOf(candidate: OneTimeTokenCandidate | null) {
+	return candidate === null || candidate.userId === null ? null : candidate.accept();
+}
 
 describe("the parameters the repository sends", () => {
 	it("binds owner, purpose, hash, payload and the purpose's own deadline, in that order", async () => {
@@ -52,7 +59,7 @@ describe("the parameters the repository sends", () => {
 			tokenSha256: HASH,
 			purpose: "password_reset",
 			userId: "0d1b6c8e-0000-4000-8000-000000000001",
-			payload: { newEmail: "next@example.com" },
+			bindUnder: () => Promise.resolve({ payload: { newEmail: "next@example.com" }, ...MAC }),
 		});
 
 		expect(calls).toHaveLength(2);
@@ -60,6 +67,7 @@ describe("the parameters the repository sends", () => {
 		expect(calls[0]?.params).toStrictEqual([
 			"0d1b6c8e-0000-4000-8000-000000000001",
 			"0d1b6c8e-0000-4000-8000-000000000001",
+			"password_reset",
 		]);
 		expect(calls[1]?.params).toStrictEqual([
 			"0d1b6c8e-0000-4000-8000-000000000001",
@@ -68,6 +76,8 @@ describe("the parameters the repository sends", () => {
 			'{"newEmail":"next@example.com"}',
 			ONE_TIME_TOKEN_LIFETIME_SECONDS.password_reset,
 			"0d1b6c8e-0000-4000-8000-000000000001",
+			MAC.tokenMac,
+			MAC.tokenMacKeyVersion,
 		]);
 		expect(issued.expiresAt).toStrictEqual(EXPIRY);
 	});
@@ -79,7 +89,7 @@ describe("the parameters the repository sends", () => {
 			tokenSha256: HASH,
 			purpose: "magic_link",
 			userId: "0d1b6c8e-0000-4000-8000-000000000001",
-			payload: null,
+			bindUnder: () => Promise.resolve({ payload: null, ...MAC }),
 		});
 
 		expect(calls[1]?.params[3]).toBeNull();
@@ -92,14 +102,20 @@ describe("the parameters the repository sends", () => {
 			tokenSha256: HASH,
 			purpose: "magic_link",
 			userId: "0d1b6c8e-0000-4000-8000-000000000001",
-			payload: null,
+			bindUnder: () => Promise.resolve({ payload: null, ...MAC }),
 		});
 
 		const collapsed = calls.map((call) => call.sql.replace(/\s+/g, " ").trim());
 		expect(collapsed).toHaveLength(2);
 		expect(collapsed[0]).toBe(
 			"SELECT pg_advisory_xact_lock(hashtextextended($2, 0)) AS serialised, " +
-				"(SELECT 1 FROM velve.user owner WHERE owner.id = $1) AS owner_exists",
+				"(SELECT 1 FROM velve.user owner WHERE owner.id = $1) AS owner_exists, " +
+				"(SELECT COALESCE( (SELECT CASE $3::text WHEN 'email_verify' THEN st.email_verify_generation " +
+				"WHEN 'password_reset' THEN st.password_reset_generation " +
+				"WHEN 'email_change' THEN st.email_change_generation " +
+				"WHEN 'magic_link' THEN st.magic_link_generation END " +
+				"FROM velve.security_state st WHERE st.user_id = owner.id), 1) " +
+				"FROM velve.user owner WHERE owner.id = $1)::text AS token_generation",
 		);
 		expect(collapsed[1]).toMatch(/^WITH superseded AS \( DELETE FROM velve\.one_time_token/);
 	});
@@ -114,9 +130,9 @@ describe("the parameters the repository sends", () => {
 });
 
 describe("the payload a driver hands back", () => {
-	it("is taken as it is when the driver decoded the jsonb", async () => {
+	it("is parsed once from the text the statement casts the jsonb to", async () => {
 		const { repository } = repositoryReturning([
-			{ user_id: "a", payload: { newEmail: "next@example.com" } },
+			{ user_id: "a", payload_text: '{"newEmail":"next@example.com"}' },
 		]);
 
 		const stored = await repository.consumeOneTimeToken({
@@ -124,12 +140,15 @@ describe("the payload a driver hands back", () => {
 			purpose: "email_change",
 		});
 
-		expect(stored).toStrictEqual({ userId: "a", payload: { newEmail: "next@example.com" } });
+		expect(acceptedOf(stored)).toStrictEqual({
+			userId: "a",
+			payload: { newEmail: "next@example.com" },
+		});
 	});
 
-	it("is parsed when the driver handed back the text PostgreSQL sent", async () => {
+	it("has no binding for a jsonb string that holds JSON text, which no issue writes", async () => {
 		const { repository } = repositoryReturning([
-			{ user_id: "a", payload: '{"newEmail":"next@example.com"}' },
+			{ user_id: "a", payload_text: '"{\\"newEmail\\":\\"next@example.com\\"}"' },
 		]);
 
 		const stored = await repository.consumeOneTimeToken({
@@ -137,14 +156,16 @@ describe("the payload a driver hands back", () => {
 			purpose: "email_change",
 		});
 
-		expect(stored).toStrictEqual({ userId: "a", payload: { newEmail: "next@example.com" } });
+		expect(stored?.storedPayload).toBeNull();
 	});
 
 	it("is null for a row without one", async () => {
-		const { repository } = repositoryReturning([{ user_id: "a", payload: null }]);
+		const { repository } = repositoryReturning([{ user_id: "a", payload_text: null }]);
 
 		expect(
-			await repository.consumeOneTimeToken({ tokenSha256: HASH, purpose: "email_change" }),
+			acceptedOf(
+				await repository.consumeOneTimeToken({ tokenSha256: HASH, purpose: "email_change" }),
+			),
 		).toStrictEqual({ userId: "a", payload: null });
 	});
 
@@ -152,7 +173,9 @@ describe("the payload a driver hands back", () => {
 		const { repository } = repositoryReturning([{ user_id: "a" }]);
 
 		expect(
-			await repository.consumeOneTimeToken({ tokenSha256: HASH, purpose: "email_change" }),
+			acceptedOf(
+				await repository.consumeOneTimeToken({ tokenSha256: HASH, purpose: "email_change" }),
+			),
 		).toStrictEqual({ userId: "a", payload: null });
 	});
 });
@@ -166,7 +189,7 @@ describe("what the repository refuses", () => {
 				tokenSha256: HASH,
 				purpose: "magic_link",
 				userId: "0d1b6c8e-0000-4000-8000-000000000001",
-				payload: null,
+				bindUnder: () => Promise.resolve({ payload: null, ...MAC }),
 			}),
 		).rejects.toThrow(OneTimeTokenError);
 	});
@@ -183,7 +206,7 @@ describe("what the repository refuses", () => {
 					tokenSha256: HASH,
 					purpose,
 					userId: "0d1b6c8e-0000-4000-8000-000000000001",
-					payload: { secret: "must-not-appear" },
+					bindUnder: () => Promise.resolve({ payload: { secret: "must-not-appear" }, ...MAC }),
 				})
 				.catch((error: unknown) => error)) as OneTimeTokenError;
 		};
@@ -216,7 +239,7 @@ describe("what the repository refuses", () => {
 				tokenSha256: HASH,
 				purpose: "magic_link",
 				userId: "0d1b6c8e-0000-4000-8000-000000000001",
-				payload: null,
+				bindUnder: () => Promise.resolve({ payload: null, ...MAC }),
 			})
 			.catch(() => undefined);
 
@@ -232,7 +255,7 @@ describe("what the repository refuses", () => {
 				tokenSha256: HASH,
 				purpose: "totp_step" as unknown as OneTimeTokenPurpose,
 				userId: "0d1b6c8e-0000-4000-8000-000000000001",
-				payload: null,
+				bindUnder: () => Promise.resolve({ payload: null, ...MAC }),
 			})
 			.catch(() => undefined);
 
