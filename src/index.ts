@@ -44,11 +44,11 @@ export {
 	SECURITY_OPTIONS,
 	type SecurityOption,
 } from "./core/auth/security-options.js";
-export type {
-	RowsUnderSecurityStateKeyVersion,
-	SealedSecurityState,
+export {
+	type RowsUnderSecurityStateKeyVersion,
+	type SealedSecurityState,
 	SecurityStateMaintenanceError,
-	SecurityStateReport,
+	type SecurityStateReport,
 } from "./core/auth/security-state-maintenance.js";
 export { type RouteConflict, THE_CORE, VelveStartupError } from "./core/auth/startup.js";
 export {

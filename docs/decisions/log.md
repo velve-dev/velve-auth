@@ -18168,3 +18168,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Listing the nine under one row of their own, which F.1 does not have; its rows are the visible codes.
 **Reason.** A table that claims to list every merged cause and leaves nine out is read as saying they answer something else.
 **Price.** None.
+
+<a id="e-3517"></a>
+
+### SecurityStateMaintenanceError is exported as a value
+`E-3517` · security-state-seal · public interface, settled
+
+**Context.** `maintenance.resealSecurityState` and `maintenance.sealSecurityState` refuse with `SecurityStateMaintenanceError`, and `src/index.ts` exported it as a type only, so an application could name it in a signature but not catch it with `instanceof`, as it can `VelveStartupError`. It is now exported as a value beside the three types of its module, and the shipped declarations are recorded again in their own commit. `test/security-state-release-documents.test.ts` holds that the package entry exports both classes as functions.
+**Rejected.** Telling the error apart by its `code` alone, which works but leaves the class the documentation names unreachable.
+**Reason.** An error class a caller cannot reach is half of an interface.
+**Price.** One more value export that `test/api-surface.test.ts` pins.
