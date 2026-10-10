@@ -220,3 +220,64 @@ describe("an account an OAuth sign-in creates", () => {
 		).toStrictEqual([1]);
 	});
 });
+
+describe("the anchor's place on a consuming path: after the consumption, before the account lock (S-INTEG-6)", () => {
+	async function lockIsFree(userId: string): Promise<boolean> {
+		const probe = await openTestConnection();
+		try {
+			await probe.query("BEGIN", []);
+			return await probe
+				.query(`SELECT 1 FROM ${schema}.user WHERE id = $1 FOR NO KEY UPDATE NOWAIT`, [userId])
+				.then(() => true)
+				.catch(() => false);
+		} finally {
+			await probe.query("ROLLBACK", []).catch(() => undefined);
+			await probe.close();
+		}
+	}
+
+	it("asks the anchor about a reset's account before the account is locked", async () => {
+		const anchor = memoryAnchor();
+		const messages: EmailMessage[] = [];
+		const auth = createVelveAuth(
+			configFor({
+				database: connection,
+				schema,
+				keys: testKeyProvider(),
+				email: {
+					send: (message) => {
+						messages.push(message);
+						return Promise.resolve();
+					},
+				},
+				plugins: [{ id: "anchor", securityStateAnchor: anchor.anchor }],
+				securityState: { sealing: "required" },
+				rateLimit: {
+					perIpAddress: { capacity: 100_000, refillPerSecond: 100_000 },
+					perAccount: { capacity: 100_000, refillPerSecond: 100_000 },
+				},
+			}),
+		);
+		const handler = toWebHandler(auth);
+		const email = `${randomBytes(6).toString("hex")}@example.com`;
+		const signedUp = await auth.signUp.withPassword({
+			email,
+			password: PASSWORD,
+			origin: TEST_ORIGIN,
+		});
+		await settled();
+		await handler(postTo("/password/request-reset", { email }));
+		const token = (messages.at(-1) as { token: string }).token;
+		const seen: boolean[] = [];
+		anchor.beforeNextAnswer(signedUp.user.id, async () => {
+			seen.push(await lockIsFree(signedUp.user.id));
+		});
+
+		const answer = await handler(
+			postTo("/password/redeem-reset", { token, newPassword: NEW_PASSWORD }),
+		);
+
+		expect(answer.status).toBe(200);
+		expect(seen, "the account was not locked while the anchor answered").toStrictEqual([true]);
+	});
+});

@@ -18178,3 +18178,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Telling the error apart by its `code` alone, which works but leaves the class the documentation names unreachable.
 **Reason.** An error class a caller cannot reach is half of an interface.
 **Price.** One more value export that `test/api-surface.test.ts` pins.
+
+<a id="e-3518"></a>
+
+### The beforeLockingTheOwnerOf seam is removed, and the documentation says the instance passes the refusal report
+`E-3518` · security-state-seal · seams, documentation, settled
+
+**Context.** E-3265 gave `redeemOrRefuse` in `src/core/flows/artefact.ts` and the second-factor completion in `src/core/factor/pending/complete.ts` an optional `beforeLockingTheOwnerOf`, for the anchor to be asked about a consumed row's owner after the consumption and before the account lock, as section 3.18 orders for a path that learns its account by consuming a row. No production module ever passed it: the seal does that asking itself, `checkAccount` and `sealChange` consulting the anchors before the read and before the lock, in the transaction that consumed the row. The two options and their comments citing E-3265 are removed, with the three cases of `test/integ-token-binding.test.ts` that drove the seam directly. `test/security-state-anchor-after-commit.test.ts` now holds the order on the path itself: a reset redemption whose anchor, answering, finds the account row not locked. `test/security-state-seams.test.ts` refuses a seam of that name with no production caller. `DOCUMENTATION.md` said the instance passed no refusal report to the token store; it passes the one that raises the security-state alarm, and says so.
+**Rejected.** Wiring the seam to `consultAnchors`, which would ask the anchor twice on every redemption, once through the seam and once through the check.
+**Reason.** A seam nothing calls documents a guarantee nothing gives, and the seal gives this one already.
+**Price.** E-3265's seam, described there, no longer exists.

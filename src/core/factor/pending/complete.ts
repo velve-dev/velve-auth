@@ -27,8 +27,6 @@ export interface SecondFactorCompletionOptions {
 	readonly sealVerifiesAfterMissedIssue?: SealVerification;
 	readonly session?: Partial<SessionConfig>;
 	readonly sessionMetadata?: SessionMetadataMode;
-	/** told the owner of the consumed pending row before the account lock is taken, and may refuse by throwing */
-	readonly beforeLockingTheOwnerOf?: (ownerId: string) => Promise<void>;
 }
 
 export interface SecondFactorCompletion {
@@ -84,8 +82,6 @@ export function createSecondFactorCompletion(
 				});
 
 				const consumed = await pending.consume(pendingToken);
-				//the anchor is asked about the consumed row's owner in this transaction before the account lock (E-3265)
-				await options.beforeLockingTheOwnerOf?.(consumed.userId);
 				return sessions.issueReplacingPresented({
 					completes: SECOND_FACTOR_PATH[factor],
 					authorisedBy,

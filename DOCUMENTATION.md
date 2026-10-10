@@ -9566,8 +9566,9 @@ the rollback of the transaction that would have issued the session.
 | `verdict` | `mismatch`, `key_version_unknown` for a version the ring does not hold, or `key_unusable` for a key Web Crypto refuses to sign with; always `mismatch` with `seal_mismatch` |
 
 and nothing else: no token, no hash, no MAC. Whatever the report throws is
-swallowed, so it cannot change the refusal. The instance does not pass one yet;
-the security-state alarm of section 3.18 is what it is there for.
+swallowed, so it cannot change the refusal. The instance passes one that raises
+the security-state alarm of section 3.18, with a refusal while listing sessions
+raised under the occasion `session_resolve` (E-3381).
 
 ### The types
 
