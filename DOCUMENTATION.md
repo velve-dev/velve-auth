@@ -229,7 +229,7 @@ email address is an attribute, never a key.
 | `token_mac` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `token-mac` of migration 4 ([Security state: keyed token hashes](#security-state-keyed-token-hashes)) |
 | `token_mac_key_version` | `integer` | at least 1; the `token-mac` version `token_mac` was taken under; indexed |
 | `created_at`, `last_used_at` | `timestamptz` | |
-| `idle_expires_at`, `absolute_expires_at` | `timestamptz` | `absolute_expires_at` is indexed for the sweep |
+| `idle_expires_at`, `absolute_expires_at` | `timestamptz` | `absolute_expires_at` is indexed for the sweep; both are bound into `token_mac`, so only the library extends `idle_expires_at` |
 | `factors` | `text[]` | `password`, `totp`, `webauthn`, `recovery`, `oauth` |
 | `ip` | `inet` | truncated unless `sessionMetadata` says otherwise |
 | `user_agent` | `text` | truncated unless `sessionMetadata` says otherwise |
@@ -267,6 +267,7 @@ The state between the first factor and the second.
 | `token_mac` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `token-mac` of migration 4 |
 | `token_mac_key_version` | `integer` | at least 1; the `token-mac` version `token_mac` was taken under; indexed |
 | `session_epoch` | `bigint` | 1 to 2^53 − 1; the account's `session_epoch` when the row was created, 1 for an account without a seal row; bound into `token_mac` (migration 4) |
+| `attempt_generation` | `bigint` | 1 to 2^53 − 1; the account's `attempt_generation` when the row was created or its last booking drew; bound into `token_mac` (migration 4, [Generations](#generations)) |
 
 ### `velve.totp_credential`
 
@@ -382,6 +383,11 @@ the seal covers and when it is written and checked is in
 | `digest` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `state-mac` |
 | `key_version` | `integer` | at least 1; the `state-mac` version `digest` was taken under |
 | `session_epoch` | `bigint` | from 1, default 1, to 9007199254740991; replaced by a new random value, different from the current one, on every revocation of all of the account's sessions and every administrator reseal, compared only for equality, and every session's MAC binds the epoch it was issued under |
+| `components_version` | `bigint` | from 1, default 1; the `version` of the last seal that changed a component or the epoch, which a session issue is conditional on (E-3527) |
+| `session_generation` | `bigint` | from 1, default 1, to 9007199254740991; drawn anew by every revocation of a single session, and every live session's MAC binds the current one ([Generations](#generations)) |
+| `attempt_generation`, `attempt_last` | `bigint`, `bytea` | the generation drawn anew by every booked second-factor attempt, default 1, and the `token_sha256` of the pending row whose booking drew it, or null |
+| `email_verify_generation`, `password_reset_generation`, `email_change_generation`, `magic_link_generation` | `bigint` | one generation per one-time token purpose, default 1, drawn anew by every redemption of that purpose that takes effect |
+| `token_last` | `bytea` | the `token_sha256` of the one-time token whose redemption drew a generation last, or null |
 | `sealed_at` | `timestamptz` | when the row was last written |
 
 ### `velve.schema_migration`
@@ -3614,7 +3620,13 @@ of every row it writes and checks the MAC of every row it redeems;
 | Method | Parameters | Returns |
 |---|---|---|
 | `issue` | `{ purpose, userId, payload? }` | `{ token, expiresAt }` — the plaintext `SecretToken` and its deadline |
-| `redeem` | `{ token: SecretToken, purpose }` | `{ purpose, userId, payload }`, or `null` |
+| `redeem` | `{ token: SecretToken, purpose }` | `{ purpose, userId, payload, spent }`, or `null` |
+
+`issue` writes the account's generation of the purpose into the stored payload
+under `tokenGeneration`, where the MAC binds it; `redeem` takes it out again, so
+`payload` is what was issued, and hands it back in `spent` (`{ purpose,
+tokenSha256, tokenGeneration }`), which the redeeming flow holds against the
+seal ([Generations](#generations)). A payload issued as `{}` comes back as `null`.
 
 Requesting a token supersedes the user's earlier tokens of the same purpose, and
 holds under concurrent requests as well as sequential ones (S-TOKEN-3).
@@ -3864,8 +3876,18 @@ freshness is time since sign-in, and only a new sign-in restores it.
 createSessionRepository(options: {
   driver: Driver; schema: string; keys: KeyProvider;
   sealing?: SecurityStateSealing; reportTokenBindingRefusal?: TokenBindingRefusalReport;
+  sealVerifiesAfterMissedIssue?: SealVerification; revocationSeal?: RevocationSeal;
 }): SessionRepository
 ```
+
+`revocationSeal` runs every revocation of a single session — `deleteSessionByTokenHash`,
+`deleteSessionOwnedBy`, `deleteSessionById`, a `replacePresentedSession` whose
+presented row belongs to the same account and `replaceSessionOwnedBy` — under the
+account lock and moves the session generation, after which the repository rebinds
+every other live session of the account ([Generations](#generations)). Without
+it a single revocation deletes its row under the account lock and moves nothing.
+`rebindToGeneration({ actor, step, excluding })` is that rebinding on its own, for
+a change that moves the generation in its own sealing transaction.
 
 `keys` checks the token MAC of every row the repository lists, counts or announces;
 `sealing` defaults to `"required"`; both are described under [Security state:
@@ -3966,10 +3988,15 @@ createSessionService(options: {
   sealing: "required" | "migrating"                 // whether an account without a seal row has an epoch
   schema?: string                                   // "velve"
   reportTokenBindingRefusal?: TokenBindingRefusalReport
+  revocationSeal?: RevocationSeal                   // moves the session generation on a single revocation
   session?: Partial<SessionConfig>
   sessionMetadata?: "truncated" | "full" | "none"   // "truncated"
 }): SessionService
 ```
+
+`boundTo(driver)` returns the service over a caller's transaction without
+`revocationSeal`, because a generation is moved in a sealing transaction of its
+own and cannot be nested in the caller's.
 
 Everything the library does with sessions. **There is no `clock` option, and
 passing one is a compile error.** Every moment this module decides by — both
@@ -6516,8 +6543,13 @@ request carrying only it byte for byte as it answers a request carrying no
 cookie at all.
 
 ```ts
-createPendingAuthenticationService({ driver, keys, schema?, reportTokenBindingRefusal? }): PendingAuthenticationService
+createPendingAuthenticationService({ driver, keys, schema?, reportTokenBindingRefusal?, attemptSeal? }): PendingAuthenticationService
 ```
+
+`attemptSeal` seals every booking on an account with a seal row: it books the row
+under the generation it draws, before the account lock, and then moves the
+account's `attempt_generation` under the lock ([Generations](#generations)).
+Without it a booking writes the row alone, as on an account without a seal row.
 
 | Method | Meaning |
 |---|---|
@@ -9384,42 +9416,45 @@ stored `user.email` (`refuseUnlessTheAddressIsStillTheAccounts` in
 **What the MAC leaves to a writer.** Section 3.18 names these limits, and they
 hold here as stated:
 
-- Deadlines are not bound — `idle_expires_at`, `absolute_expires_at`,
-  `expires_at` — nor are `last_used_at`, `ip`, `user_agent` and the `created_at`
-  of a one-time token or a pending authentication. A writer can extend the life of
-  an existing row and change what a session list shows about it, but cannot
-  create a row or point one at another account. A session's `created_at` is
-  bound, because freshness is measured from it: a writer who moves it to make a
-  stale session fresh again leaves a row that is refused.
-- A row is proved to be the library's, not to be its latest version. A writer
-  who saved a row can write it back with its MAC of that time: a session revoked
-  on its own (`session.revoke`, `signOut`) becomes valid again as long as the
-  account's `session_epoch` has not changed since; a consumed one-time token becomes
-  redeemable again within its deadline; a pending row gets its older attempt
-  budget back ([The attempt budget](#the-attempt-budget)). A session ended by a
-  mass revocation does not come back this way, because its MAC binds an epoch the
-  revocation left behind.
+- The deadlines of one-time tokens and pending authentications (`expires_at`) are
+  not bound, nor are `last_used_at`, `ip`, `user_agent` and the `created_at` of a
+  one-time token or a pending authentication. A writer can extend the life of
+  such a row and change what a session list shows about a session, but cannot
+  create a row or point one at another account. A session's `created_at`,
+  `idle_expires_at` and `absolute_expires_at` are bound: freshness is measured
+  from the first, and a writer who moves any of them leaves a row that is refused.
+- A row written back alone with its MAC of that time binds a generation the
+  account has left, and is refused: a session revoked on its own, a consumed
+  one-time token, a pending row after failed attempts
+  ([Generations](#generations)). **This is not impossible, it is moved:** a writer
+  who also writes back the seal row of that time rolls the whole account back to
+  a consistent older state, and only an anchor whose store the writer cannot
+  reach notices it (S-INTEG-6). Without an anchor that rollback stays possible.
+  A session of another account that a sign-in replaces as the presented one, and
+  a consumed WebAuthn challenge, can still be written back alone.
 
 ### The session epoch
 
 A session's MAC also binds the account's `session_epoch` from `velve.security_state`.
 Issuing a session takes the account lock of `src/core/db/lock.ts` first, so it
 waits for a mass revocation that holds the account. Every issue names its
-authorisation in `authorisedBy` (`IssueAuthorisation`): `{ version, sessionEpoch }`,
-the seal row the check that authorised the session read; `"unsealed"`, where that
+authorisation in `authorisedBy` (`IssueAuthorisation`): `{ componentsVersion,
+sessionEpoch }`, of the seal row the check that authorised the session read; `"unsealed"`, where that
 check read none; or `"read_under_lock"`, the interim for a caller whose check of
 the seal is not wired yet, which takes the version and epoch the issue reads under
 the lock, together with the transaction's `now()`. Today every route, flow and
 the second-factor completion passes `"read_under_lock"`. The MAC is taken over
 that epoch and that time, the time is
 written as `created_at`, and for an account with a seal row the insert is
-`INSERT … SELECT … FROM security_state WHERE user_id = $1 AND session_epoch = $11 AND version = $12`;
+`INSERT … SELECT … FROM security_state WHERE user_id = $1 AND session_epoch = $11 AND components_version = $12`;
 for one without a seal row, only in `"migrating"`, only at epoch 1 and only where
 the check read none either, it is
 `… WHERE NOT EXISTS (SELECT 1 FROM security_state WHERE user_id = $1)`. Once a
-caller names the version and epoch its check read, a sign-in whose check came
-before a password change or any other reseal, with the KDF running in between
-outside any transaction, inserts nothing; under `"read_under_lock"` it still
+caller names the components version and epoch its check read, a sign-in whose
+check came before a password change or any other reseal that changes a component
+or the epoch, with the KDF running in between outside any transaction, inserts
+nothing; a reseal that only draws a [generation](#generations) or renews the key
+leaves `components_version` standing and the sign-in goes through (E-3527); under `"read_under_lock"` it still
 inserts under the state the lock reads, as before. An insert
 that writes nothing is told apart under the lock by `sealVerifiesAfterMissedIssue`,
 an optional member of the session service's options and of
@@ -9672,14 +9707,38 @@ the same way, so a check the seal of section 3.18 refuses as a broken state is
 booked and, at the budget, removes the row exactly as a rejected factor does. Guesses that arrive together are
 therefore evaluated at most as often as the budget allows.
 
-**What the MAC does not stop.** The MAC proves that the library wrote a row, not
-that it is the row's latest version. A writer who saved a pending row and writes it
-back later with its old `attempts` and its old MAC has a row that verifies: before a
-booking reads it, the writer has the budget of the saved version back, and can do
-it again within the five minutes the row lives. Only a booking already in flight
-notices, because it finds fewer attempts than it read. Section 3.18 names this
-replay among its limits; the attempt budget against a database writer is therefore
-five per write-back, not five per pending sign-in.
+**What the MAC does not stop, and what the generation adds.** The MAC proves that
+the library wrote a row, not that it is the row's latest version. On an account
+with a seal row every booking also draws a new `attempt_generation` under the seal
+and binds the row to it ([Generations](#generations)), so a pending row written
+back with its old `attempts` and its old MAC binds a generation the account has
+left and answers as no pending authentication, with the alarm. A writer who writes
+back the seal row of that time as well has the saved budget back; only an anchor
+notices that rollback, and without one the attempt budget against a database
+writer is five per rollback of the seal row, not five per pending sign-in.
+
+### Generations
+
+A row's MAC proves it is the library's; a generation proves it is still current.
+The seal row holds three kinds, each drawn from the cryptographically secure
+random source, different from the one before, compared only for equality and
+covered by the seal digest (section 3.18 point 3):
+
+| Generation | Bound by | Drawn anew by | A row that binds an older one |
+|---|---|---|---|
+| `session_generation` | every session's MAC, checked against the account's current one in the resolving statement | every revocation of a single session, in a sealing transaction that rebinds every other live session of the account under the lock by compare-and-swap | answers as no session, with the alarm |
+| `attempt_generation` | every pending row's MAC, stored in `pending_authentication.attempt_generation` | every booking on an account with a seal row, which writes the row under the new generation before the account lock and the seal after it | answers as no pending authentication; with the alarm only where `attempt_last` names the row itself, so a row another pending sign-in of the account overtook goes quietly |
+| one per one-time token purpose | the payload of every one-time token, under `tokenGeneration` | every redemption of that purpose that takes effect, a disabled account included | answers as an unknown token; with the alarm only where `token_last` names the token itself |
+
+What it costs (E-3526): a booking takes a reseal more, about 3 to 4 ms in the
+measurement; a sign-out a reseal and one HMAC per remaining live session; a
+session resolution three more fields under its MAC and nothing else. What it
+moves rather than removes: a writer who writes back the seal row of the same time
+as the row gets the row back, and only an anchor notices (S-INTEG-6). What it
+costs a user: a booking on one pending sign-in overtakes every other pending
+sign-in of the same account, which then starts again from the password; and the
+administrator's reseal draws every generation anew, which ends every open link
+and pending sign-in of the account with its sessions.
 
 ### Configuring a key provider
 
@@ -9815,7 +9874,7 @@ sign-in methods is a `SealingChange<T>`:
 | Member | Type | Meaning |
 |---|---|---|
 | `epoch` | `"keep" \| "raise" \| (read) => "keep" \| "raise"` | `"raise"` for a mass revocation, which draws a new session epoch; a function decides it on the verified read, as an address confirmation does that removes a password only sometimes |
-| `write(tx, read, next)` | `Promise<T>` | writes the change over the locked transaction; that transaction refuses a second read of the state. `next` is the `SealTarget` — `{ version, sessionEpoch }` — the new seal will carry, so a kept session can be rebound under the new epoch |
+| `write(tx, read, next)` | `Promise<T>` | writes the change over the locked transaction; that transaction refuses a second read of the state. `next` is the `SealTarget` — `{ version, sessionEpoch }` and the generations — the new seal will carry, so a kept session can be rebound under the new epoch and a moved generation is known to the write |
 | `after(read, written)` | `SealedComponents` | the components after the change, from the verified read and what `write` returned |
 | `afterSeal(tx, sealed, written)` | `Promise<void>`, optional | runs in the same transaction once the new seal row is written; a change that signs the caller in issues its session here, under the version and epoch it just sealed |
 
@@ -9892,7 +9951,7 @@ refused row; a refusal while listing sessions is raised with the occasion
 | Function | What it does |
 |---|---|
 | `sealChange(runtime, account, change, { driver?, occasion?, refusal?, accountMissing? })` | asks the anchors, runs `sealUnderAccountLock` in a new sealing transaction or on `driver` when a path has already consumed its row there, hands an unsealed account in mode `"migrating"` to the bound-envelope rewrite, and after commit records the seal with the anchors. A broken state raises the alarm with `occasion` (`"change"` by default) and throws a `ConcealedError` with `refusal`, the ordinary failure of the path that changes; an account that does not exist throws what `accountMissing` returns, where the path gives one |
-| `issueAuthorisationOf(sealed)` | the `{ version, sessionEpoch }` a session issued after a change is bound to, or `"unsealed"` when the change left the account unsealed |
+| `issueAuthorisationOf(sealed)` | the `{ componentsVersion, sessionEpoch }` a session issued after a change is bound to, or `"unsealed"` when the change left the account unsealed |
 | `secondFactorsOf(read)` | the second factors a verified read holds — a confirmed TOTP secret, any passkey, any recovery code — which a sign-in offers; `pending.begin` takes them as `offered` and refuses the sign-in with the path's ordinary failure when its insert no longer finds one (E-3406) |
 | `reportEnvelopeRefusal(runtime, userId, occasion, failure)` | raises `envelope_binding_mismatch` for a `KeyError` that says an envelope does not belong where it was found; the password check, the TOTP check and enrolment, the PKCE verifier and every envelope rewrite call it (E-3407) |
 | `envelopesOf(read)`, `readWithEnvelopes(read, envelopes)` | the read's stored envelopes in the shape the envelope rewrite takes, and the read with the rewrite's ciphertexts put back (E-3409) |
@@ -9914,9 +9973,9 @@ account is a broken state anyway (E-3162).
 `checkAccount` and `sealChange` take an `anchorReading` a path asked for before it
 took the account lock itself, as the OAuth sign-in does (E-3405).
 
-`authorisedBy` is the `{ version, sessionEpoch }` the check read, or
+`authorisedBy` is the `{ componentsVersion, sessionEpoch }` the check read, or
 `"unsealed"`; no issue stands on a read its own lock takes (E-3403). Every session a sign-in, a factor check, a redemption or a link
-issues is inserted only while the seal row still holds that version and epoch;
+issues is inserted only while the seal row still holds that components version and epoch;
 a miss is verified under the account lock and answered as the path's ordinary
 failure (E-3377). A pending authentication carries the epoch its first factor's
 check read, so a mass revocation between the two factors leaves it unable to
