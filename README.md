@@ -155,8 +155,12 @@ what was rejected, the reason and the price. `pnpm check:decision-refs` fails if
 >   it (E-2550).
 > - `auth.pending.cancel` takes the call fields and runs the origin check and
 >   the rate limit of its route (E-2830).
-> - Exported types gain members: `StartupErrorCode`, `RevokeReason`, a required
->   `HttpEnvironment.sessionCookieName`, and the namespace types.
+> - Exported types gain members: `StartupErrorCode`, `RevokeReason`,
+>   `VelveErrorCode` and `KeyPurpose` (an exhaustive `switch` over any of them
+>   stops compiling, and a hand-written `KeyProvider` must answer the two new
+>   purposes), a required `HttpEnvironment.sessionCookieName`, the namespace
+>   types, and `maintenance`, which a hand-written mock must extend with
+>   `sealSecurityState` and `resealSecurityState`.
 > - The security state now holds against someone who can write to the database
 >   but does not have the root key. Migration 4 deletes every session, open link,
 >   pending sign-in and WebAuthn challenge, so every user is signed out once.

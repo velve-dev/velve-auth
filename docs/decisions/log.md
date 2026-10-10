@@ -1279,7 +1279,6 @@ The same measurement refuted the second of the two ways out that originally stoo
 **Reason.** In the blocking tier they do double harm. They cost minutes on every commit, and they fire falsely: forty-two independent χ² checks at p = 0.001 reject around four in a hundred runs even with a flawless generator. A gate that turns red without a fault gets ignored, and then it is worthless for the case in which it is right. Dropping would be the other direction of the same mistake.
 **Price.** A fault that only the nightly run finds goes unnoticed until the next morning, and nobody is standing in front of it when it occurs — so the job has to be written so that its failure draws attention by itself. In addition the tier itself needs checking: on `main` at the time of this change not a single nightly-controlled check existed, so the switch could not be told apart from a broken one. It was proven with an inserted check — 524 tests without, 525 with — because otherwise exactly the confusion would arise that section 5 of the rules warns against.
 
-
 <a id="e-145"></a>
 
 ### The marker is a block comment, because a line comment swallows the rest of the statement
@@ -1309,7 +1308,6 @@ The same measurement refuted the second of the two ways out that originally stoo
 **Rejected.** (a) Resolving the interpolation and tracing the variable back. (b) Extending the list of non-user tables.
 **Reason.** Both variants fight against the same fact: the table name simply does not stand there at check time. E-143 had noted that as an accepted limit — the check let through a lock whose target consisted only of a variable — and in doing so overlooked that this is not the edge case but **the normal case**. So the check passed for the *absence* of a name instead of for the presence of the right one. Whoever cannot read has to ask: the statement now explains itself what it locks, in the same block form as the owner marker from E-145.
 **Price.** A lock without an explanation is rejected, the correct one too — that is intended, because an unexplained lock is exactly the one nobody has thought about. And the explanation is a claim of the author: whoever writes `/* locks: user */` above a lock on `session` gets through. The check enforces that someone answers the question, not that the answer is right. The same holds for the marker from E-142, and both times the value is the same: the claim stands in the code, where it stands out on reading, instead of in nobody's head.
-
 
 <a id="e-148"></a>
 
@@ -2889,7 +2887,6 @@ return resolved === null ? null : actorOfResolvedSession(resolved);
 **Rejected.** (a) Leaving the method off. (b) Requiring the driver to grow a `close`.
 **Reason.** (a) removes a published method. (b) changes an interface three driver adapters implement, in files this feature does not own, to add a capability the library never needs — it opened nothing. The method resolves and the reference says why in one sentence.
 **Price.** A method that looks like a resource release and is not, which is precisely the shape that gets called in a `finally` and trusted. An application that expects `close()` to end its pool will leak it and get no warning.
-
 
 <a id="e-349"></a>
 
@@ -6464,7 +6461,6 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Re-running until green, which is what a scan reporting zero invites and what the previous rounds' reports effectively did. Also rejected: defending against it in the repository, for E-987's reason — a barrier taught to tolerate a duplicate tolerates a real second artefact, which is what that barrier exists to catch.
 **Reason.** The cause is `com.apple.CloudDocs.iCloudDriveFileProvider`, and `dist/` is a directory rewritten in bursts, so it races. It does not only add: the same round produced *"Cannot find module './core/db/identifier.mjs' imported from dist/schema.mjs"* — files **removed** mid-run, which no duplicate scan of any pattern would have caught. So the measurement was moved off the synchronised tree entirely: the branch is cloned at its exact commit into a scratch directory outside it, `pnpm install --frozen-lockfile`, and the three tiers run there. Same commit, same lockfile, no file provider. The correct scan, for whoever needs one, is `find dist -regex '.* [0-9]+\..*'` rather than a fixed suffix in one directory.
 **Price.** The tiers this round are measured on a copy rather than on the worktree, which is a weaker statement than running them where the work happened — it proves the commit is green and not that the worktree is. Two rounds of reports carried a cleanliness claim that was not evidence of anything, and nobody caught it because the check kept answering zero; a check that cannot distinguish *found nothing* from *looked in the wrong place* is the exact defect §5's last paragraph describes, and this one was mine.
-
 
 <a id="e-797"></a>
 
@@ -12554,7 +12550,6 @@ One consequence of restating in place that the rule does not mention, and that s
 
 **Price.** A release still costs two deliberate edits and one re-recording, in three files, and what makes that safe is a test rather than a mechanism — so a release cut with `pnpm test` skipped ships an entry point reporting the previous version. And the six repaired cases now assert against a value they read from the tree, which is weaker than a literal: if the manifest and the tool ever disagreed about what a version *is*, these cases would agree with both. That is the trade a fixture read from the subject always makes, taken here because the alternative had just cost seven false reds.
 
-
 <a id="e-1800"></a>
 
 ### A range for the stable release
@@ -18278,3 +18273,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Retrying a missed issue once under the version read under the lock, which section 3.18 forbids for a reason that still holds. Leaving the condition on `version` and accepting the miss, which a user meets whenever another tab of the same account signs out or fails a code during a sign-in.
 **Reason.** What a check authorises is the sign-in methods and the epoch it read; a generation is about other rows and changes nothing a session issued now would rest on.
 **Price.** One more sealed integer. A session issued after a generation-only reseal binds the generation the issue reads under the lock, which is the current one, so nothing it issues is stale.
+
+<a id="e-3535"></a>
+
+### The sign-up exception sentence is removed from the rules, and the contradiction goes to a separate rules change
+`E-3535` · security-state · rules, open
+
+**Context.** This branch's changes to `CLAUDE.md` added a sentence to section 7 saying that sign-up is the one exception to taking the account lock first, because the account row is created rather than locked and the `email_verify` token minted in the same transaction is safe since no other transaction can hold the new row. The same section says that every mint runs in a transaction of its own. The two cannot both hold. Reading `src/core/flows/sign-up.ts` at `origin/feature/release-1-2-0`, the base of this work, shows that sign-up already called `mintArtefact` with purpose `email_verify` on the transaction that created the user, so the contradiction between the code and the rule predates this work and was not introduced by it. The sentence is removed so that a binding rule does not change inside a feature change. The code is not touched. The other edits this branch made to `CLAUDE.md` stay: the sixteen rows of the range table that reserve the security-state ranges, the words "after the isolation statement" and the reference to E-3310 in the lock paragraph, the same words in the paragraph on the second ordering, and the description of `pnpm check:token-after-lock`, which now also covers the flows' `mintArtefact` and the names an import gives it or the lock.
+**Rejected.** Keeping the sentence, which settles the contradiction in the feature change's favour without a decision about the rule. Changing sign-up to mint in a transaction of its own, which changes the behaviour of a path this work does not own and would send the confirmation mail without the account being committed together with its token.
+**Reason.** What section 7 says about mints and what sign-up does is a question for the rules, and a separate rules change takes it, deciding either that sign-up is an exception stated in the rule or that sign-up changes.
+**Price.** Until that change merges, section 7 states a rule that the sign-up code does not follow, and this branch does not say so in the rule itself.
