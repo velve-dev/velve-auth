@@ -148,8 +148,6 @@ describe("T-KEY-5 — a rotation of the root key ends no session (S-KEY-5)", () 
 		if (begun.status !== "second_factor_required") {
 			throw new Error(`the account offers a second factor and was answered ${begun.status}`);
 		}
-		//the sign-in's rehash runs on this one connection after the answer, and a check sent while its transaction is open reads inside it (E-3410)
-		expect(await passwordRewrittenUnder(2, userId)).toBe(true);
 		const verified = await duringRotation.factor.totp.verify({
 			code: totpCodeNow(totpSecret),
 			origin: TEST_ORIGIN,

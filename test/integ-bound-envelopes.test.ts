@@ -123,10 +123,19 @@ async function enrolTotp(account: Account, keys: KeyProvider = beforeRotation): 
 		clock: { now: () => new Date() },
 	});
 	const actor = actorOfTestUser(account.userId);
+	await clearOfAStepBoundary();
 	const enrolment = await totp.enroll.start({ actor, accountName: account.email });
 	const secret = secretBytesOfBase32(enrolment.secretBase32);
 	await totp.enroll.finish({ actor, code: currentCodeOf(secret, -1) });
 	account.totpSecret = secret;
+}
+
+//a code for the previous step stays within the tolerance only while the clock stays in the current one
+async function clearOfAStepBoundary(): Promise<void> {
+	const intoTheStep = Date.now() % 30_000;
+	if (intoTheStep > 20_000) {
+		await new Promise((resolve) => setTimeout(resolve, 30_000 - intoTheStep + 500));
+	}
 }
 
 //the enrolment claims the previous step so a check at the current one is not a replay
