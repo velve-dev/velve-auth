@@ -18098,3 +18098,23 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** A pool in the cases that met it, which would leave every other test on the one connection exposed to the same interleaving.
 **Reason.** A harness that lets statements of two callers mix inside one transaction tests a database no driver gives.
 **Price.** A test that starts a transaction and then waits on a query of another caller on the same connection now waits forever, and has to use a second connection, as it would have to on a pool.
+
+<a id="e-3510"></a>
+
+### The specification states what the branches built where the sync queue and the code differ
+`E-3510` · security-state · specification sync, settled
+
+**Context.** Four branches built what section 3.18 describes, and the sync queue they left lists the sentences the specification needed to say it. Four items could not be written as queued. The queue gave the answer to a missed session issue as one list that names `invalid_pending_authentication` and `session_required` for changes; the built error map answers each change with its own ordinary failure (registration `invalid_input`, `password.set` `factor_already_enrolled`, `password.change` `invalid_credentials`, reset `invalid_token`, link `oauth_flow_invalid`) and the second factor by factor path. The queue named five inner reasons `session_issue_missed_on_…`; the error map holds ten. The queue made `session_list` an alarm occasion; `SecurityStateAlarmOccasion` has no such member, and the runtime reports a session listing as `session_resolve` and every check for a revocation as `change`. The queue gave `rowsByKeyVersion` as tokens and traces only; the specification already had seals, tokens and traces, and the built report matches it.
+**Rejected.** (a) Writing the queued text and leaving the code, which would make the binding specification contradict the shipped alarm type and error map. (b) Changing the alarm type to carry `session_list`, which is a public declaration change outside the sync pass. (c) Writing the five inner reasons only, which would leave five codes the error map answers undocumented.
+**Reason.** The specification states what is built and tested, and a difference between the queue and the code is resolved toward the code until a branch changes the code.
+**Price.** A listing alarm and a resolution alarm share the occasion `session_resolve` and so share the 60-second bound per account and reason, and the specification no longer holds the separation the queue wanted. A later branch that adds the occasion has to change the alarm type, the runtime, section 3.18 and `test/security-state-spec-occasions.test.ts` together.
+
+<a id="e-3511"></a>
+
+### Section 3.18 gains the rules the branches settled in review
+`E-3511` · security-state · specification sync, settled
+
+**Context.** Section 3.18 lacked sentences for what the branches built and decided: the payload of a one-time token read as the text of its `jsonb` and parsed once, a kept session whose row is gone on the second read, columns the library never writes in values it never writes, the 1.x sign-up that can deadlock with migration 4, the account that a change without proof of ownership does not seal first (E-3162), `refusedUserIds` and the alarm for an unreadable envelope in the maintenance report (E-3181), `security_state_envelope_unreadable` from the reseal, `plugin_anchor_incomplete` at the start, the inner reasons of a missed issue, and the occasion of a revocation check. The text on the address-change window, the factor order in the token MAC and the epoch 1 of a pending authentication in mode `"migrating"` were already in the text and were not repeated.
+**Rejected.** Restating the three sentences already present in other words, which would give the German and the English two places to differ.
+**Reason.** Each sentence is added where the rule it belongs to stands, so that a reader of that rule finds it, and the two languages carry the same numbers and identifiers.
+**Price.** Section 3.18 grows by about a dozen sentences in a paragraph that is already long, and the maintenance and outward paragraphs now each carry two lists a reader has to hold apart.
