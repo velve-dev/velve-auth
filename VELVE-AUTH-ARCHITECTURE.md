@@ -2807,15 +2807,15 @@ the inner codes are only logged.
 
 | Outer code | Inner causes |
 |---|---|
-| `invalid_credentials` | `user_not_found`, `password_mismatch`, `no_password_credential`, `legacy_scheme_rejected`, `user_disabled`, `session_issue_missed_on_password_sign_in`, `session_issue_missed_on_password_change` |
-| `session_required` | `cookie_absent`, `session_not_found`, `session_idle_expired`, `session_absolute_expired` |
-| `invalid_token` | `token_not_found`, `token_expired`, `token_consumed`, `token_purpose_mismatch`, `email_taken_on_change`, `user_disabled`, `session_issue_missed_on_token_redemption` |
-| `invalid_factor_code` | `totp_code_wrong`, `totp_step_replayed`, `totp_not_confirmed`, `session_issue_missed_on_totp_second_factor` |
-| `invalid_recovery_code` | `recovery_code_not_found`, `recovery_codes_exhausted`, `recovery_codes_never_generated`, `session_issue_missed_on_recovery_second_factor` |
+| `invalid_credentials` | `user_not_found`, `password_mismatch`, `no_password_credential`, `legacy_scheme_rejected`, `user_disabled`, `session_issue_missed_on_password_sign_in`, `session_issue_missed_on_password_change`, `broken_state_on_password_sign_in` |
+| `session_required` | `cookie_absent`, `session_not_found`, `session_idle_expired`, `session_absolute_expired`, `broken_state_on_session_resolve`, `broken_state_on_change` |
+| `invalid_token` | `token_not_found`, `token_expired`, `token_consumed`, `token_purpose_mismatch`, `email_taken_on_change`, `user_disabled`, `session_issue_missed_on_token_redemption`, `broken_state_on_token_redemption` |
+| `invalid_factor_code` | `totp_code_wrong`, `totp_step_replayed`, `totp_not_confirmed`, `session_issue_missed_on_totp_second_factor`, `broken_state_on_totp_second_factor` |
+| `invalid_recovery_code` | `recovery_code_not_found`, `recovery_codes_exhausted`, `recovery_codes_never_generated`, `session_issue_missed_on_recovery_second_factor`, `broken_state_on_recovery_second_factor` |
 | `invalid_pending_authentication` | `pending_not_found`, `pending_expired`, `pending_consumed`, `pending_cookie_absent` |
-| `oauth_flow_invalid` | `state_not_found`, `state_expired`, `pkce_mismatch`, `nonce_mismatch`, `issuer_mismatch`, `id_token_signature_invalid`, `user_disabled`, `link_session_gone`, `session_issue_missed_on_oauth_flow` |
+| `oauth_flow_invalid` | `state_not_found`, `state_expired`, `pkce_mismatch`, `nonce_mismatch`, `issuer_mismatch`, `id_token_signature_invalid`, `user_disabled`, `link_session_gone`, `session_issue_missed_on_oauth_flow`, `broken_state_on_oauth_sign_in` |
 | `webauthn_challenge_invalid` | `challenge_not_found`, `challenge_expired`, `challenge_purpose_mismatch` |
-| `webauthn_credential_rejected` | `credential_unknown`, `signature_invalid`, `rp_id_mismatch`, `origin_mismatch`, `user_not_verified`, `user_disabled`, `session_issue_missed_on_passkey_sign_in`, `session_issue_missed_on_passkey_second_factor` |
+| `webauthn_credential_rejected` | `credential_unknown`, `signature_invalid`, `rp_id_mismatch`, `origin_mismatch`, `user_not_verified`, `user_disabled`, `session_issue_missed_on_passkey_sign_in`, `session_issue_missed_on_passkey_second_factor`, `broken_state_on_passkey_sign_in`, `broken_state_on_passkey_second_factor` |
 | `invalid_input` | `session_issue_missed_on_sign_up` |
 | `factor_already_enrolled` | `session_issue_missed_on_password_set` |
 

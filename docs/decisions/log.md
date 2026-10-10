@@ -18158,3 +18158,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Leaving the three security-state codes to the readme alone, which would keep the notes' own table short of what an exhaustive `switch` meets.
 **Reason.** An upgrade note that undercounts the members of a union is the note a type error proves wrong.
 **Price.** None.
+
+<a id="e-3516"></a>
+
+### F.1 lists the nine broken-state causes the error map merges, in both languages
+`E-3516` · security-state-seal · specification, settled
+
+**Context.** Section 3.15 F.1 lists, for each visible code, every inner cause `src/core/http/error-map.ts` merges into it. The nine `broken_state_on_*` causes the seal added in E-3163 were mapped but missing from the table in both specifications. Each row now ends with them: `invalid_credentials` with the password sign-in, `webauthn_credential_rejected` with the passkey sign-in and the passkey as a second factor, `oauth_flow_invalid` with the OAuth sign-in, `invalid_token` with the token redemption, `invalid_factor_code` with the TOTP check, `invalid_recovery_code` with the recovery code, and `session_required` with the session resolution and a change. `test/security-state-release-documents.test.ts` holds both tables to the error map.
+**Rejected.** Listing the nine under one row of their own, which F.1 does not have; its rows are the visible codes.
+**Reason.** A table that claims to list every merged cause and leaves nine out is read as saying they answer something else.
+**Price.** None.
