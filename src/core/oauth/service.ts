@@ -33,11 +33,16 @@ import { type SecurityStateRead, sealedComponentsOf } from "../security-state/re
 import {
 	checkAccount,
 	issueAuthorisationOf,
+	recordSealLater,
 	reportEnvelopeRefusal,
 	sealChange,
 	secondFactorsOf,
 } from "../security-state/runtime.js";
-import { componentsAfter, sealCreatedAccount } from "../security-state/sealing.js";
+import {
+	componentsAfter,
+	type SealWritten,
+	sealCreatedAccount,
+} from "../security-state/sealing.js";
 import { sessionRowsOn } from "../session/rows.js";
 import type { IssuedSession, ObservedRequest } from "../session/service.js";
 import { authorizationUrlFor } from "./authorization-request.js";
@@ -112,6 +117,8 @@ interface ResolvedAccount {
 	readonly authorisedBy: IssueAuthorisation;
 	/** the second factors the sign-in's verified read held */
 	readonly secondFactors: readonly SecondFactor[];
+	/** a seal the sign-in wrote in its transaction, which reaches the anchor once that commits */
+	readonly toRecord: SealWritten<unknown> | null;
 }
 
 function sealedIdentityAfter(read: SecurityStateRead, provider: string, subject: string) {
@@ -447,6 +454,7 @@ export function createOAuthService(input: {
 					userId: locked.userId,
 					identity: await owned.refreshIdentity({ existing: locked, ...facts }),
 					...checked,
+					toRecord: null,
 				};
 			}
 
@@ -463,6 +471,7 @@ export function createOAuthService(input: {
 					identity,
 					authorisedBy: issueAuthorisationOf(sealed),
 					secondFactors: secondFactorsOf(sealed.read),
+					toRecord: sealed,
 				};
 			}
 			const anchored = await consultAnchors(services.securityState.anchors, joinable.id);
@@ -505,6 +514,7 @@ export function createOAuthService(input: {
 				identity: sealed.written,
 				authorisedBy: issueAuthorisationOf(sealed),
 				secondFactors: secondFactorsOf(sealed.read),
+				toRecord: sealed,
 			};
 		});
 	}
@@ -763,6 +773,10 @@ export function createOAuthService(input: {
 			}
 
 			const resolved = await accountForSignIn(provider, account, facts);
+			//the sign-up's first seal and an automatic link's seal reach the anchor once their transaction committed (S-INTEG-6)
+			if (resolved.toRecord !== null) {
+				recordSealLater(services.securityState, resolved.toRecord, "sign_in");
+			}
 			const result = await signInOrAskForTheSecondFactor(resolved, arrival);
 			if (result.status === "signed_in") {
 				await tellAfterSignIn(services.pluginRuntime.hooks, {

@@ -18128,3 +18128,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Recording inside `afterSeal`, which runs in the same transaction and has the same fault.
 **Reason.** An anchor that learns a state which never committed raises its floor over the truth, and locks the account it protects.
 **Price.** Every caller that hands `sealChange` its transaction has to record the seal itself.
+
+<a id="e-3513"></a>
+
+### An OAuth sign-up's first seal and an automatic link's seal reach the anchor after the sign-in's transaction
+`E-3513` · security-state-seal · anchor, settled
+
+**Context.** Section 3.18 *Anchor* has every new seal reach `recordSeal`. The OAuth sign-in that creates an account sealed it with `sealCreatedAccount` inside `accountForSignIn`'s transaction and recorded nothing, so an anchor knew no floor for an account an OAuth sign-up made until its first later change. The automatic link, sealed in the same transaction, recorded before the commit, which E-3512 removes. `accountForSignIn` now returns the seal it wrote, or `null` for a sign-in through an existing identity, and the callback hands it to `recordSealLater` once the transaction has committed. `test/security-state-anchor-after-commit.test.ts` signs up through the stub provider with a memory anchor and holds that the anchor learned version 1 of the new account.
+**Rejected.** Recording from `sealCreatedAccount`, which runs inside the transaction and knows no anchors.
+**Reason.** An account the anchor has never heard of is one whose first state it cannot defend.
+**Price.** None beyond the returned field.

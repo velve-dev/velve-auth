@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { EmailMessage } from "../src/core/auth/config.js";
 import type { Driver } from "../src/core/db/driver.js";
+import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import { toWebHandler } from "../src/core/http/web-handler.js";
 import type { SecurityStateAlarm } from "../src/core/security-state/alarm.js";
 import { createVelveAuth, type SecurityStateSealedEvent } from "../src/index.js";
@@ -9,6 +10,7 @@ import { configFor, TEST_ORIGIN } from "./auth-fixtures.js";
 import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 import { postTo } from "./flows-fixtures.js";
+import { codeCarrying, createStubProvider, oauthConfigFor } from "./oauth-provider.js";
 import { drawTestPassword } from "./password-fixtures.js";
 import { memoryAnchor } from "./security-state-administration-fixtures.js";
 import { testKeyProvider } from "./totp-fixtures.js";
@@ -162,5 +164,59 @@ describe("a reset redeemed inside the redemption's own transaction", () => {
 		expect(status, "the old password still signs in after a reset that never committed").toBe(
 			"signed_in",
 		);
+	});
+});
+
+describe("an account an OAuth sign-in creates", () => {
+	it("tells the anchor its first seal once the sign-in's transaction committed", async () => {
+		const provider = await createStubProvider({
+			claims: {
+				sub: "anchor-first-seal",
+				email: "first-seal@provider.example",
+				email_verified: true,
+			},
+		});
+		const anchor = memoryAnchor();
+		const handler = toWebHandler(
+			createVelveAuth(
+				configFor({
+					database: connection,
+					schema,
+					keys: testKeyProvider(),
+					oauth: oauthConfigFor({ openIdConnect: false }),
+					fetch: provider.fetch,
+					plugins: [{ id: "anchor", securityStateAnchor: anchor.anchor }],
+					securityState: { sealing: "required" },
+					rateLimit: {
+						perIpAddress: { capacity: 100_000, refillPerSecond: 100_000 },
+						perAccount: { capacity: 100_000, refillPerSecond: 100_000 },
+					},
+				}),
+			),
+		);
+		const started = await handler(postTo("/sign-in/oauth/start", { provider: "stubby" }));
+		const body = (await started.json()) as {
+			authorizationUrl: string;
+			stateCookie: { value: string };
+		};
+		const state = new URL(body.authorizationUrl).searchParams.get("state") ?? "";
+		const answer = await handler(
+			new Request(
+				`https://api.example.com/sign-in/oauth/callback/stubby?code=${codeCarrying(null)}&state=${encodeURIComponent(state)}`,
+				{ headers: { Cookie: `${DEFAULT_COOKIE_NAMES.oauthState}=${body.stateCookie.value}` } },
+			),
+		);
+		expect(answer.status).toBeLessThan(400);
+		const [owner] = await observer.query<{ user_id: string }>(
+			`SELECT user_id FROM ${schema}.identity WHERE subject = $1`,
+			["anchor-first-seal"],
+		);
+		await settled();
+
+		expect(
+			anchor.recorded
+				.filter((event) => event.userId === owner?.user_id)
+				.map((event) => event.version),
+		).toStrictEqual([1]);
 	});
 });
