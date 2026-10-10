@@ -18188,3 +18188,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Wiring the seam to `consultAnchors`, which would ask the anchor twice on every redemption, once through the seam and once through the check.
 **Reason.** A seam nothing calls documents a guarantee nothing gives, and the seal gives this one already.
 **Price.** E-3265's seam, described there, no longer exists.
+
+<a id="e-3535"></a>
+
+### The sign-up exception sentence is removed from the rules, and the contradiction goes to a separate rules change
+`E-3535` · security-state · rules, open
+
+**Context.** This branch's changes to `CLAUDE.md` added a sentence to section 7 saying that sign-up is the one exception to taking the account lock first, because the account row is created rather than locked and the `email_verify` token minted in the same transaction is safe since no other transaction can hold the new row. The same section says that every mint runs in a transaction of its own. The two cannot both hold. Reading `src/core/flows/sign-up.ts` at `origin/feature/release-1-2-0`, the base of this work, shows that sign-up already called `mintArtefact` with purpose `email_verify` on the transaction that created the user, so the contradiction between the code and the rule predates this work and was not introduced by it. The sentence is removed so that a binding rule does not change inside a feature change. The code is not touched. The other edits this branch made to `CLAUDE.md` stay: the rows of the range table from E-3080 to E-3539, the words "after the isolation statement" and the reference to E-3310 in the lock paragraph, the same words in the paragraph on the second ordering, and the description of `pnpm check:token-after-lock`, which now also covers the flows' `mintArtefact` and the names an import gives it or the lock.
+**Rejected.** Keeping the sentence, which settles the contradiction in the feature change's favour without a decision about the rule. Changing sign-up to mint in a transaction of its own, which changes the behaviour of a path this work does not own and would send the confirmation mail without the account being committed together with its token.
+**Reason.** What section 7 says about mints and what sign-up does is a question for the rules, and a separate rules change takes it, deciding either that sign-up is an exception stated in the rule or that sign-up changes.
+**Price.** Until that change merges, section 7 states a rule that the sign-up code does not follow, and this branch does not say so in the rule itself.

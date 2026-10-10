@@ -619,10 +619,7 @@ These follow from architecture section 2 and are not open for local decision:
   ${schema}.user */` as its first statement after the isolation statement
   (E-3310), and reaches it through
   `src/core/db/lock.ts` — the only file that writes a row lock, so the mode
-  cannot vary between call sites. Sign-up is the one exception: the account
-  row does not exist yet, so it is created rather than locked, and the
-  `email_verify` token minted in the same transaction is safe because no other
-  transaction can hold the new row.
+  cannot vary between call sites.
 - **The mode is not a local choice.** `FOR NO KEY UPDATE` is the strongest
   strength that does **not** conflict with the `FOR KEY SHARE` a foreign key
   takes on `velve.user` for every insert of a user-owned row. So `FOR UPDATE`
