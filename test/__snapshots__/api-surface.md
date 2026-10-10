@@ -839,6 +839,8 @@ interface RowsUnderSecurityStateKeyVersion {
 /** what a maintenance run did to the accounts, and what every key version holds after it */
 interface SecurityStateReport {
   readonly refused: number;
+  /** every account the run refused and left as it was, whether broken or with an envelope it could not open */
+  readonly refusedUserIds: readonly string[];
   readonly rekeyed: number;
   readonly rowsByKeyVersion: Readonly<Record<number, RowsUnderSecurityStateKeyVersion>>;
   readonly sealed: number;
@@ -863,7 +865,7 @@ interface SealedSecurityState {
   }[];
   readonly recoveryCodeCount: number;
 }
-type SecurityStateMaintenanceErrorCode = "security_state_account_failed" | "security_state_account_missing" | "security_state_anchor_unavailable" | "security_state_changed_during_reseal" | "security_state_reason_missing" | "security_state_version_exhausted";
+type SecurityStateMaintenanceErrorCode = "security_state_account_failed" | "security_state_account_missing" | "security_state_anchor_unavailable" | "security_state_changed_during_reseal" | "security_state_envelope_unreadable" | "security_state_reason_missing" | "security_state_version_exhausted";
 /** a maintenance call refused, with a stable code and the account it was about where there is one */
 declare class SecurityStateMaintenanceError extends Error {
   readonly code: SecurityStateMaintenanceErrorCode;
