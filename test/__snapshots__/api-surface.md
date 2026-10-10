@@ -2482,7 +2482,7 @@ export {
 	SecurityStateAnchor,
 	type SecurityStateConfig,
 	SecurityStateFloor,
-	type SecurityStateMaintenanceError,
+	SecurityStateMaintenanceError,
 	type SecurityStateReport,
 	SecurityStateSealedEvent,
 	type Session,
