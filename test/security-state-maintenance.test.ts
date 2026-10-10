@@ -130,6 +130,54 @@ async function rowVersions(): Promise<string> {
 	return rows[0]?.snapshot ?? "";
 }
 
+async function insertEstate(
+	phc: Uint8Array<ArrayBuffer>,
+	passwords: Map<string, Uint8Array<ArrayBuffer>>,
+	secrets: Map<string, Uint8Array<ArrayBuffer>>,
+): Promise<void> {
+	for (let index = 0; index < ACCOUNTS - 2; index += 1) {
+		const id = lowIdOf(index);
+		const totpSecret = index % 2 === 0 ? new Uint8Array(randomBytes(20)) : undefined;
+		await insertPreUpgradeAccount(connection, schema, keys, {
+			id,
+			phc,
+			...(totpSecret === undefined ? {} : { totpSecret }),
+		});
+		passwords.set(id, phc);
+		if (totpSecret !== undefined) {
+			secrets.set(id, totpSecret);
+		}
+	}
+}
+
+//every rewritten ciphertext opens to the plaintext the account held before (S-INTEG-8)
+async function reEncryptionsOfAnotherPlaintext(
+	rows: readonly StoredEnvelopes[],
+	passwords: ReadonlyMap<string, Uint8Array<ArrayBuffer>>,
+	secrets: ReadonlyMap<string, Uint8Array<ArrayBuffer>>,
+): Promise<readonly string[]> {
+	const differing: string[] = [];
+	for (const row of rows) {
+		const password = await opensBound(keys, "password_credential.phc", row.userId, row.phc);
+		if (
+			Buffer.compare(Buffer.from(password ?? []), Buffer.from(passwords.get(row.userId) ?? [1])) !==
+			0
+		) {
+			differing.push(`${row.userId} password`);
+		}
+		if (row.totp === null) {
+			continue;
+		}
+		const secret = await opensBound(keys, "totp_credential.secret_enc", row.userId, row.totp);
+		if (
+			Buffer.compare(Buffer.from(secret ?? []), Buffer.from(secrets.get(row.userId) ?? [1])) !== 0
+		) {
+			differing.push(`${row.userId} totp`);
+		}
+	}
+	return differing;
+}
+
 describe("T-INTEG-8: sealing an estate from before the upgrade", () => {
 	it("seals 200 accounts across an interruption, leaves none half converted and writes nothing twice", async () => {
 		const auth = mount(connection);
@@ -150,19 +198,7 @@ describe("T-INTEG-8: sealing an estate from before the upgrade", () => {
 			[holder.user.id, phc],
 			[changer.user.id, await passwordPlaintextOf(connection, schema, keys, changer.user.id)],
 		]);
-		for (let index = 0; index < ACCOUNTS - 2; index += 1) {
-			const id = lowIdOf(index);
-			const totpSecret = index % 2 === 0 ? new Uint8Array(randomBytes(20)) : undefined;
-			await insertPreUpgradeAccount(connection, schema, keys, {
-				id,
-				phc,
-				...(totpSecret === undefined ? {} : { totpSecret }),
-			});
-			passwords.set(id, phc);
-			if (totpSecret !== undefined) {
-				secrets.set(id, totpSecret);
-			}
-		}
+		await insertEstate(phc, passwords, secrets);
 		await toPreUpgradeForm(connection, schema, keys, holder.user.id);
 		await toPreUpgradeForm(connection, schema, keys, changer.user.id);
 		alarms.length = 0;
@@ -206,16 +242,7 @@ describe("T-INTEG-8: sealing an estate from before the upgrade", () => {
 		const afterRun = await storedEnvelopes();
 		expect(afterRun.filter((row) => row.sealed)).toHaveLength(ACCOUNTS);
 		expect(await halfConverted(afterRun)).toStrictEqual([]);
-		for (const row of afterRun) {
-			expect(await opensBound(keys, "password_credential.phc", row.userId, row.phc)).toStrictEqual(
-				passwords.get(row.userId),
-			);
-			if (row.totp !== null) {
-				expect(
-					await opensBound(keys, "totp_credential.secret_enc", row.userId, row.totp),
-				).toStrictEqual(secrets.get(row.userId));
-			}
-		}
+		expect(await reEncryptionsOfAnotherPlaintext(afterRun, passwords, secrets)).toStrictEqual([]);
 
 		const before = await rowVersions();
 		const second = await mount(maintenanceConnection).maintenance.sealSecurityState();
