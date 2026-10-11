@@ -15,6 +15,9 @@ const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
  */
 const LOCKS = ["lockAccountRow", "lockAccountRowStatement"];
 
+/** Creating the account row takes it as surely as locking it, so sign-up counts as taking it. */
+const CREATES_THE_ACCOUNT_ROW = String.raw`\bINSERT\s+INTO\s+\S*\buser\b|\.createUser\s*\(`;
+
 /** The two repository methods and the flows' mint helper that writes through the table. */
 const TOKEN_HELPERS = ["replaceOneTimeToken", "consumeOneTimeToken", "mintArtefact"];
 
@@ -40,13 +43,16 @@ function callOf(localNames) {
 	return new RegExp(`\\b(${[...localNames.keys()].join("|")})\\s*\\(`, "g");
 }
 
-function patternsFor(source) {
+function patternsFor(source, allowedCalls = []) {
 	const code = withoutComments(source);
 	const locks = localNamesOf(code, LOCKS);
 	const helpers = localNamesOf(code, TOKEN_HELPERS);
 	return {
-		code: code.replaceAll(IMPORT_STATEMENT, ""),
-		takesTheAccountRow: callOf(locks),
+		code: allowedCalls.reduce(
+			(remaining, call) => remaining.replaceAll(call, ""),
+			code.replaceAll(IMPORT_STATEMENT, ""),
+		),
+		takesTheAccountRow: new RegExp(`${callOf(locks).source}|${CREATES_THE_ACCOUNT_ROW}`, "g"),
 		helpers,
 		reachesTheTokenTable: new RegExp(
 			`\\bone_time_token\\b|\\b(${[...helpers.keys()].join("|")})\\s*\\(`,
@@ -75,10 +81,20 @@ function sourceFiles() {
 		.filter((path) => !MIGRATIONS.test(path));
 }
 
+/** Sign-up is the one transaction that mints after reaching the account, and only for the
+ * address-verification token: nothing else can see or lock the row it creates before it commits. */
+export const SIGN_UP_MINT_ALLOWANCE = {
+	path: "src/core/flows/sign-up.ts",
+	call: /mintArtefact\s*\(\s*transaction,\s*[\w.]+,\s*\{\s*purpose:\s*"email_verify"/g,
+};
+
 /** Comments are stripped so that prose about the ordering — `lock.ts` carries the rule itself — is
  * not read as code, and imports so that naming a symbol is not reaching for it. */
-export function tokenReachedAfterAccountLock(source) {
-	const { code, takesTheAccountRow, helpers, reachesTheTokenTable } = patternsFor(source);
+export function tokenReachedAfterAccountLock(source, allowedCalls = []) {
+	const { code, takesTheAccountRow, helpers, reachesTheTokenTable } = patternsFor(
+		source,
+		allowedCalls,
+	);
 	const locks = [...code.matchAll(takesTheAccountRow)].map((match) => match.index ?? 0);
 	if (locks.length === 0) {
 		return [];
@@ -92,7 +108,7 @@ export function tokenReachedAfterAccountLock(source) {
 		});
 }
 
-export function scanTokenAfterLock() {
+export function scanTokenAfterLock(allowance = SIGN_UP_MINT_ALLOWANCE) {
 	const offenders = [];
 	let filesScanned = 0;
 	let locksScanned = 0;
@@ -101,7 +117,10 @@ export function scanTokenAfterLock() {
 		const source = readFileSync(`${repositoryRoot}/${path}`, "utf8");
 		const { code, takesTheAccountRow } = patternsFor(source);
 		locksScanned += [...code.matchAll(takesTheAccountRow)].length;
-		for (const reached of tokenReachedAfterAccountLock(source)) {
+		for (const reached of tokenReachedAfterAccountLock(
+			source,
+			path === allowance?.path ? [allowance.call] : [],
+		)) {
 			offenders.push(`${path}: reaches ${reached} after taking the account row`);
 		}
 	}

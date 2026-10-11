@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { scanTokenAfterLock, tokenReachedAfterAccountLock } from "../tools/token-after-lock.mjs";
+import {
+	SIGN_UP_MINT_ALLOWANCE,
+	scanTokenAfterLock,
+	tokenReachedAfterAccountLock,
+} from "../tools/token-after-lock.mjs";
 
 const LOCK = "await lockAccountRow(transaction, schema, userId);";
 
@@ -96,5 +100,42 @@ describe("nothing reaches one_time_token after taking the account row (E-1616)",
 		].join("\n");
 
 		expect(tokenReachedAfterAccountLock(source)).toStrictEqual([]);
+	});
+});
+
+describe("creating the account row counts as taking it, and sign-up is the one allowed mint", () => {
+	const MINT = `await mintArtefact(transaction, schema, { purpose: "email_verify", subject: { userId } });`;
+	const CREATE = "const created = await users.createUser({ email });";
+
+	it("reports a mint after createUser in any other flow", () => {
+		expect(tokenReachedAfterAccountLock(`${CREATE}\n${MINT}`)).toStrictEqual(["mintArtefact"]);
+	});
+
+	it("reports a mint after an INSERT INTO the user table", () => {
+		const source = `await transaction.query("INSERT INTO velve.user (id) VALUES ($1)", []);\n${MINT}`;
+
+		expect(tokenReachedAfterAccountLock(source)).toStrictEqual(["mintArtefact"]);
+	});
+
+	it("passes the shipped sign-up with its allowance", () => {
+		const { offenders } = scanTokenAfterLock();
+
+		expect(offenders).toStrictEqual([]);
+	});
+
+	it("fails the shipped sign-up once the allowance is removed", () => {
+		const { offenders } = scanTokenAfterLock(null);
+
+		expect(offenders).toStrictEqual([
+			"src/core/flows/sign-up.ts: reaches mintArtefact after taking the account row",
+		]);
+	});
+
+	it("does not extend the allowance to another purpose or another file", () => {
+		const other = `${CREATE}\nawait mintArtefact(transaction, schema, { purpose: "reset", subject: { userId } });`;
+		const { call } = SIGN_UP_MINT_ALLOWANCE;
+
+		expect(tokenReachedAfterAccountLock(other, [call])).toStrictEqual(["mintArtefact"]);
+		expect(tokenReachedAfterAccountLock(`${CREATE}\n${MINT}`, [])).toStrictEqual(["mintArtefact"]);
 	});
 });
