@@ -103,15 +103,17 @@ of them, because a range does not match a prerelease.
 
 Every version up to and including `1.1.0` was published from GitHub Actions and
 carries an npm provenance attestation tying it to a commit and a workflow run of
-this repository. Later versions are published by the maintainer from their own
-machine, so that no registry credential is stored on GitHub, and carry **no**
-provenance attestation, because npm mints one only from a CI provider's identity
-token. `npm audit signatures` reports the registry's signature for such a
-version and no attestation. What ties it to the source instead is the signed tag
-`v<version>` on the commit it was published from. Before the publish, the
-release tier has to have passed on that exact commit, on its push to `main`;
-after it, the tag's push runs the whole gate and both release tiers over the
-same commit in the Release workflow.
+this repository. Versions published by the maintainer from their own machine carry
+**no** provenance attestation, because npm mints one only from a CI provider's
+identity token; `npm audit signatures` reports the registry's signature for such a
+version and no attestation. From this version on, the package is published from
+GitHub Actions again: a push to `main` that raises the version runs
+`.github/workflows/publish.yml`, which runs the whole gate and the release tier on
+that commit and then publishes through npm trusted publishing, with no registry
+credential stored anywhere. Those versions carry a provenance attestation again,
+tying the tarball to the commit and the workflow run. Every published version also
+has the tag `v<version>` on the commit it was published from; `publish.yml` pushes
+it, annotated, after the publish.
 
 The release notes for 2.0.0, including every breaking change and what an
 operator upgrading from 1.1.0 has to do, are in
