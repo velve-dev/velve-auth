@@ -4,8 +4,9 @@ name: Release
 # started without a tag has no name to compare package.json against, and check:release-tag
 # refuses rather than guessing — so an entry point that cannot be checked is not offered.
 #
-# Nothing here publishes. The maintainer publishes from their own machine, so that no registry
-# credential is stored on GitHub, and pushes the tag afterwards (E-2760). What a tag still runs is
+# Nothing here publishes. publish.yml publishes on the push to main that raises the version, and
+# the tag it pushes with the workflow's own token starts no run here; a tag pushed by hand after the
+# manual fallback of docs/working-method.md still does (E-2760, E-3540). What a tag still runs is
 # the verification of the tagged tree: everything ci.yml runs, then the two tiers section 6 puts
 # before a release, then the tag against the manifest. Because it runs after the publish, it
 # reports a published version rather than blocking one. What blocks the publish runs on the
