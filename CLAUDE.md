@@ -565,6 +565,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-2990 … E-3019 | outside the waves · `log-migration` — the German entries of docs/decisions/log.md translated into English in the one central pass §1 promises, and the rule change that pass needs. Reserved together before the owner's three rulings on PR #96 are carried out, counted over the rows standing at 2c66a79 |
 | E-3020 … E-3049 | outside the waves · `release-2-0-0` — the release cut as 2.0.0 instead of 1.2.0, the empty subpaths removed and the deprecated lookup dropped. Reserved together before the owner's three rulings on PR #96 are carried out, counted over the rows standing at 2c66a79 |
 | E-3050 … E-3079 | outside the waves · `webauthn-counter` — the stored WebAuthn signature counter kept at the highest value seen. Reserved together before the owner's three rulings on PR #96 are carried out, counted over the rows standing at 2c66a79 |
+| E-3540 … E-3569 | gate and infrastructure, seventeenth range — publishing from main through trusted publishing, reversing E-2760. Counted over the rows standing at 4be78c6 |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
