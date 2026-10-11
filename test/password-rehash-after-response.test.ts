@@ -34,6 +34,7 @@ const { createPasswordCredentialRepository } = await import("../src/core/passwor
 const { configFor, TEST_ORIGIN } = await import("./auth-fixtures.js");
 const { actorOfTestUser, dropSchema, openMigratedSchema } = await import("./db-fixtures.js");
 const { postTo } = await import("./flows-fixtures.js");
+const { resealDirectly } = await import("./security-state-fixtures.js");
 const { generateRootKey } = await import("./keys-fixtures.js");
 const { drawTestPassword, storedHashesFor } = await import("./password-fixtures.js");
 
@@ -104,6 +105,7 @@ async function accountBehindTheKeyRing(): Promise<{ email: string; userId: strin
 		scheme: "argon2id",
 		setBySessionId: null,
 	});
+	await resealDirectly(migrated.connection, migrated.schema, currentKeys, userId);
 	return { email, userId };
 }
 
@@ -225,6 +227,7 @@ async function accountWithBcrypt(): Promise<{ email: string; userId: string }> {
 		scheme: "bcrypt",
 		setBySessionId: null,
 	});
+	await resealDirectly(migrated.connection, migrated.schema, currentKeys, userId);
 	return { email, userId };
 }
 

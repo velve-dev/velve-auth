@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, createHmac, pbkdf2Sync, randomBytes, timingSafeEqual } from "node:crypto";
 import { connect as connectSocket, type Socket } from "node:net";
 import type { Driver } from "../src/core/db/driver.js";
@@ -233,7 +234,10 @@ class MessageStream {
 
 class PostgresConnection implements Driver {
 	private queue: Promise<unknown> = Promise.resolve();
-	private transactionDepth = 0;
+	//a caller outside the open transaction waits for it, as a pooled connection would be busy
+	private outsideTransactions: Promise<unknown> = Promise.resolve();
+	//what runs inside the transaction's own call chain is the transaction's work and goes straight through
+	private readonly insideTransaction = new AsyncLocalStorage<true>();
 
 	private readonly socket: Socket;
 	private readonly stream: MessageStream;
@@ -244,27 +248,46 @@ class PostgresConnection implements Driver {
 	}
 
 	query<T>(sql: string, params: unknown[]): Promise<T[]> {
-		return this.serialize(() =>
-			params.length === 0 ? this.simpleQuery<T>(sql) : this.extendedQuery<T>(sql, params),
-		);
+		if (this.insideTransaction.getStore() === true) {
+			return this.statement<T>(sql, params);
+		}
+		return this.outsideTransactions.then(() => this.statement<T>(sql, params));
 	}
 
 	async transaction<T>(fn: (tx: Driver) => Promise<T>): Promise<T> {
-		if (this.transactionDepth > 0) {
+		if (this.insideTransaction.getStore() === true) {
 			return fn(this);
 		}
-		await this.query("BEGIN", []);
-		this.transactionDepth += 1;
+		let finished = (): void => undefined;
+		const previous = this.outsideTransactions;
+		this.outsideTransactions = previous.then(
+			() =>
+				new Promise<void>((resolve) => {
+					finished = resolve;
+				}),
+		);
+		await previous;
 		try {
-			const result = await fn(this);
-			this.transactionDepth -= 1;
-			await this.query("COMMIT", []);
-			return result;
-		} catch (error) {
-			this.transactionDepth = 0;
-			await this.query("ROLLBACK", []).catch(() => undefined);
-			throw error;
+			return await this.insideTransaction.run(true, async () => {
+				await this.statement("BEGIN", []);
+				try {
+					const result = await fn(this);
+					await this.statement("COMMIT", []);
+					return result;
+				} catch (error) {
+					await this.statement("ROLLBACK", []).catch(() => undefined);
+					throw error;
+				}
+			});
+		} finally {
+			finished();
 		}
+	}
+
+	private statement<T>(sql: string, params: unknown[]): Promise<T[]> {
+		return this.serialize(() =>
+			params.length === 0 ? this.simpleQuery<T>(sql) : this.extendedQuery<T>(sql, params),
+		);
 	}
 
 	close(): Promise<void> {

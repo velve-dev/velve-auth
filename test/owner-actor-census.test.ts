@@ -26,7 +26,10 @@ const OWNER_TABLE_DECISIONS: Readonly<Record<string, string>> = {
 	webauthn_challenge: "src/core/factor/webauthn/challenge.ts",
 	oauth_flow: "src/core/oauth/flow-repository.ts",
 	import_mapping: "no repository: no module of the library reads or writes it",
-	password_reset_required: "no repository: no module of the library reads or writes it",
+	password_reset_required: "src/core/security-state/read.ts",
+	//the session and pending repositories read the session epoch, the start probes key versions (E-3138, E-3191)
+	security_state:
+		"src/core/db/repositories/session.ts, src/core/factor/pending/repository.ts, src/core/auth/security-state.ts and src/core/auth/integrity-key-ring.ts",
 };
 
 const NO_REPOSITORY = "no repository:";
@@ -34,6 +37,7 @@ const NO_REPOSITORY = "no repository:";
 type ExceptionClass =
 	| "secret address"
 	| "consumed single-use row"
+	| "account the path already named"
 	| "row that carries the proof"
 	| "credential under verification"
 	| "pending resolution"
@@ -41,7 +45,9 @@ type ExceptionClass =
 	| "maintenance or start-up"
 	| "shipped surface"
 	| "created with its account"
-	| "account a sign-in decided";
+	| "account a sign-in decided"
+	| "the repository on another driver"
+	| "seal row beside its envelope";
 
 //each class narrows the requirement the way the decision log records it (E-242)
 const EXCEPTION_CLASSES: Readonly<Record<ExceptionClass, string>> = {
@@ -49,6 +55,8 @@ const EXCEPTION_CLASSES: Readonly<Record<ExceptionClass, string>> = {
 		"the row is addressed by the hash of a secret the caller presents, and the hash is a stronger predicate than the owner (E-242, E-2421)",
 	"consumed single-use row":
 		"the statement that removes the row is what proves the owner, and it hands that proof back (E-234, E-2421)",
+	"account the path already named":
+		"the statement reads or seals the security state of the one account the calling path has already named by its own proof, lookup, consumption or resolution, and decides nothing about which account that is (E-3153)",
 	"row that carries the proof":
 		"the insert writes the row whose secret later proves the owner, so no proof can precede it (E-242, E-2422)",
 	"credential under verification":
@@ -63,8 +71,12 @@ const EXCEPTION_CLASSES: Readonly<Record<ExceptionClass, string>> = {
 		"the only caller is a shipped declaration that takes a user id, which this requirement may not change (E-737, E-2427)",
 	"account a sign-in decided":
 		"the account is one the OAuth sign-in created in the same transaction or one automatic linking joined for a trusted provider, before any session exists (E-558, E-2434)",
+	"the repository on another driver":
+		"the method returns the same repository, keys and mode over a lent connection and reads no row itself (E-3144)",
 	"created with its account":
 		"the account row was inserted by the same transaction, so no other caller can own it yet (E-2428)",
+	"seal row beside its envelope":
+		"the condition only asks whether a seal row exists, correlated to the owner of the row the enclosing statement already reached by its own predicate (E-3121)",
 };
 
 const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
@@ -72,12 +84,11 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 		"secret address",
 	"src/core/db/repositories/session.ts#createSessionRepository.deleteSessionByTokenHash":
 		"secret address",
-	"src/core/db/repositories/session.ts#createSessionRepository.replaceSession": "secret address",
 	"src/core/db/repositories/session.ts#createSessionRepository.replacePresentedSession":
 		"secret address",
 	"src/core/factor/pending/repository.ts#createPendingAuthenticationRepository.findPendingAuthenticationByTokenHash":
 		"secret address",
-	"src/core/factor/pending/repository.ts#createPendingAuthenticationRepository.countFailedAttempt":
+	"src/core/factor/pending/repository.ts#createPendingAuthenticationRepository.bookAttempt":
 		"secret address",
 	"src/core/factor/pending/repository.ts#createPendingAuthenticationRepository.deletePendingAuthenticationByTokenHash":
 		"secret address",
@@ -91,6 +102,19 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 	"src/core/factor/recovery/repository.ts#createRecoveryCodeRepository.consumeCode":
 		"consumed single-use row",
 
+	"src/core/security-state/read.ts#securityStateReadStatement": "account the path already named",
+	"src/core/security-state/read.ts#readSecurityState": "account the path already named",
+	"src/core/security-state/read.ts#securityStateDocumentOf": "account the path already named",
+	"src/core/security-state/sealing.ts#sealUnderAccountLock": "account the path already named",
+	"src/core/security-state/sealing.ts#sealCreatedAccount": "account the path already named",
+	"src/core/security-state/sealing.ts#sealAccount": "account the path already named",
+	"src/core/auth/security-state-maintenance.ts#createSecurityStateMaintenance.sealSecurityState":
+		"maintenance or start-up",
+	"src/core/auth/security-state-maintenance.ts#createSecurityStateMaintenance.resealSecurityState":
+		"shipped surface",
+
+	"src/core/db/repositories/session.ts#createSessionRepository.boundTo":
+		"the repository on another driver",
 	"src/core/db/repositories/session.ts#createSessionRepository.insertSession":
 		"row that carries the proof",
 	"src/core/factor/pending/repository.ts#createPendingAuthenticationRepository.insertPendingAuthentication":
@@ -113,6 +137,9 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 	"src/core/factor/webauthn/credential-repository.ts#createWebAuthnCredentialRepository.recordAssertion":
 		"credential under verification",
 
+	//the epoch and generation a new pending row binds are read for the account whose row the insert writes (E-3484)
+	"src/core/factor/pending/repository.ts#createPendingAuthenticationRepository.accountStateOf":
+		"row that carries the proof",
 	"src/core/factor/totp/repository.ts#createTotpRepository.findCredentialOf": "pending resolution",
 	"src/core/factor/totp/repository.ts#createTotpRepository.claimTimeStepOfPending":
 		"pending resolution",
@@ -129,13 +156,17 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 		"account a sign-in decided",
 
 	"src/core/auth/maintenance.ts#sweepExpiredRows": "maintenance or start-up",
+	"src/core/auth/security-state.ts#sealRowPresentFor": "seal row beside its envelope",
 	"src/core/factor/startup.ts#assertStoredFactorKeyVersionsAreKnown": "maintenance or start-up",
 	"src/core/password/startup.ts#assertStoredKeyVersionsAreKnown": "maintenance or start-up",
+	"src/core/auth/integrity-key-ring.ts#assertStoredIntegrityKeysTakeMac": "maintenance or start-up",
+	"src/core/token/rebind.ts#rebindTokenRowsUnderCurrentKey": "maintenance or start-up",
+	"src/core/auth/integrity-key-ring.ts#schemaHoldsTheSealTable": "maintenance or start-up",
 	"src/core/db/cascade-guard.ts#assertEveryUserReferenceCascades": "maintenance or start-up",
 
 	"src/core/db/repositories/session.ts#createSessionRepository.listSessionsOfUser":
 		"shipped surface",
-	"src/core/db/repositories/session.ts#createSessionRepository.findUserIdOfSession":
+	"src/core/db/repositories/session.ts#createSessionRepository.findOwnerOfSession":
 		"shipped surface",
 	"src/core/db/repositories/session.ts#createSessionRepository.deleteSessionById":
 		"shipped surface",

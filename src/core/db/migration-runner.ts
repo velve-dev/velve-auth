@@ -15,6 +15,7 @@ import {
 	type RunnableMigration,
 } from "./migration.js";
 import { coreTableNameSet, namesTableOfPlugin } from "./migrations/index.js";
+import { withReadCommittedTransactions } from "./read-committed.js";
 import {
 	applySchemaName,
 	assertNoSchemaNameInsideDollarQuoting,
@@ -930,6 +931,7 @@ async function applyOwnedMigration(
 }
 
 export async function runMigrations(options: MigrationRunnerOptions): Promise<MigrationReport> {
+	const driver = withReadCommittedTransactions(options.driver);
 	const schema = assertSchemaName(options.schema ?? DEFAULT_SCHEMA);
 	const owned = byOwnerInDependencyOrder(options.migrations.filter(isOwnedMigration));
 	const plan = inVersionOrder(
@@ -937,11 +939,9 @@ export async function runMigrations(options: MigrationRunnerOptions): Promise<Mi
 		schema,
 	);
 
-	await createLedgers(options.driver, schema, owned.length > 0);
+	await createLedgers(driver, schema, owned.length > 0);
 
-	const applied = new Map(
-		(await readLedger(options.driver, schema)).map((row) => [row.version, row]),
-	);
+	const applied = new Map((await readLedger(driver, schema)).map((row) => [row.version, row]));
 	for (const migration of plan) {
 		const previously = applied.get(migration.version);
 		if (previously !== undefined) {
@@ -951,7 +951,7 @@ export async function runMigrations(options: MigrationRunnerOptions): Promise<Mi
 
 	const appliedVersions: number[] = [];
 	for (const migration of plan) {
-		if (await applyMigration(options.driver, schema, migration)) {
+		if (await applyMigration(driver, schema, migration)) {
 			appliedVersions.push(migration.version);
 		}
 	}
@@ -960,11 +960,11 @@ export async function runMigrations(options: MigrationRunnerOptions): Promise<Mi
 	const declaredSoFar = new Map<string, string[]>();
 	for (const migration of owned) {
 		const declared = declaredSoFar.get(migration.owner) ?? [];
-		await applyOwnedMigration(options.driver, schema, migration, declared);
+		await applyOwnedMigration(driver, schema, migration, declared);
 		declaredSoFar.set(migration.owner, [...declared, ...migration.createsTables]);
 	}
 
-	const versions = (await readLedger(options.driver, schema)).map((row) => row.version);
+	const versions = (await readLedger(driver, schema)).map((row) => row.version);
 	return {
 		appliedVersions,
 		currentVersion: versions.length === 0 ? 0 : Math.max(...versions),

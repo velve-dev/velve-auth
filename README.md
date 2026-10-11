@@ -155,8 +155,28 @@ what was rejected, the reason and the price. `pnpm check:decision-refs` fails if
 >   it (E-2550).
 > - `auth.pending.cancel` takes the call fields and runs the origin check and
 >   the rate limit of its route (E-2830).
-> - Exported types gain members: `StartupErrorCode`, `RevokeReason`, a required
->   `HttpEnvironment.sessionCookieName`, and the namespace types.
+> - Exported types gain members: `StartupErrorCode`, `RevokeReason`,
+>   `VelveErrorCode` and `KeyPurpose` (an exhaustive `switch` over any of them
+>   stops compiling, and a hand-written `KeyProvider` must answer the two new
+>   purposes), a required `HttpEnvironment.sessionCookieName`, the namespace
+>   types, and `maintenance`, which a hand-written mock must extend with
+>   `sealSecurityState` and `resealSecurityState`.
+> - The security state now holds against someone who can write to the database
+>   but does not have the root key. Migration 4 deletes every session, open link,
+>   pending sign-in and WebAuthn challenge, so every user is signed out once.
+>   Stop every 1.x instance before you migrate. A custom `KeyProvider` must
+>   answer the two new purposes `state-mac` and `token-mac`, each with a key of
+>   at least 256 bits that no other purpose shares, or the start is refused.
+>   Existing accounts carry no seal until you run `maintenance.sealSecurityState()`
+>   with `securityState.sealing: "migrating"`; that mode is reported at start as
+>   a weakening, so run the maintenance step and then switch to `"required"`.
+>   Sign-in and change paths can answer with `passkey_limit_reached` and
+>   `identity_limit_reached` (HTTP 409), because an account holds at most 20
+>   passkeys and 10 identities (`limits`). The administrator reseal can refuse
+>   with `security_state_envelope_unreadable`; the maintenance step lists an
+>   account it cannot read in its report's `refusedUserIds` instead. The start
+>   can refuse with `plugin_anchor_incomplete`, `security_state_sealing_unknown`
+>   and `limits_unusable`.
 >
 > Every break and the upgrade steps are in
 > [`docs/releases/2.0.0.md`](./docs/releases/2.0.0.md). 1.x gets no further

@@ -177,6 +177,6 @@ CREATE TABLE velve.guard_decoy (
 	it("leaves every refused migration out of the ledger", async () => {
 		const applied = await ledgerVersions();
 
-		expect(applied).toEqual([1, 2, 102, 105]);
+		expect(applied).toEqual([...coreMigrations("email").map((step) => step.version), 102, 105]);
 	});
 });

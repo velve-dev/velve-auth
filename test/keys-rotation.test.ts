@@ -2,12 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
 	decryptWithPurposeKey,
 	encryptWithPurposeKey,
-	KeyError,
-	type KeyProvider,
 	openEnvelope,
-	rootKeyProvider,
 	sealEnvelope,
-} from "../src/core/keys/index.js";
+} from "../src/core/keys/envelope.js";
+import { KeyError, type KeyProvider, rootKeyProvider } from "../src/core/keys/index.js";
 import { MAXIMUM_KEY_VERSION } from "../src/core/keys/key-version.js";
 import { randomBytes } from "../src/core/token/index.js";
 import { generateRootKey } from "./keys-fixtures.js";

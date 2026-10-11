@@ -5,15 +5,18 @@ import {
 	type PendingToken,
 } from "../src/core/factor/pending/index.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
-import { type MountedAuth, mountAuth, requestTo } from "./auth-fixtures.js";
+import { type MountedAuth, mountAuth, requestTo, testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema } from "./db-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 let mounted: MountedAuth;
 let pending: PendingAuthenticationService;
 
 beforeAll(async () => {
-	mounted = await mountAuth("pendingroutes");
+	mounted = await mountAuth("pendingroutes", { keys: TOKEN_KEYS });
 	pending = createPendingAuthenticationService({
+		keys: TOKEN_KEYS,
 		driver: mounted.connection,
 		schema: mounted.schema,
 	});

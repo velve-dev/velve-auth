@@ -19,6 +19,7 @@ import { configFor, testKeyProvider } from "./auth-fixtures.js";
 import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { postTo } from "./flows-fixtures.js";
 import { drawTestPassword } from "./password-fixtures.js";
+import { resealDirectly } from "./security-state-fixtures.js";
 
 /**
  * A configured Argon2id memory above the import ceiling raises the ceiling verification applies,
@@ -76,16 +77,18 @@ describe.each([ABOVE_THE_IMPORT_CEILING, TWICE_THE_IMPORT_CEILING])(
 		}, 60_000);
 
 		async function seedSealed(email: string, phc: string): Promise<void> {
-			const sealed = await sealPhc(keys, phc);
 			const [row] = await migrated.connection.query<{ id: string }>(
 				`INSERT INTO ${migrated.schema}.user (email) VALUES ($1) RETURNING id`,
 				[email],
 			);
+			const userId = (row as { id: string }).id;
+			const sealed = await sealPhc(keys, userId, phc);
 			await migrated.connection.query(
 				`INSERT INTO ${migrated.schema}.password_credential (user_id, phc, key_version, scheme)
 			 VALUES ($1, $2, $3, 'argon2id')`,
-				[(row as { id: string }).id, sealed.ciphertext, sealed.keyVersion],
+				[userId, sealed.ciphertext, sealed.keyVersion],
 			);
+			await resealDirectly(migrated.connection, migrated.schema, keys, userId);
 		}
 
 		it("verifies a password the library set at the configured memory", async () => {
@@ -371,6 +374,7 @@ describe("lowering argon2id.memoryKiB after hashes were written above the new va
 					phc: sealed.phc,
 					keyVersion: sealed.key_version,
 					scheme: "argon2id",
+					unbound: "refused",
 				}),
 			);
 			return phc === null ? null : integerParameter(phc, "m");

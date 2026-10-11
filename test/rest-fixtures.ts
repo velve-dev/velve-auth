@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import type { EmailMessage } from "../src/core/auth/config.js";
 import { timeStepAt, totpCodeForStep } from "../src/core/factor/totp/index.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
-import { decryptWithPurposeKey } from "../src/core/keys/envelope.js";
+import { decryptBound, rowOfParts } from "../src/core/keys/envelope-binding.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { createPasswordCredentialRepository, openPhc } from "../src/core/password/credential.js";
 import { MAXIMUM_STORED_MEMORY_KIB } from "../src/core/password/limits.js";
@@ -153,18 +153,37 @@ async function openFlowVerifier(mounted: MountedAuth, keys: KeyProvider, state: 
 	const [row] = await mounted.connection.query<{
 		pkce_verifier_enc: Uint8Array<ArrayBuffer>;
 		key_version: number;
+		provider: string;
+		nonce: string | null;
+		redirect_path: string | null;
+		link_from_session_id: string | null;
+		expires_micros: string;
 	}>(
-		`SELECT pkce_verifier_enc, key_version FROM ${mounted.schema}.oauth_flow WHERE state_sha256 = $1`,
+		`SELECT pkce_verifier_enc, key_version, provider, nonce, redirect_path, link_from_session_id,
+		 (extract(epoch from expires_at) * 1000000)::bigint::text AS expires_micros
+		 FROM ${mounted.schema}.oauth_flow WHERE state_sha256 = $1`,
 		[createHash("sha256").update(state, "utf8").digest()],
 	);
 	if (row === undefined) {
 		throw new Error("the open OAuth flow left no row");
 	}
-	const verifier = await decryptWithPurposeKey(
+	const stateSha256 = createHash("sha256").update(state, "utf8").digest();
+	const verifier = await decryptBound(
 		keys,
-		"pkce-enc",
-		row.key_version,
-		row.pkce_verifier_enc,
+		{
+			column: "oauth_flow.pkce_verifier_enc",
+			owner: null,
+			row: rowOfParts([
+				stateSha256,
+				row.provider,
+				row.nonce,
+				row.redirect_path,
+				row.link_from_session_id,
+				row.expires_micros,
+			]),
+		},
+		{ keyVersion: row.key_version, ciphertext: Uint8Array.from(row.pkce_verifier_enc) },
+		"refused",
 	);
 	return Buffer.from(verifier).toString("utf8");
 }

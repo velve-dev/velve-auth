@@ -3,6 +3,7 @@ import type { MigrationReport } from "../db/migration.js";
 import { runMigrations } from "../db/migration-runner.js";
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { coreMigrations } from "../db/migrations/index.js";
+import { withReadCommittedTransactions } from "../db/read-committed.js";
 import { createSessionRepository } from "../db/repositories/session.js";
 import { createOneTimeTokenRepository } from "../db/repositories/token.js";
 import {
@@ -50,10 +51,23 @@ import { createPluginConnection } from "../plugin/login-connection.js";
 import { pluginMigrations } from "../plugin/migrations.js";
 import { assertNoCoreRouteIsOverwritten, createPluginRuntime } from "../plugin/registry.js";
 import { type PluginSurface, pluginRoutes } from "../plugin/routes.js";
+import type { SecurityStateAnchorPort } from "../security-state/anchor.js";
+import { DEFAULT_LIMITS, resolveLimits } from "../security-state/limits.js";
+import {
+	attemptSealOf,
+	createSecurityStateRuntime,
+	revocationSealOf,
+	type SecurityStateRuntime,
+	sealChange,
+	sealVerifiesUnderLock,
+	sessionStateCheckOf,
+} from "../security-state/runtime.js";
+import { componentsAfter } from "../security-state/sealing.js";
 import { type SessionSettings, sessionSettingsOf } from "../session/config.js";
 import { createSessionService, type SessionService } from "../session/service.js";
 import { createOneTimeTokens } from "../token/one-time-token.js";
 import type { ModeHasUsername, RateLimitConfig, VelveAuthConfig } from "./config.js";
+import { assertStoredIntegrityKeysTakeMac, schemaHoldsTheSealTable } from "./integrity-key-ring.js";
 import { type SweepReport, sweepExpiredRows } from "./maintenance.js";
 import { rateLimitConfigOf, routeAlarmReportedTo, routeFloodWatchOf } from "./rate-limiting.js";
 import {
@@ -66,6 +80,11 @@ import {
 	usernameRoutes,
 } from "./routes.js";
 import { type ChosenWeakening, weakeningsIn } from "./security-options.js";
+import { sealingOf } from "./security-state.js";
+import {
+	createSecurityStateMaintenance,
+	type SecurityStateMaintenance,
+} from "./security-state-maintenance.js";
 import {
 	assertConfigurationIsStartable,
 	assertKeysAnswerForEveryPurpose,
@@ -138,7 +157,7 @@ export interface AuthInternals {
 	readonly routes: readonly AnyRoute[];
 	readonly identityMode: IdentityMode;
 	readonly errorCodes: readonly VelveErrorCode[];
-	readonly maintenance: { sweep(): Promise<SweepReport> };
+	readonly maintenance: { sweep(): Promise<SweepReport> } & SecurityStateMaintenance;
 	/** the one asynchronous start step, and where the key ring report runs */
 	migrate(): Promise<MigrationReport>;
 	close(): Promise<void>;
@@ -306,6 +325,51 @@ async function failuresMappedAs<Output>(
 	}
 }
 
+//disabling and enabling an account changes a sealed component and reseals (E-3315)
+async function setDisabledUnderTheSeal(
+	securityState: SecurityStateRuntime,
+	userId: string,
+	disabled: boolean,
+): Promise<void> {
+	//an operator names the account by its id and holds no proof a conversion could run under (E-3162)
+	await sealChange(
+		securityState,
+		{ unproven: userId },
+		{
+			epoch: "keep",
+			write: (tx) =>
+				createUserRepository({ driver: tx, schema: securityState.schema }).setDisabledAt({
+					userId,
+					disabled,
+				}),
+			after: (read) => componentsAfter(read, { disabled }),
+		},
+	);
+}
+
+function securityStateOf<M extends IdentityMode>(
+	config: VelveAuthConfig<M>,
+	resolved: {
+		readonly driver: Driver;
+		readonly schema: string;
+		readonly clock: Clock;
+		readonly log: HttpEnvironment["log"];
+		readonly anchors: readonly SecurityStateAnchorPort[];
+	},
+): SecurityStateRuntime {
+	return createSecurityStateRuntime({
+		driver: resolved.driver,
+		schema: resolved.schema,
+		keys: config.keys,
+		sealing: sealingOf(config.securityState),
+		limits: resolveLimits(config.limits) ?? DEFAULT_LIMITS,
+		anchors: resolved.anchors,
+		alarm: config.securityState?.alarm,
+		log: (level, message, fields) => resolved.log(level, message, fields),
+		clock: resolved.clock,
+	});
+}
+
 //the core reads no clock of its own, so the caller brings the fallback one (E-231)
 export function assembleVelveAuth<M extends IdentityMode>(
 	config: VelveAuthConfig<M>,
@@ -314,7 +378,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 ): VelveAuth<M> {
 	assertConfigurationIsStartable(config);
 
-	const driver: Driver = config.database;
+	const driver: Driver = withReadCommittedTransactions(config.database);
 	const schema = config.schema ?? DEFAULT_SCHEMA;
 	const clock = config.clock ?? defaultClock;
 	const log = config.log ?? NO_SINK;
@@ -326,12 +390,38 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const operatorWarnings = config.log ?? fallbackWarningSink;
 	const rateLimit = rateLimitConfigOf(config.rateLimit, routeAlarmReportedTo(operatorWarnings));
 
-	const sessions = createSessionService({ driver, schema, ...sessionOptionsOf(config) });
-	const pending = createPendingAuthenticationService({ driver, schema });
+	//the plugins that contribute an anchor are registered after the services that consult it (E-3175)
+	const anchors: SecurityStateAnchorPort[] = [];
+	const securityState = securityStateOf(config, { driver, schema, clock, log, anchors });
+	const { sealing } = securityState;
+	const sealSeams = {
+		reportTokenBindingRefusal: securityState.reportTokenBindingRefusal,
+		sealVerifiesAfterMissedIssue: sealVerifiesUnderLock(securityState),
+		checkSessionState: sessionStateCheckOf(securityState),
+		revocationSeal: revocationSealOf(securityState),
+	};
+	const sessions = createSessionService({
+		driver,
+		keys: config.keys,
+		sealing,
+		schema,
+		...sealSeams,
+		...sessionOptionsOf(config),
+	});
+	const pending = createPendingAuthenticationService({
+		driver,
+		keys: config.keys,
+		schema,
+		reportTokenBindingRefusal: securityState.reportTokenBindingRefusal,
+		attemptSeal: attemptSealOf(securityState),
+	});
 	const users = createUserRepository({ driver, schema });
 	const resolutions: ResolutionMemo = new WeakMap();
 
-	const oneTimeTokens = createOneTimeTokens(createOneTimeTokenRepository({ driver, schema }));
+	const oneTimeTokens = createOneTimeTokens(createOneTimeTokenRepository({ driver, schema }), {
+		keys: config.keys,
+		reportTokenBindingRefusal: securityState.reportTokenBindingRefusal,
+	});
 
 	const pluginDatabaseRole =
 		config.pluginDatabaseRole === undefined
@@ -346,7 +436,14 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		identityMode: identity.mode,
 		schema,
 		users,
-		sessions: createSessionRepository({ driver, schema }),
+		sessions: createSessionRepository({
+			driver,
+			schema,
+			keys: config.keys,
+			sealing,
+			reportTokenBindingRefusal: securityState.reportTokenBindingRefusal,
+			revocationSeal: sealSeams.revocationSeal,
+		}),
 		driver,
 		log,
 		...(pluginDatabaseRole === undefined ? {} : { pluginDatabaseRole }),
@@ -357,6 +454,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		plugins: config.plugins ?? [],
 		services: frozenContextServices,
 	});
+	anchors.push(...pluginRuntime.securityStateAnchors);
 
 	const services: RouteServices = {
 		sessions,
@@ -369,13 +467,18 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		driver,
 		schema,
 		keys: config.keys,
+		securityState,
+		reportTokenBindingRefusal: securityState.reportTokenBindingRefusal,
 		clock,
 		oneTimeTokens,
 		kdfSemaphore: createKdfSemaphore({ limit: password.concurrentHashLimit }),
 		origins: config.origins,
 		completeSecondFactor: createSecondFactorCompletion({
 			driver,
+			keys: config.keys,
+			sealing,
 			schema,
+			...sealSeams,
 			...sessionOptionsOf(config),
 		}),
 		...optionalConfigurationOf(config),
@@ -450,9 +553,18 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		http: environment,
 		weakenings,
 
-		maintenance: { sweep: () => sweepExpiredRows({ driver, schema }) },
+		maintenance: {
+			sweep: () => sweepExpiredRows({ driver, schema }),
+			//a reseal must reach the operator even without a configured sink (S-INTEG-7)
+			...createSecurityStateMaintenance({ runtime: securityState, log: operatorWarnings }),
+		},
 
 		async migrate(): Promise<MigrationReport> {
+			//a start the keys refuse must have written nothing to the schema (E-3374)
+			await assertKeysAnswerForEveryPurpose(config.keys);
+			if (await schemaHoldsTheSealTable(driver, schema)) {
+				await assertStoredIntegrityKeysTakeMac({ driver, keys: config.keys, schema });
+			}
 			const applied = await runMigrations({
 				driver,
 				schema,
@@ -472,7 +584,6 @@ export function assembleVelveAuth<M extends IdentityMode>(
 					migrations: pluginMigrations(services),
 				});
 			}
-			await assertKeysAnswerForEveryPurpose(config.keys);
 			//a dead key version is reported once at startup and not on the sign-in path (E-179)
 			await assertStoredKeyVersionsAreKnown({ driver, keys: config.keys, schema });
 			//totp-enc and token-pepper hide a dead key version harder and need the same report (E-428)
@@ -517,9 +628,9 @@ export function assembleVelveAuth<M extends IdentityMode>(
 			//the reason is logged and never stored, as the library keeps no audit log (E-37)
 			disable: async ({ userId, reason }) => {
 				log("warn", "account disabled", { userId, reason });
-				await users.setDisabledAt({ userId, disabled: true });
+				await setDisabledUnderTheSeal(securityState, userId, true);
 			},
-			enable: ({ userId }) => users.setDisabledAt({ userId, disabled: false }),
+			enable: ({ userId }) => setDisabledUnderTheSeal(securityState, userId, false),
 			delete: ({ userId }) => users.deleteUser(userId),
 			...(identity.mode === "username"
 				? {}

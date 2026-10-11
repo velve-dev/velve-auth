@@ -7,10 +7,14 @@ import { toWebHandler } from "../src/core/http/web-handler.js";
 import type { FrozenContext, PluginRoute, VelvePlugin } from "../src/core/plugin/config.js";
 import { createSessionToken } from "../src/core/session/token.js";
 import { createVelveAuth } from "../src/index.js";
-import { configFor, requestTo } from "./auth-fixtures.js";
+import { configFor, requestTo, testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import { asJavaScriptPlugin, createContextProbe, unreachableDriver } from "./plugin-fixtures.js";
+import { resealDirectly } from "./security-state-fixtures.js";
+import { sessionMacParameters } from "./session-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 /**
  * T-CACHE-5 and T-OWNER-12 name the fields a plugin would reach for by name. The registry refuses
@@ -144,17 +148,33 @@ describe("the plugin boundary against a real instance (S-CACHE-5, S-OWNER-10, S-
 			transaction: (work) => connection.transaction(work),
 		};
 		const auth = createVelveAuth(
-			configFor({ database: driver, schema, plugins: [probe.plugin, talkativePlugin] }),
+			configFor({
+				database: driver,
+				schema,
+				keys: TOKEN_KEYS,
+				plugins: [probe.plugin, talkativePlugin],
+			}),
 		);
 		handler = toWebHandler(auth);
 
 		const userId = await createUser(connection, schema);
+		await resealDirectly(connection, schema, TOKEN_KEYS, userId);
 		const issued = createSessionToken();
 		await connection.query(
 			`INSERT INTO ${schema}.session
-			   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors)
-			 VALUES ($1, $2, now() + interval '7 days', now() + interval '30 days', '{password}'::text[])`,
-			[userId, issued.tokenHash],
+			   (user_id, token_sha256, idle_expires_at, absolute_expires_at, factors,
+			    token_mac, token_mac_key_version, created_at, id)
+			 VALUES ($1, $2, $7::timestamptz, $8::timestamptz, '{password}'::text[],
+			    $3, $4, $5::timestamptz, $6::uuid)`,
+			[
+				userId,
+				issued.tokenHash,
+				...(await sessionMacParameters(TOKEN_KEYS, {
+					userId,
+					tokenHash: issued.tokenHash,
+					factors: ["password"],
+				})),
+			],
 		);
 		sessionCookie = `${DEFAULT_COOKIE_NAMES.session}=${issued.token}`;
 		await connection.query(`CREATE TABLE ${schema}.demo_entry (id serial PRIMARY KEY)`, []);

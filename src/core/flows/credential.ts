@@ -4,7 +4,7 @@ import { qualifiedTableName } from "../db/identifier.js";
 import type { KeyProvider } from "../keys/index.js";
 import { createArgon2idHash } from "../password/argon2.js";
 import type { ResolvedPasswordConfig } from "../password/config.js";
-import { createPasswordCredentialRepository } from "../password/credential.js";
+import { createPasswordCredentialRepository, type SealedPhc } from "../password/credential.js";
 import { storedMemoryCeilingKiB } from "../password/limits.js";
 import { acceptNewPassword } from "../password/policy.js";
 import { CREATED_SCHEME } from "../password/scheme.js";
@@ -46,11 +46,11 @@ function credentialsOf(writer: CredentialWriter) {
 	});
 }
 
-export async function writePassword(
+export function writePassword(
 	writer: CredentialWriter,
 	input: { readonly actor: Actor } & PasswordToWrite,
-): Promise<void> {
-	await credentialsOf(writer).write({
+): Promise<SealedPhc> {
+	return credentialsOf(writer).write({
 		actor: input.actor,
 		phc: input.derived.phc,
 		scheme: CREATED_SCHEME,
@@ -59,11 +59,11 @@ export async function writePassword(
 }
 
 //only a sign-up may call this as its own transaction inserted the account row (E-2428)
-export async function writePasswordOfCreatedAccount(
+export function writePasswordOfCreatedAccount(
 	writer: CredentialWriter,
 	input: { readonly userId: string } & PasswordToWrite,
-): Promise<void> {
-	await credentialsOf(writer).writeForCreatedAccount({
+): Promise<SealedPhc> {
+	return credentialsOf(writer).writeForCreatedAccount({
 		userId: input.userId,
 		phc: input.derived.phc,
 		scheme: CREATED_SCHEME,

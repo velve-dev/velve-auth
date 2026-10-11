@@ -6,7 +6,7 @@ import type { Session } from "../http/caller.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import type { RateLimitRule } from "../http/rate-limit.js";
 import { answerWithRedirect } from "../http/redirect.js";
-import { defineRoute, type RequestContext, type ServerSurface } from "../http/route.js";
+import { defineRoute, type RequestContext, type Route, type ServerSurface } from "../http/route.js";
 import { object, optional, string } from "../http/validators.js";
 import type { OAuthLinkStart } from "./flow-repository.js";
 import { resolveProviderTable } from "./providers.js";
@@ -222,6 +222,95 @@ export function oauthRoutes(services: RouteServices) {
 }
 
 /** the OAuth namespaces this feature adds to the instance, per identity mode */
+//the table names the routes and never the services that build them, which stay off the declarations (E-3488)
+/** the provider routes as a table, which the client and the server surface both read */
+export type OAuthRouteTable = readonly [
+	Route<
+		"signIn.oauth.start",
+		"/sign-in/oauth/start",
+		{
+			provider: string;
+		} & {
+			redirectPath?: string;
+		},
+		OAuthRedirect,
+		"invalid_input" | "rate_limited" | "origin_not_allowed" | "provider_not_configured"
+	>,
+	Route<
+		"signIn.oauth.callback",
+		"/sign-in/oauth/callback/:provider",
+		{
+			provider: string;
+			code: string;
+			state: string;
+		} & {
+			iss?: string;
+		},
+		OAuthCallbackOutcome,
+		| "invalid_input"
+		| "rate_limited"
+		| "identity_already_linked"
+		| "oauth_flow_invalid"
+		| "oauth_provider_error"
+	>,
+	Route<
+		"signIn.oauth.callbackFormPost",
+		"/sign-in/oauth/callback/:provider",
+		{
+			provider: string;
+			code: string;
+			state: string;
+		} & {
+			iss?: string;
+		},
+		OAuthCallbackOutcome,
+		| "invalid_input"
+		| "rate_limited"
+		| "identity_already_linked"
+		| "oauth_flow_invalid"
+		| "oauth_provider_error"
+	>,
+	Route<
+		"identity.list",
+		"/identity/list",
+		{} & {},
+		Identity[],
+		"rate_limited" | "origin_not_allowed" | "account_disabled" | "session_required"
+	>,
+	Route<
+		"identity.link.start",
+		"/identity/link/start",
+		{
+			provider: string;
+		} & {
+			redirectPath?: string;
+		},
+		OAuthRedirect,
+		| "invalid_input"
+		| "rate_limited"
+		| "origin_not_allowed"
+		| "account_disabled"
+		| "session_required"
+		| "freshness_required"
+		| "provider_not_configured"
+	>,
+	Route<
+		"identity.unlink",
+		"/identity/unlink",
+		{
+			identityId: string;
+		} & {},
+		void,
+		| "invalid_input"
+		| "rate_limited"
+		| "origin_not_allowed"
+		| "account_disabled"
+		| "session_required"
+		| "freshness_required"
+		| "last_sign_in_method"
+	>,
+];
+
 export type OAuthSurface<M extends IdentityMode> = M extends IdentityMode
-	? ServerSurface<ReturnType<typeof oauthRoutes>>
+	? ServerSurface<OAuthRouteTable>
 	: never;

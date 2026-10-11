@@ -1,3 +1,8 @@
+import {
+	type SealRowPresence,
+	sealRowPresenceOf,
+	sealRowPresentFor,
+} from "../../auth/security-state.js";
 import type { Actor } from "../../db/actor.js";
 import type { Driver } from "../../db/driver.js";
 import { assertSchemaName, qualifiedTableName } from "../../db/identifier.js";
@@ -13,6 +18,8 @@ export interface StoredTotpCredential {
 	readonly secretEnc: Uint8Array<ArrayBuffer>;
 	readonly keyVersion: number;
 	readonly confirmedAt: Date | null;
+	/** whether the owner had a seal row in the statement that read the secret */
+	readonly sealRow: SealRowPresence;
 }
 
 export interface TotpCredentialInsert {
@@ -31,7 +38,8 @@ export type TimeStepClaim = { readonly actor: Actor } & TimeStep;
 type PendingTimeStepClaim = { readonly pending: PendingResolution } & TimeStep;
 
 export interface TotpRepository {
-	putUnconfirmedCredential(input: TotpCredentialInsert): Promise<StoredTotpCredential | null>;
+	//false means a confirmed credential is in place and nothing was written
+	putUnconfirmedCredential(input: TotpCredentialInsert): Promise<boolean>;
 	findCredential(input: { actor: Actor }): Promise<StoredTotpCredential | null>;
 	findCredentialOf(input: { userId: string }): Promise<StoredTotpCredential | null>;
 	//the shipped enrolment check takes a user id so this answers a boolean and no secret (E-2435)
@@ -39,6 +47,13 @@ export interface TotpRepository {
 	//only the secret the code was matched against may be confirmed
 	confirmCredential(input: { actor: Actor; secretEnc: Uint8Array<ArrayBuffer> }): Promise<boolean>;
 	removeCredential(input: { actor: Actor }): Promise<boolean>;
+	//only the ciphertext and key version the verified read returned may be replaced (S-INTEG-3)
+	replaceSecretIfUnchanged(input: {
+		actor: Actor;
+		previous: { readonly ciphertext: Uint8Array<ArrayBuffer>; readonly keyVersion: number };
+		secretEnc: Uint8Array<ArrayBuffer>;
+		keyVersion: number;
+	}): Promise<boolean>;
 	claimTimeStep(input: TimeStepClaim): Promise<boolean>;
 	//the pending row named the owner when its token hash resolved it (E-2424)
 	claimTimeStepOfPending(input: PendingTimeStepClaim): Promise<boolean>;
@@ -48,6 +63,7 @@ interface CredentialRow {
 	secret_enc: Uint8Array;
 	key_version: number;
 	confirmed_at: Date | null;
+	sealed: boolean;
 }
 
 function readCredential(row: CredentialRow | undefined): StoredTotpCredential | null {
@@ -58,6 +74,7 @@ function readCredential(row: CredentialRow | undefined): StoredTotpCredential | 
 		secretEnc: Uint8Array.from(row.secret_enc),
 		keyVersion: row.key_version,
 		confirmedAt: row.confirmed_at,
+		sealRow: sealRowPresenceOf(row.sealed),
 	};
 }
 
@@ -72,10 +89,12 @@ VALUES ($1, $2, $3, NULL)
 ON CONFLICT (user_id) DO UPDATE
 SET secret_enc = EXCLUDED.secret_enc, key_version = EXCLUDED.key_version, created_at = now()
 WHERE ${credentials}.user_id = $1 AND ${credentials}.confirmed_at IS NULL
-RETURNING secret_enc, key_version, confirmed_at`;
+RETURNING user_id`;
 
-	const findStatement = `SELECT secret_enc, key_version, confirmed_at FROM ${credentials}
-WHERE user_id = $1`;
+	//the seal row is read in the statement that reads the secret (E-3121)
+	const findStatement = `SELECT credential.secret_enc, credential.key_version, credential.confirmed_at,
+${sealRowPresentFor(schema, "credential.user_id")} AS sealed
+FROM ${credentials} credential WHERE credential.user_id = $1`;
 
 	const isConfirmedStatement = `SELECT EXISTS (
 	SELECT 1 FROM ${credentials} WHERE user_id = $1 AND confirmed_at IS NOT NULL
@@ -83,6 +102,10 @@ WHERE user_id = $1`;
 
 	const confirmStatement = `UPDATE ${credentials} SET confirmed_at = now()
 WHERE user_id = $1 AND secret_enc = $2 AND confirmed_at IS NULL
+RETURNING user_id`;
+
+	const replaceSecretStatement = `UPDATE ${credentials} SET secret_enc = $3, key_version = $4
+WHERE user_id = $1 AND secret_enc = $2 AND key_version = $5
 RETURNING user_id`;
 
 	const removeCredentialStatement = `DELETE FROM ${credentials} WHERE user_id = $1 RETURNING user_id`;
@@ -107,12 +130,12 @@ RETURNING time_step`;
 
 	return {
 		async putUnconfirmedCredential({ actor, secretEnc, keyVersion }) {
-			const [row] = await options.driver.query<CredentialRow>(putUnconfirmedStatement, [
+			const written = await options.driver.query(putUnconfirmedStatement, [
 				actor,
 				secretEnc,
 				keyVersion,
 			]);
-			return readCredential(row);
+			return written.length === 1;
 		},
 
 		async findCredential({ actor }) {
@@ -128,6 +151,17 @@ RETURNING time_step`;
 
 		async confirmCredential({ actor, secretEnc }) {
 			const rows = await options.driver.query(confirmStatement, [actor, secretEnc]);
+			return rows.length === 1;
+		},
+
+		async replaceSecretIfUnchanged({ actor, previous, secretEnc, keyVersion }) {
+			const rows = await options.driver.query(replaceSecretStatement, [
+				actor,
+				previous.ciphertext,
+				secretEnc,
+				keyVersion,
+				previous.keyVersion,
+			]);
 			return rows.length === 1;
 		},
 

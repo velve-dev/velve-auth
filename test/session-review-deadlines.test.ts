@@ -2,8 +2,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Driver } from "../src/core/db/driver.js";
 import { isSessionFresh } from "../src/core/session/freshness.js";
 import { createSessionService, type SessionService } from "../src/core/session/service.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, type MigratedSchema, openMigratedSchema } from "./db-fixtures.js";
-import { HOUR, MINUTE, withProcessClockShiftedBy } from "./session-fixtures.js";
+import { HOUR, MINUTE, rebindSessionsOf, withProcessClockShiftedBy } from "./session-fixtures.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 const NOWHERE = { ipAddress: null, userAgent: null };
 
@@ -15,14 +18,15 @@ interface Counter {
 
 function countingByVerb(inner: Driver): Counter {
 	const verbs: string[] = [];
-	const driver: Driver = {
+	//an extension writes inside a transaction since the deadline it writes is the one its mac binds
+	const counted = (over: Driver): Driver => ({
 		query(sql, params) {
 			verbs.push(sql.trimStart().split(/\s+/, 1)[0]?.toUpperCase() ?? "");
-			return inner.query(sql, params);
+			return over.query(sql, params);
 		},
-		transaction: (fn) => inner.transaction(fn),
-	};
-	return { driver, verbs, reset: () => verbs.splice(0, verbs.length) };
+		transaction: (fn) => over.transaction((tx) => fn(counted(tx))),
+	});
+	return { driver: counted(inner), verbs, reset: () => verbs.splice(0, verbs.length) };
 }
 
 let migrated: MigratedSchema;
@@ -36,6 +40,7 @@ async function shift(sessionId: string, columns: readonly string[], by: string):
 		`UPDATE ${migrated.schema}.session SET ${assignment} WHERE id = $1 AND user_id = $3`,
 		[sessionId, by, userId],
 	);
+	await rebindSessionsOf(migrated.connection, migrated.schema, TOKEN_KEYS, { sessionId });
 }
 
 async function deadlinesOf(sessionId: string) {
@@ -58,7 +63,12 @@ async function deadlinesOf(sessionId: string) {
 beforeAll(async () => {
 	migrated = await openMigratedSchema("velve_review_deadlines");
 	counter = countingByVerb(migrated.connection);
-	service = createSessionService({ driver: counter.driver, schema: migrated.schema });
+	service = createSessionService({
+		sealing: "migrating",
+		keys: TOKEN_KEYS,
+		driver: counter.driver,
+		schema: migrated.schema,
+	});
 	userId = await createUser(migrated.connection, migrated.schema);
 });
 
@@ -69,7 +79,12 @@ afterAll(async () => {
 
 describe("E-22: the idle deadline extends on use, at most once an hour", () => {
 	it("writes nothing across twenty resolutions inside the interval", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "unsealed",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		const before = await deadlinesOf(issued.session.id);
 		counter.reset();
 
@@ -84,7 +99,12 @@ describe("E-22: the idle deadline extends on use, at most once an hour", () => {
 	});
 
 	it("writes once when the interval has passed, and then holds again", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "unsealed",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await shift(issued.session.id, ["last_used_at"], "2 hours");
 		counter.reset();
 
@@ -96,7 +116,12 @@ describe("E-22: the idle deadline extends on use, at most once an hour", () => {
 	});
 
 	it("moves the idle deadline forward by the configured timeout when it does write", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "unsealed",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await shift(issued.session.id, ["last_used_at", "idle_expires_at"], "2 hours");
 
 		const resolved = await service.resolve(issued.token);
@@ -110,11 +135,18 @@ describe("E-22: the idle deadline extends on use, at most once an hour", () => {
 
 	it("lets a short interval write on every request, so the throttle is the interval and nothing else", async () => {
 		const eager = createSessionService({
+			sealing: "migrating",
+			keys: TOKEN_KEYS,
 			driver: counter.driver,
 			schema: migrated.schema,
 			session: { idleWriteInterval: "1s" },
 		});
-		const issued = await eager.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await eager.issue({
+			authorisedBy: "unsealed",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await shift(issued.session.id, ["last_used_at"], "10 seconds");
 		counter.reset();
 
@@ -125,7 +157,12 @@ describe("E-22: the idle deadline extends on use, at most once an hour", () => {
 	});
 
 	it("never touches created_at or the absolute deadline, however hard the session is used", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "unsealed",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		const before = await deadlinesOf(issued.session.id);
 
 		for (let round = 0; round < 5; round += 1) {
@@ -142,7 +179,12 @@ describe("E-22: the idle deadline extends on use, at most once an hour", () => {
 
 describe("E-22: the absolute deadline is never extended and cannot be revived", () => {
 	it("answers null once it has passed, whatever is done to the session", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "unsealed",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await shift(issued.session.id, ["absolute_expires_at"], "31 days");
 
 		expect(await service.resolve(issued.token)).toBeNull();
@@ -151,7 +193,12 @@ describe("E-22: the absolute deadline is never extended and cannot be revived", 
 	});
 
 	it("stays dead: neither resolve nor refresh writes anything to the expired row", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "unsealed",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await shift(issued.session.id, ["absolute_expires_at"], "31 days");
 		const before = await deadlinesOf(issued.session.id);
 		counter.reset();
@@ -165,7 +212,12 @@ describe("E-22: the absolute deadline is never extended and cannot be revived", 
 	});
 
 	it("cannot be revived by an idle write, even one that is due", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "unsealed",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await shift(issued.session.id, ["last_used_at"], "2 hours");
 		await shift(issued.session.id, ["absolute_expires_at"], "31 days");
 
@@ -178,6 +230,8 @@ describe("E-22: the absolute deadline is never extended and cannot be revived", 
 	it("refuses a configuration that would let the idle deadline outlive it", () => {
 		expect(() =>
 			createSessionService({
+				sealing: "migrating",
+				keys: TOKEN_KEYS,
 				driver: counter.driver,
 				schema: migrated.schema,
 				session: { idleTimeout: "31d" },
@@ -188,7 +242,12 @@ describe("E-22: the absolute deadline is never extended and cannot be revived", 
 
 describe("freshness is fifteen minutes from created_at and nothing else restores it", () => {
 	it("is gone after the window and is not brought back by resolve, refresh or an idle write", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "unsealed",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await shift(issued.session.id, ["created_at", "last_used_at"], "2 hours");
 
 		await service.resolve(issued.token);
@@ -207,10 +266,17 @@ describe("freshness is fifteen minutes from created_at and nothing else restores
 	});
 
 	it("comes back with a re-issue, because a re-issue is a new row with a new created_at", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "unsealed",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 
-		const next = await service.reissue({
-			previousToken: issued.token,
+		const next = await service.issueReplacingPresented({
+			authorisedBy: "unsealed",
+			completes: "totp_second_factor",
+			presentedToken: issued.token,
 			userId,
 			factors: ["password", "totp"],
 			observed: NOWHERE,
@@ -228,7 +294,12 @@ describe("freshness is fifteen minutes from created_at and nothing else restores
 	});
 
 	it("is measured against created_at, so an old session is never fresh again", async () => {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "unsealed",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await shift(issued.session.id, ["created_at"], "20 minutes");
 		const resolved = await service.resolve(issued.token);
 		if (resolved === null) {
@@ -248,7 +319,12 @@ describe("freshness is fifteen minutes from created_at and nothing else restores
  */
 describe("freshness is decided by the clock created_at came from", () => {
 	async function resolvedSessionAgedBy(age: string) {
-		const issued = await service.issue({ userId, factors: ["password"], observed: NOWHERE });
+		const issued = await service.issue({
+			authorisedBy: "unsealed",
+			userId,
+			factors: ["password"],
+			observed: NOWHERE,
+		});
 		await shift(issued.session.id, ["created_at"], age);
 		const resolved = await service.resolve(issued.token);
 		if (resolved === null) {

@@ -4,8 +4,11 @@ import {
 	createPendingAuthenticationService,
 	type PendingAuthenticationService,
 } from "../src/core/factor/pending/index.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 let connection: TestConnection;
 let schema: string;
@@ -16,7 +19,7 @@ beforeAll(async () => {
 	const migrated = await openMigratedSchema("availablefactors");
 	connection = migrated.connection;
 	schema = migrated.schema;
-	pending = createPendingAuthenticationService({ driver: connection, schema });
+	pending = createPendingAuthenticationService({ keys: TOKEN_KEYS, driver: connection, schema });
 });
 
 afterAll(async () => {

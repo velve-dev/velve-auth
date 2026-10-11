@@ -6,6 +6,7 @@ import { createTestClock } from "../src/testing/index.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
 import { HeldDriver } from "./lock-order-fixtures.js";
+import { testSecurityState } from "./security-state-fixtures.js";
 import { pendingAuthenticationsOn, secretBytesOfBase32, testKeyProvider } from "./totp-fixtures.js";
 
 const FIXED_INSTANT = new Date("2026-10-04T09:15:00.000Z");
@@ -31,6 +32,7 @@ afterAll(async () => {
 
 function totpOn(driver: HeldDriver | TestConnection) {
 	return createTotpService({
+		securityState: testSecurityState(driver, schema, keys),
 		driver,
 		schema,
 		keys,
@@ -53,8 +55,20 @@ async function storedCredentialOf(userId: string): Promise<StoredRow | undefined
 	return row;
 }
 
-describe("a start between the code check and the confirmation of an enrolment", () => {
-	it("leaves the secret the code never proved unconfirmed and answers like a wrong code", async () => {
+//an enrolment's finish holds the account lock from its check to its confirmation and a racing start or finish waits for it (E-3385)
+describe("a start or a finish arriving while a finish holds the account", () => {
+	async function stillWaiting(work: Promise<unknown>): Promise<boolean> {
+		const settled = await Promise.race([
+			work.then(
+				() => "settled",
+				() => "settled",
+			),
+			new Promise((resolve) => setTimeout(() => resolve("waiting"), 300)),
+		]);
+		return settled === "waiting";
+	}
+
+	it("lets the start wait for the confirmation and then refuses it as already enrolled", async () => {
 		const userId = await createUser(finisherConnection, schema);
 		const actor = actorOfTestUser(userId);
 		const held = new HeldDriver(finisherConnection);
@@ -66,34 +80,31 @@ describe("a start between the code check and the confirmation of an enrolment", 
 			secretBytesOfBase32(proved.secretBase32),
 			timeStepAt(FIXED_INSTANT),
 		);
+		const storedBeforeTheFinish = await storedCredentialOf(userId);
 
 		const reachedTheConfirmation = held.holdBefore(THE_CONFIRMATION);
-		const finishing = finisher.enroll.finish({ actor, code: provedCode });
-		const outcome = finishing.then(
+		const outcome = finisher.enroll.finish({ actor, code: provedCode }).then(
 			() => "confirmed",
 			(failure: unknown) => failure,
 		);
 		await reachedTheConfirmation;
-		const replacement = await starter.enroll.start({ actor, accountName: "ada@example.com" });
-		const storedAfterTheStart = await storedCredentialOf(userId);
+		const replacement = starter.enroll.start({ actor, accountName: "ada@example.com" }).then(
+			() => "started",
+			(failure: unknown) => failure,
+		);
+		expect(await stillWaiting(replacement)).toBe(true);
 		held.release();
 
-		expect(await outcome).toMatchObject({ reason: "totp_code_wrong" });
+		expect(await outcome).toBe("confirmed");
+		expect(await replacement).toMatchObject({ code: "factor_already_enrolled" });
 		const stored = await storedCredentialOf(userId);
-		expect(stored?.confirmed_at).toBeNull();
+		expect(stored?.confirmed_at).not.toBeNull();
 		expect(Buffer.from(stored?.secret_enc ?? [])).toEqual(
-			Buffer.from(storedAfterTheStart?.secret_enc ?? [1]),
+			Buffer.from(storedBeforeTheFinish?.secret_enc ?? [1]),
 		);
-
-		const replacementCode = totpCodeForStep(
-			secretBytesOfBase32(replacement.secretBase32),
-			timeStepAt(FIXED_INSTANT) + 1,
-		);
-		await starter.enroll.finish({ actor, code: replacementCode });
-		expect((await storedCredentialOf(userId))?.confirmed_at).not.toBeNull();
 	});
 
-	it("still answers factor_already_enrolled when a second finish confirmed the same secret first", async () => {
+	it("answers the second finish factor_already_enrolled once the first confirmed the same secret", async () => {
 		const userId = await createUser(finisherConnection, schema);
 		const actor = actorOfTestUser(userId);
 		const held = new HeldDriver(finisherConnection);
@@ -112,9 +123,16 @@ describe("a start between the code check and the confirmation of an enrolment", 
 				(failure: unknown) => failure,
 			);
 		await reachedTheConfirmation;
-		await other.enroll.finish({ actor, code: totpCodeForStep(secretBytes, step - 1) });
+		const second = other.enroll
+			.finish({ actor, code: totpCodeForStep(secretBytes, step - 1) })
+			.then(
+				() => "confirmed",
+				(failure: unknown) => failure,
+			);
+		expect(await stillWaiting(second)).toBe(true);
 		held.release();
 
-		expect(await outcome).toMatchObject({ code: "factor_already_enrolled" });
+		expect(await outcome).toBe("confirmed");
+		expect(await second).toMatchObject({ code: "factor_already_enrolled" });
 	});
 });

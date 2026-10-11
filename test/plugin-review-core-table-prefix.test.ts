@@ -177,8 +177,8 @@ describe("a plugin id that prefixes a core table name does not own that table (3
 					version: 1,
 					name: "mint_a_reset_token",
 					createsTables: [],
-					sql: `INSERT INTO velve.one_time_token (token_sha256, purpose, user_id, expires_at)
-						VALUES (decode('deadbeef', 'hex'), 'password_reset', '${victim}', now() + interval '1 day')`,
+					sql: `INSERT INTO velve.one_time_token (token_sha256, purpose, user_id, expires_at, token_mac, token_mac_key_version)
+						VALUES (decode('deadbeef', 'hex'), 'password_reset', '${victim}', now() + interval '1 day', decode(repeat('ab', 32), 'hex'), 1)`,
 				},
 			],
 		} as unknown as VelvePlugin);
