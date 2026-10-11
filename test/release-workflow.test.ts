@@ -42,6 +42,8 @@ function commands(region: string): string[] {
 const ci = workflow("ci.yml");
 const release = workflow("release.yml");
 const releaseJobs = jobRegions(release);
+const publish = workflow("publish.yml");
+const publishJobs = jobRegions(publish);
 const manifest = JSON.parse(readFileSync(`${repositoryRoot}package.json`, "utf8")) as {
 	scripts: Record<string, string>;
 };
@@ -86,10 +88,10 @@ function needsOf(region: string): string[] {
 		: [declared];
 }
 
-function job(name: string): string {
-	const region = releaseJobs.get(name);
+function job(name: string, jobs: Map<string, string> = releaseJobs): string {
+	const region = jobs.get(name);
 	if (region === undefined) {
-		throw new Error(`release.yml declares no job named ${name}`);
+		throw new Error(`the workflow declares no job named ${name}`);
 	}
 	return region;
 }
@@ -170,16 +172,20 @@ describe("the release workflow", () => {
 		expect(release).not.toContain("DIST_TAG: latest");
 	});
 
-	/** The publish runs on the maintainer's machine so that no registry credential is stored on
-	 * GitHub, and a reference left in any workflow is a secret somebody would recreate to make
-	 * it work (E-2760). A rehearsal needs no credential and no OIDC token either. */
+	/** No registry credential exists to be named: publish.yml authenticates with GitHub's OIDC
+	 * token through trusted publishing, and a reference left in any workflow is a secret somebody
+	 * would recreate to make it work (E-2760, E-3540). The OIDC token is asked for in one job of one
+	 * file, and is read below the job heading so that a grant anywhere else stays a finding. */
 	it.each(readdirSync(`${repositoryRoot}.github/workflows`))(
-		"names no registry credential and asks for no OIDC token in %s",
+		"names no registry credential, and asks for an OIDC token only in the publish job, in %s",
 		(name) => {
 			const source = workflow(name);
+			const outsideThePublishJob =
+				name === "publish.yml" ? source.replace(job("publish", publishJobs), "") : source;
 
-			expect(source).not.toMatch(/NPM_TOKEN|NODE_AUTH_TOKEN|registry-url|id-token/);
+			expect(source).not.toMatch(/NPM_TOKEN|NODE_AUTH_TOKEN|_authToken|registry-url/);
 			expect(source).not.toMatch(/secrets\./);
+			expect(withoutYamlComments(outsideThePublishJob)).not.toMatch(/id-token|: write$/m);
 		},
 	);
 
@@ -189,13 +195,16 @@ describe("the release workflow", () => {
 	 * the value arrives nowhere. The release that found it published nothing only because
 	 * `check:release-tag` refuses an empty dist-tag rather than guessing one (E-1880).
 	 */
-	it.each([ci, release])("dereferences no job id that an expression cannot read", (source) => {
-		const dereferenced = [
-			...withoutYamlComments(source).matchAll(/\bneeds\.([A-Za-z0-9_-]+)\./g),
-		].map((match) => String(match[1]));
+	it.each([ci, release, publish])(
+		"dereferences no job id that an expression cannot read",
+		(source) => {
+			const dereferenced = [
+				...withoutYamlComments(source).matchAll(/\bneeds\.([A-Za-z0-9_-]+)\./g),
+			].map((match) => String(match[1]));
 
-		expect(dereferenced.filter((id) => id.includes("-"))).toStrictEqual([]);
-	});
+			expect(dereferenced.filter((id) => id.includes("-"))).toStrictEqual([]);
+		},
+	);
 
 	/** Every job an expression reads has to be a job the file declares, and one it waits for. */
 	it("reads outputs only from jobs it declares and depends on", () => {
@@ -283,5 +292,129 @@ describe("the release workflow", () => {
 
 		expect(invoked.length).toBeGreaterThanOrEqual(5);
 		expect(invoked.filter((script) => manifest.scripts[script] === undefined)).toStrictEqual([]);
+	});
+});
+
+/** The `key: value` lines indented under a job's `permissions:` line, as a map. */
+function jobPermissions(region: string): Record<string, string> {
+	const block = /^ {4}permissions:\n((?: {6}[a-z-]+: [a-z]+\n)+)/m.exec(region);
+	return Object.fromEntries(
+		String(block?.[1] ?? "")
+			.trim()
+			.split("\n")
+			.filter(Boolean)
+			.map((line) => line.trim().split(": ") as [string, string]),
+	);
+}
+
+/**
+ * A push to main publishes through npm trusted publishing: npm trusts publish.yml in this
+ * repository and takes GitHub's OIDC token as the proof, so no credential is stored anywhere
+ * (E-3540). Each case was shown red on a fault planted into the file before it was trusted green.
+ */
+describe("the publish workflow", () => {
+	const publishCommands = commands(job("publish", publishJobs));
+
+	it("is fired by a push to main and by nothing else", () => {
+		const triggers = publish.slice(publish.indexOf("\non:\n"), publish.indexOf("\nconcurrency:"));
+
+		expect(withoutYamlComments(triggers).replace(/\n+/g, "\n")).toBe(
+			"\non:\n  push:\n    branches: [main]\n",
+		);
+	});
+
+	it("declares exactly the jobs a publish is made of, each waiting for the one before", () => {
+		expect([...publishJobs.keys()]).toStrictEqual(["decide", "verify", "publish"]);
+		expect(needsOf(job("verify", publishJobs))).toStrictEqual(["decide"]);
+		expect(needsOf(job("publish", publishJobs))).toStrictEqual(["decide", "verify"]);
+	});
+
+	/** A second push waits rather than cancelling a publish halfway, and then finds its version on
+	 * the registry (E-3541). */
+	it("runs one publish at a time and cancels none", () => {
+		const block = publish.slice(
+			publish.indexOf("\nconcurrency:"),
+			publish.indexOf("\npermissions:"),
+		);
+
+		expect(block).toBe("\nconcurrency:\n  group: publish\n  cancel-in-progress: false\n");
+	});
+
+	it("verifies and publishes only a version the registry does not have", () => {
+		const unpublished = "    if: needs.decide.outputs.published == 'false'\n";
+
+		expect(job("decide", publishJobs)).toContain('npm view "$NAME@$VERSION" version');
+		expect(job("verify", publishJobs)).toContain(unpublished);
+		expect(job("publish", publishJobs)).toContain(unpublished);
+	});
+
+	/** The whole gate and the release tier on the commit before it is published (E-3542). */
+	it("runs the tag check, the gate and the release tier before the publish", () => {
+		const verify = commands(job("verify", publishJobs));
+
+		expect(verify).toContain('pnpm check:release-tag "v$VERSION" "$DIST_TAG"');
+		expect(verify.indexOf("./tools/start-dex.sh")).toBeLessThan(verify.indexOf("pnpm gate"));
+		expect(verify).toContain("pnpm gate");
+		expect(verify).toContain("pnpm test:release");
+		expect(job("verify", publishJobs)).toContain("fetch-depth: 0");
+	});
+
+	it("publishes with provenance, publicly, under the dist-tag the version decides", () => {
+		expect(publishCommands.filter((command) => command.startsWith("npm publish"))).toStrictEqual([
+			'npm publish --provenance --access public --tag "$DIST_TAG"',
+		]);
+		expect(commands(job("decide", publishJobs))).toContain("pnpm run release-dist-tag");
+	});
+
+	it("runs npm publish in no other job and no other workflow", () => {
+		const elsewhere = readdirSync(`${repositoryRoot}.github/workflows`).flatMap((name) =>
+			[...jobRegions(workflow(name))]
+				.filter(([jobName]) => !(name === "publish.yml" && jobName === "publish"))
+				.flatMap(([, region]) => commands(region))
+				.filter((command) => /\bnpm publish\b/.test(command)),
+		);
+
+		expect(elsewhere).toStrictEqual([]);
+	});
+
+	/** Trusted publishing needs npm 11.5.1 or newer (E-3543). */
+	it("installs an npm that supports trusted publishing before it publishes", () => {
+		const install = publishCommands.findIndex((command) =>
+			command.startsWith("npm install --global npm@"),
+		);
+		const [major = 0, minor = 0, patch = 0] = (
+			/npm@(\d+)\.(\d+)\.(\d+)$/.exec(publishCommands[install] ?? "") ?? []
+		)
+			.slice(1)
+			.map(Number);
+
+		expect(install).toBeGreaterThanOrEqual(0);
+		expect(install).toBeLessThan(
+			publishCommands.findIndex((command) => command.startsWith("npm publish")),
+		);
+		expect(major * 1e6 + minor * 1e3 + patch).toBeGreaterThanOrEqual(11_005_001);
+	});
+
+	it("grants the publish job an OIDC token and write access to contents, and nothing more", () => {
+		expect(jobPermissions(job("publish", publishJobs))).toStrictEqual({
+			"id-token": "write",
+			contents: "write",
+		});
+		expect(publish).toContain("\npermissions:\n  contents: read\n\n");
+	});
+
+	/** The tag is cut where a refusal costs nothing and pushed once the version is on the registry,
+	 * and the registry check reads what the publish made (E-2765, E-3543). */
+	it("cuts the tag before the publish, pushes it after, and then checks the registry", () => {
+		const region = job("publish", publishJobs);
+		const order = [
+			'git tag --annotate "v$VERSION"',
+			"npm publish ",
+			'git push origin "refs/tags/v$VERSION"',
+			'pnpm check:published-version "$DIST_TAG"',
+		].map((text) => region.indexOf(text));
+
+		expect(order.every((position) => position > 0)).toBe(true);
+		expect([...order].sort((a, b) => a - b)).toStrictEqual(order);
 	});
 });

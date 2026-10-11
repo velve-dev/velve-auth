@@ -581,6 +581,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-3450 … E-3479 | outside the waves · `security-state-administration`, second range — administration and migration's build and its reviews. Counted over the rows standing at d9561d9 |
 | E-3480 … E-3509 | outside the waves · `security-state-tokens`, third range — the keyed token hashes' answers to their third and later reviews and the foundation's final round. Counted over the rows standing at 8bdfd1e |
 | E-3510 … E-3539 | outside the waves · `security-state`, seventh range — the specification brought into step with what the branches built. Counted over the rows standing at 8bdfd1e |
+| E-3540 … E-3569 | gate and infrastructure, seventeenth range — publishing from main through trusted publishing, reversing E-2760. Counted over the rows standing at 4be78c6 |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
@@ -671,8 +672,8 @@ pnpm test:nightly
 pnpm test:release
                  vitest run over the release project — the cases section 6 puts
                  before every release; release-tier.yml runs it on every push to
-                 main, and the publish waits for that run on the commit it
-                 publishes
+                 main, and publish.yml runs it on the commit it publishes, before
+                 the publish
 pnpm knip        dead code and unused exports
 pnpm check:session-owner
                  S-FIX-2: no session owner reassigned in SQL.
@@ -725,15 +726,15 @@ pnpm check:release-tag
 pnpm check:release-tier <commit>
                  GitHub's public API has a successful release-tier.yml run on
                  that commit; exit 1 when it has none, exit 2 when it could not
-                 be asked. Run by the maintainer before publishing.
+                 be asked. Run by a person; publish.yml runs the tier itself.
 pnpm run release-dist-tag
                  prints the dist-tag the version in package.json is published
                  under: latest for a stable version, next for a prerelease.
 pnpm check:published-version
                  the registry resolves the version package.json states, the
                  dist-tag points at that version, and latest does not point at
-                 any prerelease. Run by the maintainer after publishing from
-                 their own machine; no workflow publishes.
+                 any prerelease. publish.yml runs it after its publish, on every
+                 push to main that raises the version.
 pnpm publint     package export correctness
 pnpm attw        type resolution across module modes
 pnpm gate        everything above, in the order the main gate runs it

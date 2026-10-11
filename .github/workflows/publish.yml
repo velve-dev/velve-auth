@@ -1,0 +1,138 @@
+name: Publish
+
+# A push to main publishes the version package.json states, unless the registry already has it
+# (E-3540). npm accepts the publish through trusted publishing: it trusts this file, by its name
+# publish.yml, in velve-dev/velve-auth, and takes GitHub's OIDC token as the proof, so no registry
+# credential is stored anywhere. The filename is part of the registration on npmjs.com, so renaming
+# this file stops publishing and nothing in this repository can see that.
+on:
+  push:
+    branches: [main]
+
+# One publish at a time, and none cancelled halfway: a second push waits, and finds its version
+# already on the registry when the first one published it (E-3541).
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Whether there is anything to publish is decided first and cheaply, so a merge that raises no
+  # version runs none of the verification below. `npm view` of a version the registry lacks prints
+  # nothing and exits zero, a package it has never seen answers E404, and any other failure fails
+  # this job rather than reading as absent (E-3541).
+  decide:
+    runs-on: ubuntu-latest
+    outputs:
+      published: ${{ steps.registry.outputs.published }}
+      version: ${{ steps.registry.outputs.version }}
+      dist_tag: ${{ steps.dist_tag.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Ask the registry whether this version is already published
+        id: registry
+        run: |
+          set -uo pipefail
+          NAME=$(node -p "require('./package.json').name")
+          VERSION=$(node -p "require('./package.json').version")
+          if FOUND=$(npm view "$NAME@$VERSION" version 2> npm-view.err); then
+            if [ "$FOUND" = "$VERSION" ]; then PUBLISHED=true
+            elif [ -z "$FOUND" ]; then PUBLISHED=false
+            else echo "::error::the registry answered $FOUND for $VERSION"; exit 1
+            fi
+          elif grep -q E404 npm-view.err; then PUBLISHED=false
+          else cat npm-view.err; echo "::error::the registry could not be asked"; exit 1
+          fi
+          echo "$NAME@$VERSION published: $PUBLISHED"
+          echo "published=$PUBLISHED" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+      # `pnpm run`, because `pnpm dist-tag` runs pnpm's own registry query instead (E-1881).
+      - name: Decide the dist-tag from the version
+        id: dist_tag
+        run: pnpm run release-dist-tag
+
+  # The whole gate and the release tier section 6 puts before every release, on the commit being
+  # published, and the tag about to be cut against the manifest. The gate runs as `pnpm gate`
+  # rather than by calling ci.yml, whose concurrency group a call from here would share with its
+  # own run on the same push, so that one of the two cancelled the other (E-3542).
+  verify:
+    needs: decide
+    if: needs.decide.outputs.published == 'false'
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: velve
+          POSTGRES_USER: velve
+          POSTGRES_DB: velve_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      VELVE_TEST_DATABASE_URL: postgres://velve:velve@localhost:5432/velve_test
+      VERSION: ${{ needs.decide.outputs.version }}
+      DIST_TAG: ${{ needs.decide.outputs.dist_tag }}
+    steps:
+      # The log, skill and attribution checks resolve origin/main and read the history behind it.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm check:release-tag "v$VERSION" "$DIST_TAG"
+      - run: ./tools/start-dex.sh
+      - run: pnpm gate
+      - run: pnpm test:release
+
+  publish:
+    needs: [decide, verify]
+    if: needs.decide.outputs.published == 'false'
+    runs-on: ubuntu-latest
+    # The OIDC token is what npm trusts in place of a credential, and the tag push is the write to
+    # contents. No other job holds either (E-3540).
+    permissions:
+      id-token: write
+      contents: write
+    env:
+      VERSION: ${{ needs.decide.outputs.version }}
+      DIST_TAG: ${{ needs.decide.outputs.dist_tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      # Trusted publishing needs npm 11.5.1 or newer, and nothing here pins the npm the Node image
+      # bundles, so the publish runs an npm installed by its exact version (E-3543).
+      - run: npm install --global npm@11.20.0
+      - run: npm --version
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # The tag is cut before the publish, where a refusal still costs nothing, and pushed after it,
+      # so a tag on the remote always names a version that is on the registry (E-2765, E-3543).
+      - name: Cut the annotated tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --annotate "v$VERSION" --message "v$VERSION"
+      - run: npm publish --provenance --access public --tag "$DIST_TAG"
+      - run: git push origin "refs/tags/v$VERSION"
+      - run: pnpm check:published-version "$DIST_TAG"
