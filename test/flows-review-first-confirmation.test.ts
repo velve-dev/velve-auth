@@ -181,6 +181,7 @@ describe("S-LINK-4: the column the rule is decided on", () => {
 			`UPDATE ${mounted.schema}.password_credential SET set_by_session_id = NULL WHERE user_id = $1`,
 			[userId],
 		);
+		await mounted.reseal(userId);
 
 		await post(
 			"/email/redeem-verification",
@@ -203,6 +204,7 @@ describe("S-LINK-4: the column the rule is decided on", () => {
 			`UPDATE ${mounted.schema}.password_credential SET set_by_session_id = NULL WHERE user_id = $1`,
 			[userId],
 		);
+		await mounted.reseal(userId);
 		await post("/sign-in/magic-link/request", { email: VICTIM });
 
 		await post("/sign-in/magic-link/redeem", { token: tokenOf(await lastMessage("magic_link")) });
@@ -218,6 +220,7 @@ describe("S-LINK-4: the column the rule is decided on", () => {
 			`UPDATE ${mounted.schema}.password_credential SET set_by_session_id = gen_random_uuid() WHERE user_id = $1`,
 			[userId],
 		);
+		await mounted.reseal(userId);
 
 		await post("/email/redeem-verification", { token: confirmation }, cookieIn(registration));
 
@@ -284,6 +287,7 @@ describe("S-LINK-4: a change redemption is a first confirmation too", () => {
 			`UPDATE ${mounted.schema}.password_credential SET set_by_session_id = gen_random_uuid() WHERE user_id = $1`,
 			[userId],
 		);
+		await mounted.reseal(userId);
 
 		const answer = await post("/email/redeem-change", { token: change });
 

@@ -7,6 +7,8 @@ import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import { mountWidest, signUpOn, type WidestMount } from "./widest-mount-fixtures.js";
 
+const TOKEN_KEYS = testKeyProvider();
+
 /**
  * 3.15 B.2, B.3 and B.7 name three methods the instance did not carry: the two `resolveFromHeaders`
  * and `user.findByUsername`. B.3 also names `findByEmail` for the two modes with an address only;
@@ -21,7 +23,7 @@ let sessionCookie: string;
 let userId: string;
 
 beforeAll(async () => {
-	widest = await mountWidest("lookups");
+	widest = await mountWidest("lookups", { keys: TOKEN_KEYS });
 	({ sessionCookie, userId } = await signUpOn(widest));
 }, 120_000);
 
@@ -99,6 +101,7 @@ describe("session.resolveFromHeaders (3.15 B.2)", () => {
 describe("pending.resolveFromHeaders (3.15 B.7)", () => {
 	it("answers the intermediate state the pending cookie names, and null without one", async () => {
 		const pending = createPendingAuthenticationService({
+			keys: TOKEN_KEYS,
 			driver: widest.connection,
 			schema: widest.schema,
 		});

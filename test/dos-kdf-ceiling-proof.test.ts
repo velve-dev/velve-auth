@@ -75,6 +75,7 @@ const { postTo } = await import("./flows-fixtures.js");
 const { kdfAccounting } = await import("./kdf-accounting-fixtures.js");
 const { generateRootKey } = await import("./keys-fixtures.js");
 const { drawTestPassword } = await import("./password-fixtures.js");
+const { resealDirectly } = await import("./security-state-fixtures.js");
 
 type Migrated = Awaited<ReturnType<typeof openMigratedSchema>>;
 type Pool = Awaited<ReturnType<typeof openConnectionPool>>;
@@ -107,7 +108,6 @@ const storedAboveTheStartBound: string[] = [];
 
 //the rows are written in SQL as an import would since the repository refuses one above the ceiling (E-2616)
 async function seedAccounts(prefix: string, phc: string): Promise<string[]> {
-	const sealed = await sealPhc(keys, phc);
 	const emails: string[] = [];
 	for (let index = 0; index < ACCOUNTS; index += 1) {
 		const email = `${prefix}${index}@ceiling.example`;
@@ -115,11 +115,14 @@ async function seedAccounts(prefix: string, phc: string): Promise<string[]> {
 			`INSERT INTO ${migrated.schema}.user (email) VALUES ($1) RETURNING id`,
 			[email],
 		);
+		const userId = (row as { id: string }).id;
+		const sealed = await sealPhc(keys, userId, phc);
 		await migrated.connection.query(
 			`INSERT INTO ${migrated.schema}.password_credential (user_id, phc, key_version, scheme)
 			 VALUES ($1, $2, $3, 'argon2id')`,
-			[(row as { id: string }).id, sealed.ciphertext, sealed.keyVersion],
+			[userId, sealed.ciphertext, sealed.keyVersion],
 		);
+		await resealDirectly(migrated.connection, migrated.schema, keys, userId);
 		emails.push(email);
 	}
 	return emails;
@@ -298,7 +301,10 @@ describe("T-DOS-3 — the semaphore bounds the derivations running at once (S-DO
 	it("keeps an imported derivation within the import ceiling and the wave within min(4, cpus) times max(m, 64 MiB)", async () => {
 		const statuses = await signInWave(importedAtTheCap, SIMULTANEOUS_SIGN_INS);
 
-		expect(statuses.filter((status) => status !== 200 && status !== 429)).toStrictEqual([]);
+		//a sign-in that loses the race against its account's first rehash ends without a session (E-3377)
+		expect(
+			statuses.filter((status) => status !== 200 && status !== 429 && status !== 401),
+		).toStrictEqual([]);
 		expect(statuses.filter((status) => status === 200).length).toBeGreaterThan(ceiling);
 		expect(
 			Math.max(...kdfAccounting.memoryRequestsKiB),

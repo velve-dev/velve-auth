@@ -13,13 +13,53 @@ const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
  * would close is with every redemption in the library, and it passes `check:lock-order`, the cycle
  * analyser and every case in the tree.
  */
-const TAKES_THE_ACCOUNT_ROW = /\block(?:AccountRow|AccountRowStatement)\s*\(/g;
+const LOCKS = ["lockAccountRow", "lockAccountRowStatement"];
 
-/** The table, and the two repository methods that are the only code reaching it. */
-const REACHES_THE_TOKEN_TABLE = /\bone_time_token\b|\b(?:replace|consume)OneTimeToken\s*\(/g;
+/** Creating the account row takes it as surely as locking it, so sign-up counts as taking it. */
+const CREATES_THE_ACCOUNT_ROW = String.raw`\bINSERT\s+INTO\s+\S*\buser\b|\.createUser\s*\(`;
+
+/** The two repository methods and the flows' mint helper that writes through the table. */
+const TOKEN_HELPERS = ["replaceOneTimeToken", "consumeOneTimeToken", "mintArtefact"];
 
 /** An import names a symbol without calling it, and every import precedes every call. */
 const IMPORT_STATEMENT = /^\s*import\s[\s\S]*?from\s*["'][^"']*["'];?\s*$/gm;
+
+/** `import { mintArtefact as mint }` calls the helper as `mint(`, which the plain names miss. */
+const RENAMED_IMPORT = /\b([A-Za-z_$][\w$]*)\s+as\s+([A-Za-z_$][\w$]*)/g;
+
+function localNamesOf(code, names) {
+	const local = new Map(names.map((name) => [name, name]));
+	for (const statement of code.match(IMPORT_STATEMENT) ?? []) {
+		for (const [, imported, alias] of statement.matchAll(RENAMED_IMPORT)) {
+			if (names.includes(imported)) {
+				local.set(alias, imported);
+			}
+		}
+	}
+	return local;
+}
+
+function callOf(localNames) {
+	return new RegExp(`\\b(${[...localNames.keys()].join("|")})\\s*\\(`, "g");
+}
+
+function patternsFor(source, allowedCalls = []) {
+	const code = withoutComments(source);
+	const locks = localNamesOf(code, LOCKS);
+	const helpers = localNamesOf(code, TOKEN_HELPERS);
+	return {
+		code: allowedCalls.reduce(
+			(remaining, call) => remaining.replaceAll(call, ""),
+			code.replaceAll(IMPORT_STATEMENT, ""),
+		),
+		takesTheAccountRow: new RegExp(`${callOf(locks).source}|${CREATES_THE_ACCOUNT_ROW}`, "g"),
+		helpers,
+		reachesTheTokenTable: new RegExp(
+			`\\bone_time_token\\b|\\b(${[...helpers.keys()].join("|")})\\s*\\(`,
+			"g",
+		),
+	};
+}
 
 /** The table is created here, and a migration takes no account lock. */
 const MIGRATIONS = /^src\/core\/db\/migrations\//;
@@ -41,30 +81,46 @@ function sourceFiles() {
 		.filter((path) => !MIGRATIONS.test(path));
 }
 
+/** Sign-up is the one transaction that mints after reaching the account, and only for the
+ * address-verification token: nothing else can see or lock the row it creates before it commits. */
+export const SIGN_UP_MINT_ALLOWANCE = {
+	path: "src/core/flows/sign-up.ts",
+	call: /mintArtefact\s*\(\s*transaction,\s*[\w.]+,\s*\{\s*purpose:\s*"email_verify"/g,
+};
+
 /** Comments are stripped so that prose about the ordering — `lock.ts` carries the rule itself — is
  * not read as code, and imports so that naming a symbol is not reaching for it. */
-export function tokenReachedAfterAccountLock(source) {
-	const code = withoutComments(source).replaceAll(IMPORT_STATEMENT, "");
-	const locks = [...code.matchAll(TAKES_THE_ACCOUNT_ROW)].map((match) => match.index ?? 0);
+export function tokenReachedAfterAccountLock(source, allowedCalls = []) {
+	const { code, takesTheAccountRow, helpers, reachesTheTokenTable } = patternsFor(
+		source,
+		allowedCalls,
+	);
+	const locks = [...code.matchAll(takesTheAccountRow)].map((match) => match.index ?? 0);
 	if (locks.length === 0) {
 		return [];
 	}
 	const firstLock = Math.min(...locks);
-	return [...code.matchAll(REACHES_THE_TOKEN_TABLE)]
+	return [...code.matchAll(reachesTheTokenTable)]
 		.filter((match) => (match.index ?? 0) > firstLock)
-		.map((match) => String(match[0]).replace(/\s*\($/, ""));
+		.map((match) => {
+			const reached = String(match[0]).replace(/\s*\($/, "");
+			return helpers.get(reached) ?? reached;
+		});
 }
 
-export function scanTokenAfterLock() {
+export function scanTokenAfterLock(allowance = SIGN_UP_MINT_ALLOWANCE) {
 	const offenders = [];
 	let filesScanned = 0;
 	let locksScanned = 0;
 	for (const path of sourceFiles()) {
 		filesScanned += 1;
 		const source = readFileSync(`${repositoryRoot}/${path}`, "utf8");
-		const code = withoutComments(source).replaceAll(IMPORT_STATEMENT, "");
-		locksScanned += [...code.matchAll(TAKES_THE_ACCOUNT_ROW)].length;
-		for (const reached of tokenReachedAfterAccountLock(source)) {
+		const { code, takesTheAccountRow } = patternsFor(source);
+		locksScanned += [...code.matchAll(takesTheAccountRow)].length;
+		for (const reached of tokenReachedAfterAccountLock(
+			source,
+			path === allowance?.path ? [allowance.call] : [],
+		)) {
 			offenders.push(`${path}: reaches ${reached} after taking the account row`);
 		}
 	}

@@ -12,6 +12,7 @@ import { toVisibleFailure } from "../src/core/http/error-map.js";
 import { createTestClock, type TestClock } from "../src/testing/index.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { testSecurityState } from "./security-state-fixtures.js";
 import {
 	beginPendingState,
 	pendingAuthenticationsOn,
@@ -69,6 +70,7 @@ beforeAll(async () => {
 	clock = createTestClock(FIXED_INSTANT);
 	pending = pendingAuthenticationsOn(connection, schema);
 	totp = createTotpService({
+		securityState: testSecurityState(connection, schema, testKeyProvider()),
 		driver: connection,
 		schema,
 		keys: testKeyProvider(),
@@ -185,7 +187,7 @@ describe("T-REPLAY-4: one code per user and time step (S-REPLAY-4)", () => {
 			code: totpCodeForStep(account.secretBytes, timeStepAt(clock.now())),
 		});
 
-		expect(resolution.userId).toBe(account.userId);
+		expect(resolution.resolution.userId).toBe(account.userId);
 		expect(await pending.resolve(token)).not.toBeNull();
 	});
 });

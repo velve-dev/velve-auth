@@ -15,6 +15,7 @@ import { createTestClock } from "../src/testing/index.js";
 import { configFor } from "./auth-fixtures.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { resealDirectly, testSecurityState } from "./security-state-fixtures.js";
 import {
 	beginPendingState,
 	enrolConfirmedCredential,
@@ -42,6 +43,7 @@ afterAll(async () => {
 
 function recoveryOn(keys: KeyProvider) {
 	return createRecoveryCodeService({
+		securityState: testSecurityState(connection, schema, keys),
 		driver: connection,
 		schema,
 		keys,
@@ -115,6 +117,7 @@ describe("a second-factor key version that has left the ring is a start error", 
 		const account = await accountWithBothFactorsUnderVersionOne();
 		const pending = pendingAuthenticationsOn(connection, schema);
 		const totp = createTotpService({
+			securityState: testSecurityState(connection, schema, withoutVersionOne),
 			driver: connection,
 			schema,
 			keys: withoutVersionOne,
@@ -179,8 +182,11 @@ describe("a second-factor key version that has left the ring is a start error", 
 	 */
 	it("leaves the user unable to remove the factor they can no longer pass", async () => {
 		const account = await accountWithBothFactorsUnderVersionOne();
+		//the seal follows the ring and only the factor stays under the dropped version (E-3165)
+		await resealDirectly(connection, schema, withoutVersionOne, account.userId);
 		const clock = createTestClock();
 		const totp = createTotpService({
+			securityState: testSecurityState(connection, schema, withoutVersionOne),
 			driver: connection,
 			schema,
 			keys: withoutVersionOne,

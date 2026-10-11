@@ -64,14 +64,16 @@ async function createEveryArtefactThisBranchCanCreate(userId: string): Promise<v
 	}
 	plaintexts.push({ name: "password hash (PHC)", value: await openPhc(keys, stored) });
 
-	const pending = createPendingAuthenticationService({ driver: connection, schema });
+	const pending = createPendingAuthenticationService({ keys: keys, driver: connection, schema });
 	const issued = await pending.begin({
 		userId,
 		factorsCompleted: ["password"],
 	});
 	plaintexts.push({ name: "pending token", value: issued.token });
 
-	const tokens = createOneTimeTokens(createOneTimeTokenRepository({ driver: connection, schema }));
+	const tokens = createOneTimeTokens(createOneTimeTokenRepository({ driver: connection, schema }), {
+		keys: keys,
+	});
 	for (const purpose of ONE_TIME_TOKEN_PURPOSES) {
 		const oneTime = await tokens.issue({ purpose, userId });
 		plaintexts.push({ name: `one-time token (${purpose})`, value: oneTime.token });
@@ -79,8 +81,9 @@ async function createEveryArtefactThisBranchCanCreate(userId: string): Promise<v
 
 	const sessionToken = encodeBase64Url(randomBytes(32));
 	await connection.query(
-		`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at)
-		 VALUES ($1, sha256($2::bytea), now() + interval '7 days', now() + interval '30 days')`,
+		`INSERT INTO ${schema}.session
+		   (user_id, token_sha256, idle_expires_at, absolute_expires_at, token_mac, token_mac_key_version)
+		 VALUES ($1, sha256($2::bytea), now() + interval '7 days', now() + interval '30 days', decode(repeat('ab', 32), 'hex'), 1)`,
 		[userId, Buffer.from(sessionToken, "utf8")],
 	);
 	plaintexts.push({ name: "session token", value: sessionToken });

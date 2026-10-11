@@ -10,11 +10,12 @@ import {
 	timeStepAt,
 	totpCodeForStep,
 } from "../src/core/factor/totp/index.js";
-import { decryptWithPurposeKey } from "../src/core/keys/envelope.js";
+import { decryptBound, type EnvelopeBinding } from "../src/core/keys/envelope-binding.js";
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { createTestClock, type TestClock } from "../src/testing/index.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { testSecurityState } from "./security-state-fixtures.js";
 import {
 	countRows,
 	pendingAuthenticationsOn,
@@ -52,6 +53,7 @@ beforeAll(async () => {
 	clock = createTestClock(FIXED_INSTANT);
 	keys = testKeyProvider();
 	totp = createTotpService({
+		securityState: testSecurityState(connection, schema, keys),
 		driver: connection,
 		schema,
 		keys,
@@ -129,6 +131,10 @@ describe("enrolment writes an unconfirmed row and the code confirms it (3.15 B.6
 	});
 });
 
+function secretBindingOf(userId: string): EnvelopeBinding {
+	return { column: "totp_credential.secret_enc", owner: userId, row: userId };
+}
+
 describe("T-REST-4 and T-KEY-3, for the one column wave 3 can reach", () => {
 	it("stores the secret as AES-256-GCM under totp-enc with its version in the column (S-REST-4, S-KEY-3)", async () => {
 		const userId = await createUser(connection, schema);
@@ -143,11 +149,11 @@ describe("T-REST-4 and T-KEY-3, for the one column wave 3 can reach", () => {
 		const current = await keys.current("totp-enc");
 		expect(stored.key_version).toBe(current.version);
 
-		const plaintext = await decryptWithPurposeKey(
+		const plaintext = await decryptBound(
 			keys,
-			"totp-enc",
-			stored.key_version,
-			Uint8Array.from(stored.secret_enc),
+			secretBindingOf(userId),
+			{ keyVersion: stored.key_version, ciphertext: Uint8Array.from(stored.secret_enc) },
+			"refused",
 		);
 		expect(Buffer.from(plaintext).toString("base64")).toBe(
 			Buffer.from(secretBytesOfBase32(enrollment.secretBase32)).toString("base64"),
@@ -175,6 +181,7 @@ describe("T-REST-4 and T-KEY-3, for the one column wave 3 can reach", () => {
 		const ring = testKeyRing(2);
 		const userId = await createUser(connection, schema);
 		const underVersionOne = createTotpService({
+			securityState: testSecurityState(connection, schema, ring.providerAt(1, [1])),
 			driver: connection,
 			schema,
 			keys: ring.providerAt(1, [1]),
@@ -194,11 +201,11 @@ describe("T-REST-4 and T-KEY-3, for the one column wave 3 can reach", () => {
 		expect(stored.key_version).toBe(1);
 
 		await expect(
-			decryptWithPurposeKey(
+			decryptBound(
 				ring.providerAt(2, [2]),
-				"totp-enc",
-				stored.key_version,
-				Uint8Array.from(stored.secret_enc),
+				secretBindingOf(userId),
+				{ keyVersion: stored.key_version, ciphertext: Uint8Array.from(stored.secret_enc) },
+				"refused",
 			),
 		).rejects.toMatchObject({ code: "key_version_unknown" });
 	});
@@ -216,11 +223,11 @@ describe("T-REST-4 and T-KEY-3, for the one column wave 3 can reach", () => {
 		}
 
 		await expect(
-			decryptWithPurposeKey(
+			decryptBound(
 				testKeyProvider(),
-				"totp-enc",
-				stored.key_version,
-				Uint8Array.from(stored.secret_enc),
+				secretBindingOf(userId),
+				{ keyVersion: stored.key_version, ciphertext: Uint8Array.from(stored.secret_enc) },
+				"refused",
 			),
 		).rejects.toMatchObject({ code: "authentication_failed" });
 	});

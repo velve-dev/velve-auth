@@ -2,14 +2,12 @@ import { describe, expect, it } from "vitest";
 import { AUTHENTICATION_TAG_BYTES, NONCE_BYTES } from "../src/core/keys/aes-gcm.js";
 import {
 	decryptWithPurposeKey,
-	type EncryptionKeyPurpose,
 	encryptWithPurposeKey,
-	KeyError,
 	openEnvelope,
 	type PurposeCiphertext,
-	rootKeyProvider,
 	sealEnvelope,
-} from "../src/core/keys/index.js";
+} from "../src/core/keys/envelope.js";
+import { type EncryptionKeyPurpose, KeyError, rootKeyProvider } from "../src/core/keys/index.js";
 import { randomBytes } from "../src/core/token/index.js";
 import { asEncryptionPurpose, generateRootKey, withLastBitFlipped } from "./keys-fixtures.js";
 

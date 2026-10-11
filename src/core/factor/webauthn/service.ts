@@ -14,10 +14,22 @@ import {
 } from "@simplewebauthn/server";
 import type { Actor } from "../../db/actor.js";
 import type { Driver } from "../../db/driver.js";
+import type { IssueAuthorisation } from "../../db/repositories/session.js";
 import { isRowIdentifier } from "../../db/row-identifier.js";
-import { ConcealedError, VelveError } from "../../http/error-map.js";
+import { ConcealedError, type ConcealedReason, VelveError } from "../../http/error-map.js";
 import { removeSignInMethod } from "../../identity/sign-in-methods.js";
 import { decodeBase64Url, encodeBase64Url } from "../../keys/base64url.js";
+import { equalsInConstantTime } from "../../keys/constant-time.js";
+import type { KeyProvider } from "../../keys/provider.js";
+import { assertBelowCredentialLimit } from "../../security-state/limits.js";
+import { type SecurityStateRead, sealedComponentsOf } from "../../security-state/read.js";
+import {
+	checkAccount,
+	type SecurityStateRuntime,
+	sealChange,
+} from "../../security-state/runtime.js";
+import { componentsAfter } from "../../security-state/sealing.js";
+import type { TokenBindingRefusalReport } from "../../token/binding.js";
 import type { PendingResolution } from "../pending/index.js";
 import {
 	createWebAuthnChallenges,
@@ -57,6 +69,8 @@ export interface VerifiedWebAuthnAssertion {
 	readonly credential: WebAuthnCredential;
 	/** reported and never a rejection, as a synchronised passkey does not keep the counter */
 	readonly signCountRegressed: boolean;
+	/** the seal the check before the assertion read, which the session it leads to is bound to */
+	readonly authorisedBy: IssueAuthorisation;
 }
 
 export interface WebAuthnService {
@@ -102,7 +116,25 @@ export interface WebAuthnService {
 export interface WebAuthnServiceOptions {
 	readonly driver: Driver;
 	readonly schema?: string;
+	readonly keys: KeyProvider;
+	readonly reportTokenBindingRefusal?: TokenBindingRefusalReport;
 	readonly webauthn: WebAuthnConfig;
+	/** the seal a registration reseals and every assertion checks first */
+	readonly securityState: SecurityStateRuntime;
+}
+
+//the passkey an assertion is verified against must be one of the passkeys the seal covers (S-INTEG-4)
+function passkeyOfTheRead(
+	read: SecurityStateRead,
+	stored: StoredWebAuthnCredential,
+): StoredWebAuthnCredential | null {
+	const sealed = read.passkeys.find(
+		(passkey) =>
+			passkey.id === stored.id &&
+			equalsInConstantTime(passkey.credentialId, stored.credentialId) &&
+			equalsInConstantTime(passkey.publicKey, stored.publicKey),
+	);
+	return sealed === undefined ? null : { ...stored, publicKey: sealed.publicKey };
 }
 
 const DEFAULT_SCHEMA = "velve";
@@ -166,6 +198,10 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 	const challenges: WebAuthnChallenges = createWebAuthnChallenges({
 		driver: options.driver,
 		schema,
+		keys: options.keys,
+		...(options.reportTokenBindingRefusal === undefined
+			? {}
+			: { reportTokenBindingRefusal: options.reportTokenBindingRefusal }),
 	});
 	const credentials: WebAuthnCredentialRepository = createWebAuthnCredentialRepository({
 		driver: options.driver,
@@ -209,11 +245,36 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 		return enrolled.map(descriptorOf);
 	}
 
+	//an assertion checks the seal first and is verified against the passkey of that read (S-INTEG-4)
+	async function verifyCheckedAssertion(input: {
+		challengeToken: string;
+		response: AuthenticationResponseJSON;
+		stored: StoredWebAuthnCredential;
+		occasion: "sign_in" | "factor_check";
+		refusal: ConcealedReason;
+	}): Promise<VerifiedWebAuthnAssertion> {
+		const check = await checkAccount(options.securityState, input.stored.userId, input.occasion);
+		if (check.kind !== "usable") {
+			throw new ConcealedError(input.refusal);
+		}
+		const sealed = passkeyOfTheRead(check.read, input.stored);
+		if (sealed === null) {
+			options.securityState.alarms.raise({
+				userId: input.stored.userId,
+				occasion: input.occasion,
+				reason: "seal_mismatch",
+			});
+			throw new ConcealedError(input.refusal);
+		}
+		const verified = await verifyAssertion({ ...input, stored: sealed });
+		return { ...verified, authorisedBy: check.authorisedBy };
+	}
+
 	async function verifyAssertion(input: {
 		challengeToken: string;
 		response: AuthenticationResponseJSON;
 		stored: StoredWebAuthnCredential;
-	}): Promise<VerifiedWebAuthnAssertion> {
+	}): Promise<Omit<VerifiedWebAuthnAssertion, "authorisedBy">> {
 		assertOriginIsExpected(input.response.response.clientDataJSON, settings.origins);
 		assertRelyingPartyIsExpected(
 			input.response.response.authenticatorData,
@@ -310,26 +371,41 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 
 				const { credential, aaguid, userVerified, credentialBackedUp, credentialDeviceType } =
 					verification.registrationInfo;
-				const stored = await credentials
-					.insertCredential({
-						actor,
-						credentialId: credentialIdBytes(credential.id),
-						publicKey: credential.publicKey,
-						signCount: credential.counter,
-						transports: transportsSentWith(response),
-						aaguid: aaguidOf(aaguid),
-						isBackupEligible: credentialDeviceType === "multiDevice",
-						isCurrentlyBackedUp: credentialBackedUp,
-						wasUserVerifiedAtRegistration: userVerified,
-						label,
-					})
-					.catch((cause: unknown) => {
-						if (cause instanceof DuplicateWebAuthnCredentialError) {
-							throw new VelveError("webauthn_credential_rejected");
-						}
-						throw cause;
-					});
-				return { credential: stored };
+				const credentialId = credentialIdBytes(credential.id);
+				//a registration counts the passkeys of the read under the lock and reseals with the new one (S-INTEG-10)
+				const sealed = await sealChange(options.securityState, actor, {
+					epoch: "keep",
+					write: (tx, read) => {
+						assertBelowCredentialLimit(read, "passkey", options.securityState.limits);
+						return createWebAuthnCredentialRepository({ driver: tx, schema })
+							.insertCredential({
+								actor,
+								credentialId,
+								publicKey: credential.publicKey,
+								signCount: credential.counter,
+								transports: transportsSentWith(response),
+								aaguid: aaguidOf(aaguid),
+								isBackupEligible: credentialDeviceType === "multiDevice",
+								isCurrentlyBackedUp: credentialBackedUp,
+								wasUserVerifiedAtRegistration: userVerified,
+								label,
+							})
+							.catch((cause: unknown) => {
+								if (cause instanceof DuplicateWebAuthnCredentialError) {
+									throw new VelveError("webauthn_credential_rejected");
+								}
+								throw cause;
+							});
+					},
+					after: (read) => {
+						const components = sealedComponentsOf(read);
+						return {
+							...components,
+							passkeys: [...components.passkeys, { credentialId, publicKey: credential.publicKey }],
+						};
+					},
+				});
+				return { credential: sealed.written };
 			},
 		},
 
@@ -351,7 +427,13 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 				if (stored === null) {
 					throw new ConcealedError("credential_unknown");
 				}
-				return verifyAssertion({ challengeToken, response, stored });
+				return verifyCheckedAssertion({
+					challengeToken,
+					response,
+					stored,
+					occasion: "factor_check",
+					refusal: "broken_state_on_passkey_second_factor",
+				});
 			},
 		},
 
@@ -371,7 +453,13 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 				if (stored === null) {
 					throw new ConcealedError("credential_unknown");
 				}
-				return verifyAssertion({ challengeToken, response, stored });
+				return verifyCheckedAssertion({
+					challengeToken,
+					response,
+					stored,
+					occasion: "sign_in",
+					refusal: "broken_state_on_passkey_sign_in",
+				});
 			},
 		},
 
@@ -391,11 +479,19 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 
 		async remove({ actor, credentialId }) {
 			//deletion goes through the one path that counts what is left first (E-460)
-			await removeSignInMethod({
-				driver: options.driver,
-				schema,
-				actor,
-				removing: { method: "webauthn_credential", credentialId },
+			await sealChange(options.securityState, actor, {
+				epoch: "keep",
+				write: (tx) =>
+					removeSignInMethod({
+						driver: tx,
+						schema,
+						actor,
+						removing: { method: "webauthn_credential", credentialId },
+					}),
+				after: (read) =>
+					componentsAfter(read, {
+						passkeys: read.passkeys.filter((passkey) => passkey.id !== credentialId),
+					}),
 			});
 		},
 	};

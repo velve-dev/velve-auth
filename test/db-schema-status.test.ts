@@ -18,8 +18,11 @@ function freshSchema(prefix: string): string {
 	return schema;
 }
 
+const SHIPPED_VERSIONS = coreMigrations("email").map((migration) => migration.version);
+const LATEST_SHIPPED_VERSION = Math.max(...SHIPPED_VERSIONS);
+
 const laterMigration: Migration = {
-	version: 3,
+	version: LATEST_SHIPPED_VERSION + 1,
 	name: "later_step",
 	sql: "CREATE TABLE velve.later_step (id uuid PRIMARY KEY DEFAULT gen_random_uuid());",
 };
@@ -47,9 +50,9 @@ describe("the status query (F35, F37)", () => {
 
 		expect(status).toMatchObject({
 			currentVersion: 0,
-			expectedVersion: 2,
+			expectedVersion: LATEST_SHIPPED_VERSION,
 			appliedVersions: [],
-			pendingVersions: [1, 2],
+			pendingVersions: SHIPPED_VERSIONS,
 			upToDate: false,
 		});
 		const created = await connection.query(
@@ -67,8 +70,8 @@ describe("the status query (F35, F37)", () => {
 		const status = await readSchemaStatus({ driver: connection, schema, migrations });
 
 		expect(status).toMatchObject({
-			currentVersion: 2,
-			expectedVersion: 2,
+			currentVersion: LATEST_SHIPPED_VERSION,
+			expectedVersion: LATEST_SHIPPED_VERSION,
 			pendingVersions: [],
 			changedVersions: [],
 			upToDate: true,
@@ -85,9 +88,9 @@ describe("the status query (F35, F37)", () => {
 			migrations: [...coreMigrations("email"), laterMigration],
 		});
 
-		expect(status.currentVersion).toBe(2);
-		expect(status.expectedVersion).toBe(3);
-		expect(status.pendingVersions).toEqual([3]);
+		expect(status.currentVersion).toBe(LATEST_SHIPPED_VERSION);
+		expect(status.expectedVersion).toBe(laterMigration.version);
+		expect(status.pendingVersions).toEqual([laterMigration.version]);
 	});
 
 	it("names a migration that was applied with different SQL", async () => {

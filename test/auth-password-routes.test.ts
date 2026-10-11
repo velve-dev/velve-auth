@@ -18,6 +18,8 @@ import { actorOfTestUser, dropSchema, openMigratedSchema } from "./db-fixtures.j
 import type { TestConnection } from "./db-postgres-connection.js";
 import { difference, normalisedAnswer, postTo } from "./flows-fixtures.js";
 import { storedHashesFor } from "./password-fixtures.js";
+import { resealDirectly } from "./security-state-fixtures.js";
+import { rebindSessionsOf } from "./session-fixtures.js";
 
 type Handler = (request: Request) => Promise<Response>;
 
@@ -26,10 +28,14 @@ let mounted: MountedAuth;
 const PASSWORD = "correct-horse-battery-staple";
 const OTHER_PASSWORD = "a-different-password-entirely";
 
+//the sessions an aged test rebinds must be bound under the key the instance checks them with
+const ROUTE_KEYS = testKeyProvider();
+
 beforeAll(async () => {
 	// The buckets are not the subject of this file, and a shared per-route bucket refuses the
 	// eleventh sign-up before any of it runs; the one test that is about them mounts its own.
 	mounted = await mountAuth("passwordroutes", {
+		keys: ROUTE_KEYS,
 		rateLimit: {
 			perIpAddress: { capacity: 100_000, refillPerSecond: 100_000 },
 			perAccount: { capacity: 100_000, refillPerSecond: 100_000 },
@@ -118,6 +124,7 @@ async function ageBeyondFreshness(userId: string): Promise<void> {
 		 WHERE user_id = $1`,
 		[userId],
 	);
+	await rebindSessionsOf(mounted.connection, mounted.schema, ROUTE_KEYS, { userId });
 }
 
 async function enrolATotpFactor(userId: string): Promise<void> {
@@ -128,6 +135,7 @@ async function enrolATotpFactor(userId: string): Promise<void> {
 		 VALUES ($1, $2, 1, now())`,
 		[userId, Buffer.from("a stand-in for an encrypted secret")],
 	);
+	await mounted.reseal(userId);
 }
 
 /**
@@ -661,6 +669,7 @@ describe("every refusal of the real sign-in answers alike (S-ENUM-1)", () => {
 			scheme: "bcrypt",
 			setBySessionId: null,
 		});
+		await resealDirectly(connection, schema, keys, legacy);
 	});
 
 	afterAll(async () => {

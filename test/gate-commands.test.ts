@@ -6,28 +6,33 @@ const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const rules = readFileSync(`${repositoryRoot}/CLAUDE.md`, "utf8");
 const workflow = readFileSync(`${repositoryRoot}/.github/workflows/ci.yml`, "utf8");
 const release = readFileSync(`${repositoryRoot}/.github/workflows/release.yml`, "utf8");
+const publish = readFileSync(`${repositoryRoot}/.github/workflows/publish.yml`, "utf8");
 const manifest = JSON.parse(readFileSync(`${repositoryRoot}/package.json`, "utf8")) as {
 	scripts: Record<string, string>;
 };
 
-/** §9 is the command reference, so it names commands the gate does not run. Four are run by a
- * person and by no workflow — the formatter, the gate itself, the registry check, which can only
- * run once the maintainer has published from their own machine (E-2760), and the release tier
- * check, which asks GitHub about the commit the maintainer is about to publish (E-2763). Four are run by
- * release.yml: the two tiers section 6 puts on a schedule rather than on a commit (E-526, E-535),
- * the tag check §9 documents and §5's checklist deliberately does not, because it refuses a branch
- * carrying no tag (E-1461), and the derivation that decides which dist-tag a release is published
- * under (E-1777). §5 leaves the registry check out for the same reason, since a version nobody has
- * published has nothing to resolve.
+/** §9 is the command reference, so it names commands the gate does not run. Two are run by a
+ * person and by no workflow — the formatter and the release tier check, which asks GitHub about a
+ * commit (E-2763). Two are run by publish.yml: the gate itself, over the commit it publishes, and
+ * the registry check after its publish (E-3540, E-3542). Four are run by release.yml: the two tiers
+ * section 6 puts on a schedule rather than on a commit (E-526, E-535), the tag check §9 documents
+ * and §5's checklist deliberately does not, because it refuses a branch carrying no tag (E-1461),
+ * and the derivation that decides which dist-tag a release is published under (E-1777). §5 leaves
+ * the registry check out because a version nobody has published has nothing to resolve.
  * Anything else appearing in §9 without appearing in the gate script is drift. */
-const RUN_BY_A_PERSON = ["format", "gate", "check:published-version", "check:release-tier"];
+const RUN_BY_A_PERSON = ["format", "check:release-tier"];
+const RUN_BY_THE_PUBLISH_WORKFLOW = ["gate", "check:published-version"];
 const RUN_BY_THE_RELEASE_WORKFLOW = [
 	"test:nightly",
 	"test:release",
 	"check:release-tag",
 	"release-dist-tag",
 ];
-const NOT_RUN_BY_THE_GATE = [...RUN_BY_A_PERSON, ...RUN_BY_THE_RELEASE_WORKFLOW];
+const NOT_RUN_BY_THE_GATE = [
+	...RUN_BY_A_PERSON,
+	...RUN_BY_THE_PUBLISH_WORKFLOW,
+	...RUN_BY_THE_RELEASE_WORKFLOW,
+];
 
 /** The one pnpm invocation in the workflow that is not a gate step. */
 const CI_SETUP = ["install"];
@@ -154,6 +159,12 @@ describe("the gate's command lists", () => {
 		expect(RUN_BY_THE_RELEASE_WORKFLOW.filter((name) => !invoked.includes(name))).toEqual([]);
 	});
 
+	it("runs in publish.yml every command exempted on the grounds that the publish runs it", () => {
+		const invoked = [...publish.matchAll(WORKFLOW_STEP)].map((match) => String(match[1]));
+
+		expect(RUN_BY_THE_PUBLISH_WORKFLOW.filter((name) => !invoked.includes(name))).toEqual([]);
+	});
+
 	// The gate list and CI are two statements of the same set, and CI is the one that blocks a
 	// merge. A step present in the script and absent from the workflow runs for nobody but the
 	// author, and a step in the workflow that the script does not run blocks nobody locally.
@@ -201,9 +212,11 @@ describe("the gate's command lists", () => {
 	// no workflow runs them is, and it is the claim that would be false if one were automated
 	// and left in this half. What it does not establish is that anybody runs them at all.
 	it("runs in no workflow the commands exempted on the grounds that a person runs them", () => {
-		const automated = [...workflow.matchAll(WORKFLOW_STEP), ...release.matchAll(WORKFLOW_STEP)].map(
-			(match) => String(match[1]),
-		);
+		const automated = [
+			...workflow.matchAll(WORKFLOW_STEP),
+			...release.matchAll(WORKFLOW_STEP),
+			...publish.matchAll(WORKFLOW_STEP),
+		].map((match) => String(match[1]));
 
 		expect(automated.length).toBeGreaterThan(4);
 		expect(RUN_BY_A_PERSON.filter((name) => automated.includes(name))).toEqual([]);
