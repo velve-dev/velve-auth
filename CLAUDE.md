@@ -620,7 +620,13 @@ These follow from architecture section 2 and are not open for local decision:
   is written first. What keeps that safe is that `one_time_token` is ordered
   **before** `velve.user` everywhere: every mint runs in a transaction of its
   own and every redemption runs first, and no transaction that takes the account
-  row touches that table at all.
+  row touches that table at all. **There is one exception: sign-up mints the
+  `email_verify` token in the transaction that creates the account row.** That is
+  safe because no other transaction can see or lock a row before it commits, so
+  that transaction cannot be part of a lock cycle, and the account and its token
+  are created together or not at all. `pnpm check:token-after-lock` treats
+  creating the account row like taking it and allows exactly that one call in
+  `src/core/flows/sign-up.ts`; the same pattern anywhere else fails.
 - Core dependencies are exactly these six: `@noble/hashes`, `@noble/ciphers`,
   `bcryptjs`, `otpauth`, `@simplewebauthn/server`, `jose`. Adding a seventh is a
   decision for `docs/decisions/log.md`, not a routine change.
