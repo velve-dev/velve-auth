@@ -1,4 +1,5 @@
 import { ConcealedError, VelveError } from "../../http/error-map.js";
+import { bookAttemptOn } from "./booking.js";
 import type { PendingAuthenticationService, PendingResolution } from "./service.js";
 import type { PendingToken } from "./token.js";
 
@@ -8,15 +9,18 @@ export async function verifyUnderPendingAttemptLimit<Result>(
 	token: PendingToken,
 	verify: (resolution: PendingResolution) => Promise<Result>,
 ): Promise<Result> {
-	const resolution = await pending.resolve(token);
-	if (resolution === null) {
+	const booked = await bookAttemptOn(pending, token);
+	if (booked.outcome === "missing") {
 		throw new ConcealedError("pending_not_found");
+	}
+	if (booked.outcome === "exhausted") {
+		throw new VelveError("too_many_factor_attempts");
 	}
 
 	try {
-		return await verify(resolution);
+		return await verify(booked.resolution);
 	} catch (failure) {
-		const attempt = await pending.registerFailedAttempt(token);
+		const attempt = await booked.failed();
 		if (attempt.outcome === "exhausted") {
 			throw new VelveError("too_many_factor_attempts");
 		}

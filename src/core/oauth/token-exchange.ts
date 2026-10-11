@@ -20,13 +20,20 @@ function readScopes(body: Record<string, unknown>, provider: ResolvedProvider): 
 	return granted === null ? provider.scopes : granted.split(" ").filter((scope) => scope !== "");
 }
 
+const LONGEST_STATED_TOKEN_LIFETIME_IN_SECONDS = 365 * 86_400;
+
+//a lifetime outside one second to one year is no lifetime a deadline can be built from (E-2875)
+function withinAStatableLifetime(seconds: number): number | null {
+	return seconds >= 1 && seconds <= LONGEST_STATED_TOKEN_LIFETIME_IN_SECONDS ? seconds : null;
+}
+
 function readLifetime(body: Record<string, unknown>): number | null {
 	const value = body.expires_in;
 	if (typeof value === "number" && Number.isFinite(value)) {
-		return Math.trunc(value);
+		return withinAStatableLifetime(Math.trunc(value));
 	}
 	const parsed = typeof value === "string" ? Number.parseInt(value, 10) : Number.NaN;
-	return Number.isNaN(parsed) ? null : parsed;
+	return Number.isNaN(parsed) ? null : withinAStatableLifetime(parsed);
 }
 
 //credentials go in the body since every shipped provider accepts client_secret_post

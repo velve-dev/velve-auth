@@ -4,7 +4,9 @@ import { scryptAsync } from "@noble/hashes/scrypt.js";
 import { sha256, sha512 } from "@noble/hashes/sha2.js";
 import { hash as bcryptHash } from "bcryptjs";
 import { encodeStandardBase64 } from "../src/core/password/base64.js";
+import type { PasswordCredentialRepository } from "../src/core/password/credential.js";
 import type { PasswordScheme } from "../src/core/password/scheme.js";
+import type { SealedRehash } from "../src/core/password/verify.js";
 import { randomBytes } from "../src/core/token/random.js";
 
 /** Drawn per run, so that no password and no derived hash of one is ever committed. */
@@ -158,3 +160,25 @@ export const FIREBASE_REFERENCE_VECTOR = {
 	passwordHashBase64:
 		"lSrfV15cpx95/sZS2W9c9Kp6i/LVgQNDNC/qzrCnh1SAyZvqmZqAjTdn3aoItz+VHjoZilo78198JAdRuid5lQ==",
 } as const;
+
+/**
+ * Runs a sign-in's rehash and swaps its hash in as the sealed rehash does, without the seal: true when
+ * the stored ciphertext was still the one the sign-in verified (E-3385).
+ */
+export async function rehashSwapped(
+	credentials: Pick<PasswordCredentialRepository, "replaceIfUnchanged">,
+	userId: string,
+	rehash: () => Promise<SealedRehash | null>,
+): Promise<boolean> {
+	const rewritten = await rehash();
+	if (rewritten === null) {
+		return false;
+	}
+	const swapped = await credentials.replaceIfUnchanged({
+		userId,
+		previous: rewritten.previous,
+		phc: rewritten.phc,
+		scheme: "argon2id",
+	});
+	return swapped !== null;
+}

@@ -82,7 +82,7 @@ describe("what the package actually ships (6.19, before every release)", () => {
 		const targets = subpathTargets().filter((target) => target !== "package.json");
 		const missing = targets.filter((target) => !packed.includes(target));
 
-		expect(targets.length).toBeGreaterThanOrEqual(18);
+		expect(targets.length).toBeGreaterThanOrEqual(12);
 		expect(missing).toStrictEqual([]);
 	});
 

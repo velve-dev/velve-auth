@@ -7,8 +7,11 @@ import {
 	type OneTimeTokenPurpose,
 	type OneTimeTokens,
 } from "../src/core/token/index.js";
+import { testKeyProvider } from "./auth-fixtures.js";
 import { createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
+
+const TOKEN_KEYS = testKeyProvider();
 
 // T-RACE-1 fixes the thresholds: 50 simultaneous redemptions, 20 repetitions, tolerance 0.
 const ATTEMPTS = 50;
@@ -35,7 +38,9 @@ function afterDelay(driver: Driver, milliseconds: number): Driver {
 }
 
 function tokensOn(driver: Driver): OneTimeTokens {
-	return createOneTimeTokens(createOneTimeTokenRepository({ driver, schema }));
+	return createOneTimeTokens(createOneTimeTokenRepository({ driver, schema }), {
+		keys: TOKEN_KEYS,
+	});
 }
 
 beforeAll(async () => {

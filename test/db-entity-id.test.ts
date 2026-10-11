@@ -97,17 +97,21 @@ describe("the second and third lawful provenance of an actor (E-234, E-341)", ()
 			{ user_id: ACCOUNT, payload: null },
 		]).consumeOneTimeToken(LOOKUP);
 
-		expect(redeemed === null ? null : actorOfRedeemedOneTimeToken(redeemed)).toBe(ACCOUNT);
+		expect(
+			redeemed === null || redeemed.userId === null
+				? null
+				: actorOfRedeemedOneTimeToken(redeemed.accept()),
+		).toBe(ACCOUNT);
 	});
 
-	it("answers a removed row that names no account exactly as it answers no row", async () => {
-		const answers = [
-			await repositoryReturning([{ user_id: null, payload: null }]).consumeOneTimeToken(LOOKUP),
-			await repositoryReturning([]).consumeOneTimeToken(LOOKUP),
-		];
+	it("offers no actor from a removed row that names no account, which is checked and then answered as none", async () => {
+		const ownerless = await repositoryReturning([
+			{ user_id: null, payload: null },
+		]).consumeOneTimeToken(LOOKUP);
 
-		expect(answers).toHaveLength(2);
-		expect(answers).toStrictEqual([null, null]);
+		expect(ownerless?.userId).toBeNull();
+		expect(ownerless !== null && "accept" in ownerless).toBe(false);
+		expect(await repositoryReturning([]).consumeOneTimeToken(LOOKUP)).toBeNull();
 	});
 });
 

@@ -4,11 +4,10 @@ import { nobleAesGcm } from "../src/core/keys/aes-gcm.js";
 import {
 	decryptWithPurposeKey,
 	encryptWithPurposeKey,
-	KEY_PURPOSES,
 	openEnvelope,
-	rootKeyProvider,
 	sealEnvelope,
-} from "../src/core/keys/index.js";
+} from "../src/core/keys/envelope.js";
+import { KEY_PURPOSES, rootKeyProvider } from "../src/core/keys/index.js";
 import { MAXIMUM_KEY_VERSION } from "../src/core/keys/key-version.js";
 import { randomBytes } from "../src/core/token/index.js";
 import {

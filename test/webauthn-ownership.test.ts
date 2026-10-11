@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Actor } from "../src/core/db/actor.js";
 import { createWebAuthnCredentialRepository } from "../src/core/factor/webauthn/credential-repository.js";
 import { toErrorBody, toVisibleFailure } from "../src/core/http/error-map.js";
+import { resealDirectly } from "./security-state-fixtures.js";
 import {
 	createAccount,
 	enrol,
@@ -107,6 +108,7 @@ describe("owning a webauthn credential", () => {
 			 VALUES ($1, $2, $3, 1)`,
 			[account, Buffer.from("not a real hash"), "argon2id"],
 		);
+		await resealDirectly(fixture.connection, fixture.schema, fixture.keys, account);
 
 		await fixture.service.remove({ actor: account, credentialId: only.credentialId });
 

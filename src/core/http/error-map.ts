@@ -23,6 +23,8 @@ export type VelveErrorCode =
 	| "oauth_provider_error"
 	| "webauthn_challenge_invalid"
 	| "webauthn_credential_rejected"
+	| "passkey_limit_reached"
+	| "identity_limit_reached"
 	| "internal_error";
 
 const HTTP_STATUS_BY_ERROR_CODE: Readonly<Record<VelveErrorCode, number>> = {
@@ -50,6 +52,8 @@ const HTTP_STATUS_BY_ERROR_CODE: Readonly<Record<VelveErrorCode, number>> = {
 	oauth_provider_error: 502,
 	webauthn_challenge_invalid: 400,
 	webauthn_credential_rejected: 401,
+	passkey_limit_reached: 409,
+	identity_limit_reached: 409,
 	internal_error: 500,
 };
 
@@ -78,6 +82,8 @@ const MESSAGE_BY_ERROR_CODE: Readonly<Record<VelveErrorCode, string>> = {
 	oauth_provider_error: "The provider did not answer correctly.",
 	webauthn_challenge_invalid: "The challenge is not valid.",
 	webauthn_credential_rejected: "The credential was rejected.",
+	passkey_limit_reached: "The account already holds as many passkeys as it may.",
+	identity_limit_reached: "The account already holds as many linked identities as it may.",
 	internal_error: "The request could not be completed.",
 };
 
@@ -234,7 +240,26 @@ export type ConcealedReason =
 	| "rp_id_mismatch"
 	| "origin_mismatch"
 	| "user_not_verified"
-	| "user_disabled_on_webauthn_assertion";
+	| "user_disabled_on_webauthn_assertion"
+	| "session_issue_missed_on_password_sign_in"
+	| "session_issue_missed_on_passkey_sign_in"
+	| "session_issue_missed_on_totp_second_factor"
+	| "session_issue_missed_on_passkey_second_factor"
+	| "session_issue_missed_on_recovery_second_factor"
+	| "session_issue_missed_on_sign_up"
+	| "session_issue_missed_on_password_set"
+	| "session_issue_missed_on_password_change"
+	| "session_issue_missed_on_token_redemption"
+	| "session_issue_missed_on_oauth_flow"
+	| "broken_state_on_password_sign_in"
+	| "broken_state_on_passkey_sign_in"
+	| "broken_state_on_oauth_sign_in"
+	| "broken_state_on_token_redemption"
+	| "broken_state_on_totp_second_factor"
+	| "broken_state_on_passkey_second_factor"
+	| "broken_state_on_recovery_second_factor"
+	| "broken_state_on_session_resolve"
+	| "broken_state_on_change";
 
 const VISIBLE_CODE_BY_CONCEALED_REASON: Readonly<Record<ConcealedReason, VelveErrorCode>> = {
 	user_not_found: "invalid_credentials",
@@ -279,6 +304,27 @@ const VISIBLE_CODE_BY_CONCEALED_REASON: Readonly<Record<ConcealedReason, VelveEr
 	origin_mismatch: "webauthn_credential_rejected",
 	user_not_verified: "webauthn_credential_rejected",
 	user_disabled_on_webauthn_assertion: "webauthn_credential_rejected",
+	//a session issue that wrote no row answers as the ordinary failure of the path it completes (S-INTEG-5)
+	session_issue_missed_on_password_sign_in: "invalid_credentials",
+	session_issue_missed_on_passkey_sign_in: "webauthn_credential_rejected",
+	session_issue_missed_on_totp_second_factor: "invalid_factor_code",
+	session_issue_missed_on_passkey_second_factor: "webauthn_credential_rejected",
+	session_issue_missed_on_recovery_second_factor: "invalid_recovery_code",
+	session_issue_missed_on_sign_up: "invalid_input",
+	session_issue_missed_on_password_set: "factor_already_enrolled",
+	session_issue_missed_on_password_change: "invalid_credentials",
+	session_issue_missed_on_token_redemption: "invalid_token",
+	session_issue_missed_on_oauth_flow: "oauth_flow_invalid",
+	//a broken security state answers as the ordinary failure of the path that met it (S-INTEG-5)
+	broken_state_on_password_sign_in: "invalid_credentials",
+	broken_state_on_passkey_sign_in: "webauthn_credential_rejected",
+	broken_state_on_oauth_sign_in: "oauth_flow_invalid",
+	broken_state_on_token_redemption: "invalid_token",
+	broken_state_on_totp_second_factor: "invalid_factor_code",
+	broken_state_on_passkey_second_factor: "webauthn_credential_rejected",
+	broken_state_on_recovery_second_factor: "invalid_recovery_code",
+	broken_state_on_session_resolve: "session_required",
+	broken_state_on_change: "session_required",
 };
 
 export class ConcealedError extends Error {

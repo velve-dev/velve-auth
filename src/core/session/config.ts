@@ -63,6 +63,18 @@ function millisecondsOf(option: string, duration: Duration): number {
 	return milliseconds;
 }
 
+//the cookie's Max-Age is derived from the absolute timeout and a browser keeps one for 400 days at most (E-2878)
+const LONGEST_COOKIE_LIFETIME_IN_MILLISECONDS = 34_560_000_000;
+
+//an absolute timeout no cookie can carry must fail at startup and not at the first sign-in (E-1573)
+function assertACookieCanCarry(absoluteTimeout: Duration, absoluteTimeoutMs: number): void {
+	if (absoluteTimeoutMs > LONGEST_COOKIE_LIFETIME_IN_MILLISECONDS) {
+		throw new InvalidSessionConfigError(
+			`session.absoluteTimeout must be at most 400d, the longest Max-Age the session cookie can state, not "${absoluteTimeout}"`,
+		);
+	}
+}
+
 function assertBelow(shorter: [string, number], longer: [string, number]): void {
 	if (shorter[1] > longer[1]) {
 		throw new InvalidSessionConfigError(
@@ -101,6 +113,7 @@ export function sessionSettingsOf(config: Partial<SessionConfig> = {}): SessionS
 	const idleWriteIntervalMs = millisecondsOf("idleWriteInterval", complete.idleWriteInterval);
 	const freshnessWindowMs = millisecondsOf("freshnessWindow", complete.freshnessWindow);
 
+	assertACookieCanCarry(complete.absoluteTimeout, absoluteTimeoutMs);
 	assertBelow(["idleTimeout", idleTimeoutMs], ["absoluteTimeout", absoluteTimeoutMs]);
 	assertBelow(["idleWriteInterval", idleWriteIntervalMs], ["idleTimeout", idleTimeoutMs]);
 	assertBelow(["freshnessWindow", freshnessWindowMs], ["absoluteTimeout", absoluteTimeoutMs]);

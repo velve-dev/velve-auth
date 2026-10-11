@@ -93,7 +93,10 @@ describe("plugin migrations (S-TOKEN-6)", () => {
 			[],
 		);
 
-		expect(rows.map((row) => row.version)).toEqual([1, 2, 100]);
+		expect(rows.map((row) => row.version)).toEqual([
+			...coreMigrations("email").map((step) => step.version),
+			100,
+		]);
 	});
 });
 

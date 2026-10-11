@@ -10,6 +10,7 @@ import {
 import type { KeyProvider } from "../src/core/keys/provider.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import { openTestConnection, type TestConnection } from "./db-postgres-connection.js";
+import { testSecurityState } from "./security-state-fixtures.js";
 import {
 	beginPendingState,
 	countRows,
@@ -39,6 +40,7 @@ beforeAll(async () => {
 	keys = testKeyProvider();
 	pendings = connections.map((connection) => pendingAuthenticationsOn(connection, schema));
 	issuer = createRecoveryCodeService({
+		securityState: testSecurityState(connections[0] as TestConnection, schema, keys),
 		driver: connections[0] as TestConnection,
 		schema,
 		keys,
@@ -46,6 +48,7 @@ beforeAll(async () => {
 	});
 	racers = connections.map((connection, index) =>
 		createRecoveryCodeService({
+			securityState: testSecurityState(connection, schema, keys),
 			driver: connection,
 			schema,
 			keys,

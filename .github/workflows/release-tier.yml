@@ -4,12 +4,16 @@ name: Release tier
 # commit: one restarts the process to rotate the key ring, one removes an optional dependency, and
 # one reads the packed artefact. None of them belongs in a blocking gate, and a tier without a
 # schedule is a script nobody runs — which is what E-344 recorded and this closes.
-# The tag trigger alone means the tier's first run is after the merge that could break it, so a
-# nightly schedule runs it before the tag rather than at it (E-535). It stays out of the blocking
-# gate for the reason E-526 gives.
+# The tag trigger alone meant the tier's first run was after the merge that could break it, so a
+# nightly schedule ran it before the tag (E-535). It stays out of the blocking gate for the reason
+# E-526 gives. Since the publish moved to the maintainer's machine the tag arrives after the
+# version is on the registry, so the tier also runs on every push to main, and the publish asks
+# pnpm check:release-tier for a green run of this workflow on the exact commit it publishes
+# (architecture 6.19, E-2763). The tag no longer triggers this file: release.yml runs the same
+# tier over the tagged commit, and two runs of it per tag were one too many (E-2764).
 on:
   push:
-    tags: ["v*"]
+    branches: [main]
   schedule:
     - cron: "41 4 * * *"
   workflow_dispatch:

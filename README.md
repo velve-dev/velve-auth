@@ -71,7 +71,7 @@ pnpm add @velve/auth
 ```
 
 That is the whole install: no tag to remember, no `postinstall`, no native
-binding, no build step. `latest` points at `1.1.0` and `^1.0.0` resolves to it.
+binding, no build step. `latest` points at `2.0.0` and `^2.0.0` resolves to it.
 
 ## Example
 
@@ -134,13 +134,56 @@ what was rejected, the reason and the price. `pnpm check:decision-refs` fails if
 
 ## Status
 
-> **Status: 1.1.0.** `latest` points at it, so `pnpm add @velve/auth` installs the
-> stable line and `^1.0.0` resolves. Under semver the documented surface is a promise:
-> nothing in it changes shape without a major version. `1.1.0` added an option
-> and moved nothing. `next` keeps pointing at the last prerelease,
-> `1.0.0-next.2`, and nothing needs it.
+> **Status: 2.0.0.** `latest` points at it, so `pnpm add @velve/auth` installs
+> it. Under semver the documented surface is a promise: nothing in it changes
+> shape without a major version, and 2.0.0 is one. It is a security release,
+> prepared as 1.2.0 and never published under that number, and it ships as a
+> major because some of its fixes break existing installations (E-3020). What
+> breaks, in short:
+>
+> - `@velve/auth/postgres-js`, `/neon` and `/import` are removed; they exported
+>   nothing (E-3021).
+> - `auth.user.findByEmail` is removed in identity mode `username` (E-3022).
+> - New start refusals: three new `VelveStartupError` codes that can refuse a
+>   configuration that started on 1.1.0, Argon2id parameters above their
+>   ceilings, and a `session.absoluteTimeout` above 400 days.
+> - The sign-in, session and user hooks fire on every way in, and
+>   `beforeSessionRevoke` on more revocations; a hook that throws now refuses
+>   the operation (E-2581, E-2790, E-2796).
+> - Rate-limit defaults changed (E-2670).
+> - `session.cookieName` is honoured, which signs every user out once if you set
+>   it (E-2550).
+> - `auth.pending.cancel` takes the call fields and runs the origin check and
+>   the rate limit of its route (E-2830).
+> - Exported types gain members: `StartupErrorCode`, `RevokeReason`,
+>   `VelveErrorCode` and `KeyPurpose` (an exhaustive `switch` over any of them
+>   stops compiling, and a hand-written `KeyProvider` must answer the two new
+>   purposes), a required `HttpEnvironment.sessionCookieName`, the namespace
+>   types, and `maintenance`, which a hand-written mock must extend with
+>   `sealSecurityState` and `resealSecurityState`.
+> - The security state now holds against someone who can write to the database
+>   but does not have the root key. Migration 4 deletes every session, open link,
+>   pending sign-in and WebAuthn challenge, so every user is signed out once.
+>   Stop every 1.x instance before you migrate. A custom `KeyProvider` must
+>   answer the two new purposes `state-mac` and `token-mac`, each with a key of
+>   at least 256 bits that no other purpose shares, or the start is refused.
+>   Existing accounts carry no seal until you run `maintenance.sealSecurityState()`
+>   with `securityState.sealing: "migrating"`; that mode is reported at start as
+>   a weakening, so run the maintenance step and then switch to `"required"`.
+>   Sign-in and change paths can answer with `passkey_limit_reached` and
+>   `identity_limit_reached` (HTTP 409), because an account holds at most 20
+>   passkeys and 10 identities (`limits`). The administrator reseal can refuse
+>   with `security_state_envelope_unreadable`; the maintenance step lists an
+>   account it cannot read in its report's `refusedUserIds` instead. The start
+>   can refuse with `plugin_anchor_incomplete`, `security_state_sealing_unknown`
+>   and `limits_unusable`.
+>
+> Every break and the upgrade steps are in
+> [`docs/releases/2.0.0.md`](./docs/releases/2.0.0.md). 1.x gets no further
+> releases. `next` keeps pointing at the last prerelease, `1.0.0-next.2`, and
+> nothing needs it.
 
-**What the `1.x` line commits this package to** is the surface
+**What the `2.x` line commits this package to** is the surface
 `DOCUMENTATION.md` describes: it may gain something in a minor version, and
 nothing in it changes shape without a major one. What it does not claim is a
 track record — the interface is specified and the schema is versioned, but this

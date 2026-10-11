@@ -16,6 +16,12 @@ import {
 	type ServerCallFields,
 } from "../http/route.js";
 import { object, string, unknownRecord } from "../http/validators.js";
+import {
+	askBeforeSignIn,
+	createSessionUnderHooks,
+	signInMethodOfFirstFactor,
+	tellAfterSignIn,
+} from "../plugin/sign-in.js";
 import { toPendingToken, verifyUnderPendingAttemptLimit } from "./pending/index.js";
 import {
 	createRecoveryCodeService,
@@ -28,6 +34,7 @@ import {
 	type TotpService,
 	totpToleranceOf,
 } from "./totp/index.js";
+import type { CheckedSecondFactor } from "./totp/service.js";
 import type { WebAuthnCredential } from "./webauthn/credential-repository.js";
 import {
 	createWebAuthnService,
@@ -169,21 +176,40 @@ async function signedInBySecondFactor(
 	services: RouteServices,
 	context: RequestContext,
 	spent: {
-		readonly pendingToken: string;
+		readonly held: HeldPendingState;
 		readonly factor: "totp" | "webauthn" | "recovery";
+		readonly authorisedBy: CheckedSecondFactor["authorisedBy"];
 		readonly signCountRegressed?: boolean;
 	},
 ): Promise<SignInResult> {
-	const issued = await services.completeSecondFactor.complete({
-		pendingToken: toPendingToken(spent.pendingToken),
-		factor: spent.factor,
-		presentedSessionToken: context.sessionToken,
-		observed: { ipAddress: context.ipAddress, userAgent: context.userAgent },
-	});
+	const observed = { ipAddress: context.ipAddress, userAgent: context.userAgent };
+	const hooks = services.pluginRuntime.hooks;
+	const { userId, pending } = spent.held.resolution;
+	//beforeSignIn ran at the first factor and the completion is the same sign-in
+	const issued = await createSessionUnderHooks(
+		hooks,
+		{ userId, factors: [...pending.factorsCompleted, spent.factor] },
+		() =>
+			services.completeSecondFactor.complete({
+				pendingToken: toPendingToken(spent.held.token),
+				factor: spent.factor,
+				authorisedBy: spent.authorisedBy,
+				presentedSessionToken: context.sessionToken,
+				observed,
+			}),
+	);
 	const user = await services.users.findUserById(issued.session.userId);
 	if (user === null) {
 		throw new ConcealedError("user_not_found");
 	}
+	await tellAfterSignIn(hooks, {
+		method: signInMethodOfFirstFactor(pending.factorsCompleted),
+		observed,
+		session: issued.session,
+		...(spent.signCountRegressed === undefined
+			? {}
+			: { signCountRegressed: spent.signCountRegressed }),
+	});
 	context.cookies.clearPending();
 	context.cookies.setSession(issued.token);
 	return {
@@ -259,10 +285,14 @@ function totpRoutes(services: RouteServices, totp: TotpService) {
 		handler: async (input, context): Promise<SignInResult> => {
 			const held = heldPendingState(context);
 			await spendAccountToken(services, context, held.resolution.userId);
-			await totp.verify({ pendingToken: toPendingToken(held.token), code: input.code });
+			const checked = await totp.verify({
+				pendingToken: toPendingToken(held.token),
+				code: input.code,
+			});
 			return signedInBySecondFactor(services, context, {
-				pendingToken: held.token,
+				held,
 				factor: "totp",
+				authorisedBy: checked.authorisedBy,
 			});
 		},
 	});
@@ -317,10 +347,14 @@ function recoveryRoutes(services: RouteServices, recovery: RecoveryCodeService) 
 		handler: async (input, context): Promise<SignInResult> => {
 			const held = heldPendingState(context);
 			await spendAccountToken(services, context, held.resolution.userId);
-			await recovery.verify({ pendingToken: toPendingToken(held.token), code: input.code });
+			const checked = await recovery.verify({
+				pendingToken: toPendingToken(held.token),
+				code: input.code,
+			});
 			return signedInBySecondFactor(services, context, {
-				pendingToken: held.token,
+				held,
 				factor: "recovery",
+				authorisedBy: checked.authorisedBy,
 			});
 		},
 	});
@@ -433,8 +467,9 @@ function webAuthnRoutes(services: RouteServices, webauthn: WebAuthnService) {
 					}),
 			);
 			return signedInBySecondFactor(services, context, {
-				pendingToken: held.token,
+				held,
 				factor: "webauthn",
+				authorisedBy: assertion.authorisedBy,
 				signCountRegressed: assertion.signCountRegressed,
 			});
 		},
@@ -534,6 +569,9 @@ function passkeyRoutes(services: RouteServices, webauthn: WebAuthnService) {
 		rateLimit: addressOnly(services),
 		//a passkey is a way in of its own so the session records webauthn alone
 		handler: async (input, context): Promise<SignInResult> => {
+			const observed = { ipAddress: context.ipAddress, userAgent: context.userAgent };
+			const hooks = services.pluginRuntime.hooks;
+			await askBeforeSignIn(hooks, "passkey", observed);
 			const assertion = await webauthn.passkey.finish({
 				challengeToken: input.challengeToken,
 				response: input.response as unknown as AuthenticationResponseJSON,
@@ -543,11 +581,24 @@ function passkeyRoutes(services: RouteServices, webauthn: WebAuthnService) {
 			if (user === null || user.disabledAt !== null) {
 				throw new ConcealedError("user_disabled_on_webauthn_assertion");
 			}
-			const issued = await services.sessions.issueReplacingPresented({
-				presentedToken: context.sessionToken,
-				userId: assertion.userId,
-				factors: ["webauthn"],
-				observed: { ipAddress: context.ipAddress, userAgent: context.userAgent },
+			const issued = await createSessionUnderHooks(
+				hooks,
+				{ userId: assertion.userId, factors: ["webauthn"] },
+				() =>
+					services.sessions.issueReplacingPresented({
+						completes: "passkey_sign_in",
+						authorisedBy: assertion.authorisedBy,
+						presentedToken: context.sessionToken,
+						userId: assertion.userId,
+						factors: ["webauthn"],
+						observed,
+					}),
+			);
+			await tellAfterSignIn(hooks, {
+				method: "passkey",
+				observed,
+				session: issued.session,
+				signCountRegressed: assertion.signCountRegressed,
 			});
 			context.cookies.setSession(issued.token);
 			return {
@@ -581,6 +632,7 @@ export function factorRoutes(services: RouteServices): readonly AnyRoute[] {
 		pending: services.pending,
 		issuer: totpIssuerOf(services),
 		toleranceInSteps: totpToleranceOf(services.totp?.stepToleranceInSteps),
+		securityState: services.securityState,
 	});
 	const recovery: RecoveryCodeService = createRecoveryCodeService({
 		driver: services.driver,
@@ -588,6 +640,7 @@ export function factorRoutes(services: RouteServices): readonly AnyRoute[] {
 		keys: services.keys,
 		pending: services.pending,
 		shape: recoveryCodeShapeOf(services.recoveryCodes),
+		securityState: services.securityState,
 	});
 	const alwaysMounted = [...totpRoutes(services, totp), ...recoveryRoutes(services, recovery)];
 	if (services.webauthn === undefined) {
@@ -596,7 +649,10 @@ export function factorRoutes(services: RouteServices): readonly AnyRoute[] {
 	const webauthn: WebAuthnService = createWebAuthnService({
 		driver: services.driver,
 		schema: services.schema,
+		keys: services.keys,
 		webauthn: services.webauthn,
+		securityState: services.securityState,
+		reportTokenBindingRefusal: services.reportTokenBindingRefusal,
 	});
 	return [
 		...alwaysMounted,

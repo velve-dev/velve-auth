@@ -71,7 +71,7 @@ export interface WebAuthnCredentialRepository {
 		label: string;
 	}): Promise<WebAuthnCredential | null>;
 	//the caller must have read and verified the row before this method writes it back
-	recordAssertion(input: WebAuthnAssertionRecord): Promise<WebAuthnCredential | null>;
+	recordAssertion(input: WebAuthnAssertionRecord): Promise<StoredWebAuthnCredential | null>;
 }
 
 export class DuplicateWebAuthnCredentialError extends Error {
@@ -203,9 +203,10 @@ WHERE credential_id = $1 AND user_id = $2`;
 WHERE id = $1::uuid AND user_id = $2
 RETURNING ${SELECTED_COLUMNS}`;
 
+	//the stored counter only rises and the statement itself is the compare and set (E-3050)
 	//backup flags are refreshed on every sign-in so a synced passkey stops reading as device bound
 	const recordAssertionStatement = `UPDATE ${table}
-SET sign_count = $3, backup_eligible = $4, backup_state = $5, last_used_at = now()
+SET sign_count = GREATEST(sign_count, $3), backup_eligible = $4, backup_state = $5, last_used_at = now()
 WHERE id = $1::uuid AND user_id = $2
 RETURNING ${SELECTED_COLUMNS}`;
 
@@ -272,7 +273,7 @@ RETURNING ${SELECTED_COLUMNS}`;
 				isBackupEligible,
 				isCurrentlyBackedUp,
 			]);
-			return row === null ? null : presentedCredential(row);
+			return row === null ? null : storedCredential(row);
 		},
 	};
 }

@@ -9,7 +9,6 @@ const run = promisify(execFile);
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 const TOOL = `${repositoryRoot}tools/check-published-version.mjs`;
 const NAME = "@velve/auth";
-const PROVENANCE = "https://slsa.dev/provenance/v1";
 
 let registry: Server | undefined;
 
@@ -20,14 +19,20 @@ afterEach(async () => {
 	}
 });
 
-/** A registry that answers the three reads the check makes, so only the dist-tags vary. */
+/** A registry that answers the two reads the check makes, so only the dist-tags vary. It holds
+ * no attestation, as the registry holds none for a version published from the maintainer's
+ * machine, and every path it does not know answers 404 as the registry's does (E-2761). */
+const attestationReads: string[] = [];
+
 async function registryWhere(version: string, distTags: Record<string, string>): Promise<string> {
 	const server = createServer((request, response) => {
-		const body = request.url?.includes("/dist-tags")
-			? distTags
-			: request.url?.includes("/attestations/")
-				? { attestations: [{ predicateType: PROVENANCE }] }
-				: { version };
+		if (request.url?.includes("/attestations/")) {
+			attestationReads.push(request.url);
+			response.writeHead(404, { "content-type": "application/json" });
+			response.end("{}");
+			return;
+		}
+		const body = request.url?.includes("/dist-tags") ? distTags : { version };
 		response.writeHead(200, { "content-type": "application/json" });
 		response.end(JSON.stringify(body));
 	});
@@ -95,5 +100,23 @@ describe("latest naming any prerelease is the finding, not latest naming this on
 		const { stdout } = await check(url, "next", "1.1.0-next.1");
 
 		expect(stdout).toContain("next points at it");
+	});
+});
+
+/**
+ * npm mints a provenance attestation only from a CI provider's OIDC token, and the publish now runs
+ * on the maintainer's machine, so a version without one is the expected outcome and not a
+ * finding. The check required one until then, and would refuse every release it is now run on.
+ */
+describe("a version published without a provenance attestation", () => {
+	it("passes, without asking the registry for an attestation", async () => {
+		attestationReads.length = 0;
+		const url = await registryWhere("1.2.0", { next: "1.0.0-next.2", latest: "1.2.0" });
+
+		const { stdout } = await check(url, "latest", "1.2.0");
+
+		expect(stdout).toContain("latest points at it");
+		expect(stdout).not.toContain("provenance");
+		expect(attestationReads).toStrictEqual([]);
 	});
 });

@@ -34,8 +34,10 @@ import {
 	type TotpService,
 	type TotpServiceOptions,
 } from "../src/core/factor/totp/index.js";
+import type { CheckedSecondFactor } from "../src/core/factor/totp/service.js";
 import { actorOfTestUser, createUser, dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { testSecurityState } from "./security-state-fixtures.js";
 import { pendingAuthenticationsOn, testKeyProvider } from "./totp-fixtures.js";
 
 let connection: TestConnection;
@@ -62,7 +64,14 @@ afterAll(async () => {
 describe("the surface the TOTP module publishes", () => {
 	it("takes a clock it cannot default, and a pending service to spend attempts on", () => {
 		expectTypeOf<keyof TotpServiceOptions>().toEqualTypeOf<
-			"driver" | "keys" | "pending" | "issuer" | "clock" | "schema" | "toleranceInSteps"
+			| "driver"
+			| "keys"
+			| "pending"
+			| "issuer"
+			| "clock"
+			| "schema"
+			| "toleranceInSteps"
+			| "securityState"
 		>();
 		expectTypeOf<TotpServiceOptions["clock"]>().not.toBeUndefined();
 		expectTypeOf<keyof TotpRepositoryOptions>().toEqualTypeOf<"driver" | "schema">();
@@ -76,11 +85,12 @@ describe("the surface the TOTP module publishes", () => {
 		expectTypeOf<StoredTotpCredential["confirmedAt"]>().toEqualTypeOf<Date | null>();
 	});
 
-	it("answers a verification with the resolution rather than with nothing (E-410)", () => {
-		expectTypeOf<TotpService["verify"]>().returns.resolves.toEqualTypeOf<PendingResolution>();
+	it("answers a verification with the resolution and the seal it checked rather than with nothing (E-410)", () => {
+		expectTypeOf<TotpService["verify"]>().returns.resolves.toEqualTypeOf<CheckedSecondFactor>();
 		expectTypeOf<
 			RecoveryCodeService["verify"]
-		>().returns.resolves.toEqualTypeOf<PendingResolution>();
+		>().returns.resolves.toEqualTypeOf<CheckedSecondFactor>();
+		expectTypeOf<CheckedSecondFactor["resolution"]>().toEqualTypeOf<PendingResolution>();
 	});
 
 	it("hands out the secret in the two forms an authenticator can take it", () => {
@@ -101,7 +111,7 @@ describe("the surface the TOTP module publishes", () => {
 describe("the surface the recovery module publishes", () => {
 	it("takes the same three collaborators the TOTP service takes, without a clock", () => {
 		expectTypeOf<keyof RecoveryCodeServiceOptions>().toEqualTypeOf<
-			"driver" | "keys" | "pending" | "schema" | "shape"
+			"driver" | "keys" | "pending" | "schema" | "shape" | "securityState"
 		>();
 		expectTypeOf<keyof RecoveryCodeRepositoryOptions>().toEqualTypeOf<"driver" | "schema">();
 		expectTypeOf<RecoveryCodeRepository["consumeCode"]>().toBeFunction();
@@ -123,6 +133,7 @@ describe("the surface the recovery module publishes", () => {
 		const userId = await createUser(connection, schema);
 		const actor = actorOfTestUser(userId);
 		const recovery = createRecoveryCodeService({
+			securityState: testSecurityState(connection, schema, testKeyProvider()),
 			driver: connection,
 			schema,
 			keys: testKeyProvider(),
@@ -143,6 +154,7 @@ describe("the surface the recovery module publishes", () => {
 		const userId = await createUser(connection, schema);
 		const actor = actorOfTestUser(userId);
 		const recovery = createRecoveryCodeService({
+			securityState: testSecurityState(connection, schema, testKeyProvider()),
 			driver: connection,
 			schema,
 			keys: testKeyProvider(),

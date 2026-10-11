@@ -190,12 +190,12 @@ describe("derivePurposeKeyBytes is HKDF-SHA256 with one context per purpose (S-K
 		expect(await derivePurposeKeyBytes(rootKey, purpose)).toStrictEqual(expected);
 	});
 
-	it("gives the six purposes six different keys", async () => {
+	it("gives the eight purposes eight different keys", async () => {
 		const derived = await Promise.all(
 			KEY_PURPOSES.map((purpose) => derivePurposeKeyBytes(rootKey, purpose)),
 		);
 
-		expect(new Set(derived.map(toHex)).size).toBe(6);
+		expect(new Set(derived.map(toHex)).size).toBe(8);
 	});
 
 	it("shares no derived key between two different root keys", async () => {
@@ -207,7 +207,7 @@ describe("derivePurposeKeyBytes is HKDF-SHA256 with one context per purpose (S-K
 			KEY_PURPOSES.map((purpose) => derivePurposeKeyBytes(other, purpose)),
 		);
 
-		expect(new Set([...fromFirst, ...fromSecond].map(toHex)).size).toBe(12);
+		expect(new Set([...fromFirst, ...fromSecond].map(toHex)).size).toBe(16);
 	});
 
 	it("returns the same bytes on repeated calls", async () => {

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { scanTokenAfterLock, tokenReachedAfterAccountLock } from "../tools/token-after-lock.mjs";
+import {
+	SIGN_UP_MINT_ALLOWANCE,
+	scanTokenAfterLock,
+	tokenReachedAfterAccountLock,
+} from "../tools/token-after-lock.mjs";
 
 const LOCK = "await lockAccountRow(transaction, schema, userId);";
 
@@ -25,8 +29,8 @@ describe("nothing reaches one_time_token after taking the account row (E-1616)",
 		expect(tokenReachedAfterAccountLock(source)).toStrictEqual(["one_time_token"]);
 	});
 
-	it.each(["replaceOneTimeToken", "consumeOneTimeToken"])(
-		"reports %s, because the repository method is the only other way to that table",
+	it.each(["replaceOneTimeToken", "consumeOneTimeToken", "mintArtefact"])(
+		"reports %s, because it is one of the other ways to that table",
 		(method) => {
 			expect(tokenReachedAfterAccountLock(`${LOCK}\nawait tokens.${method}({});`)).toStrictEqual([
 				method,
@@ -65,5 +69,73 @@ describe("nothing reaches one_time_token after taking the account row (E-1616)",
 			"replaceOneTimeToken",
 			"consumeOneTimeToken",
 		]);
+	});
+
+	/** A helper imported under another name is called by that name, which the plain names miss. */
+	it("reports a mint helper the import renames, under the name it was exported as", () => {
+		const source = [
+			'import { mintArtefact as mint } from "./artefact.js";',
+			LOCK,
+			"await mint(transaction, schema, {});",
+		].join("\n");
+
+		expect(tokenReachedAfterAccountLock(source)).toStrictEqual(["mintArtefact"]);
+	});
+
+	it("reads a renamed lock as taking the account row", () => {
+		const source = [
+			'import { lockAccountRow as holdAccount } from "../db/lock.js";',
+			"await holdAccount(transaction, schema, userId);",
+			"await tokens.consumeOneTimeToken({});",
+		].join("\n");
+
+		expect(tokenReachedAfterAccountLock(source)).toStrictEqual(["consumeOneTimeToken"]);
+	});
+
+	it("does not read a renamed import of anything else as reaching for the table", () => {
+		const source = [
+			'import { createSessionRepository as sessions } from "../db/session.js";',
+			LOCK,
+			"await sessions(transaction);",
+		].join("\n");
+
+		expect(tokenReachedAfterAccountLock(source)).toStrictEqual([]);
+	});
+});
+
+describe("creating the account row counts as taking it, and sign-up is the one allowed mint", () => {
+	const MINT = `await mintArtefact(transaction, schema, { purpose: "email_verify", subject: { userId } });`;
+	const CREATE = "const created = await users.createUser({ email });";
+
+	it("reports a mint after createUser in any other flow", () => {
+		expect(tokenReachedAfterAccountLock(`${CREATE}\n${MINT}`)).toStrictEqual(["mintArtefact"]);
+	});
+
+	it("reports a mint after an INSERT INTO the user table", () => {
+		const source = `await transaction.query("INSERT INTO velve.user (id) VALUES ($1)", []);\n${MINT}`;
+
+		expect(tokenReachedAfterAccountLock(source)).toStrictEqual(["mintArtefact"]);
+	});
+
+	it("passes the shipped sign-up with its allowance", () => {
+		const { offenders } = scanTokenAfterLock();
+
+		expect(offenders).toStrictEqual([]);
+	});
+
+	it("fails the shipped sign-up once the allowance is removed", () => {
+		const { offenders } = scanTokenAfterLock(null);
+
+		expect(offenders).toStrictEqual([
+			"src/core/flows/sign-up.ts: reaches mintArtefact after taking the account row",
+		]);
+	});
+
+	it("does not extend the allowance to another purpose or another file", () => {
+		const other = `${CREATE}\nawait mintArtefact(transaction, schema, { purpose: "reset", subject: { userId } });`;
+		const { call } = SIGN_UP_MINT_ALLOWANCE;
+
+		expect(tokenReachedAfterAccountLock(other, [call])).toStrictEqual(["mintArtefact"]);
+		expect(tokenReachedAfterAccountLock(`${CREATE}\n${MINT}`, [])).toStrictEqual(["mintArtefact"]);
 	});
 });

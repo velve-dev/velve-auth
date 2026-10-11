@@ -8,8 +8,7 @@ const DIST_TAG = process.argv[2] ?? "";
 const NAME_OVERRIDE = process.argv[3];
 const VERSION_OVERRIDE = process.argv[4];
 const DEADLINE_MS = Number(process.env.VELVE_REGISTRY_DEADLINE_MS ?? 180_000);
-const POLL_MS = 5_000;
-const PROVENANCE = "https://slsa.dev/provenance/v1";
+const POLL_MS = Number(process.env.VELVE_REGISTRY_POLL_MS ?? 5_000);
 const PRERELEASE = /-/;
 
 /** An unauthenticated read of a scoped package that does not exist answers 401 and not 404,
@@ -73,17 +72,29 @@ async function ask(url) {
 }
 
 /** A publish reaches the registry's read path after it returns, so absence is polled rather
- * than concluded; an unreachable registry is never concluded from at all. */
-async function pollUntilPresent(url, describe) {
+ * than concluded; an unreachable registry is never concluded from at all. A body that is there but
+ * not yet what the publish makes it, a dist-tag still on the previous version, is polled as well,
+ * and the last one read is what the findings are taken from (E-2767). */
+async function pollUntilPresent(url, describe, settled = () => true) {
 	const started = Date.now();
 	let last = { absent: 0 };
-	do {
+	let lastBody = null;
+	for (;;) {
 		last = await ask(url);
 		if (last.body !== undefined) {
-			return last.body;
+			lastBody = last.body;
+			if (settled(last.body)) {
+				return last.body;
+			}
+		}
+		if (Date.now() - started >= DEADLINE_MS) {
+			break;
 		}
 		await sleep(POLL_MS);
-	} while (Date.now() - started < DEADLINE_MS);
+	}
+	if (lastBody !== null) {
+		return lastBody;
+	}
 	if (last.unreachable !== undefined) {
 		refusals.push(`${describe} could not be read within ${DEADLINE_MS} ms: ${last.unreachable}`);
 		return null;
@@ -112,6 +123,7 @@ if (published !== null && published.version !== version) {
 const distTags = await pollUntilPresent(
 	`${REGISTRY}/-/package/${encoded}/dist-tags`,
 	`the dist-tags of ${name}`,
+	(tags) => tags?.[DIST_TAG] === version,
 );
 if (distTags !== null) {
 	if (distTags[DIST_TAG] !== version) {
@@ -129,20 +141,9 @@ if (distTags !== null) {
 	}
 }
 
-const attestations = await pollUntilPresent(
-	`${REGISTRY}/-/npm/v1/attestations/${encoded}@${version}`,
-	`the attestations of ${name}@${version}`,
-);
-if (attestations !== null) {
-	const predicates =
-		attestations.attestations?.map((attestation) => attestation.predicateType) ?? [];
-	if (!predicates.includes(PROVENANCE)) {
-		findings.push(
-			`${name}@${version} carries no ${PROVENANCE} attestation; the registry lists ${predicates.length === 0 ? "none" : predicates.join(", ")}.`,
-		);
-	}
-}
-
+/** No attestation is asked for. A publish from the maintainer's machine cannot carry a provenance
+ * attestation, because npm mints one only from a CI provider's OIDC token, and this check required
+ * one until the publish left CI (E-2761). */
 if (refusals.length > 0) {
 	refuse(refusals[0], refusals.slice(1).join("; ") || undefined);
 }
@@ -152,5 +153,5 @@ if (findings.length > 0) {
 }
 
 console.log(
-	`published version: ${REGISTRY} resolves ${name}@${version}, ${DIST_TAG} points at it, and it carries a provenance attestation`,
+	`published version: ${REGISTRY} resolves ${name}@${version}, ${DIST_TAG} points at it, and latest names no prerelease`,
 );

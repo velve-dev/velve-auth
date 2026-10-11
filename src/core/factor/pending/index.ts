@@ -5,7 +5,6 @@ export {
 	type SecondFactorCompletionOptions,
 } from "./complete.js";
 export {
-	type CountedAttempt,
 	createPendingAuthenticationRepository,
 	type PendingAuthenticationInsert,
 	type PendingAuthenticationRepository,

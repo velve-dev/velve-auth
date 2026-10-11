@@ -34,9 +34,10 @@ async function createUser(email: string): Promise<string> {
 
 async function createSession(userId: string): Promise<string> {
 	const [row] = await connection.query<{ id: string }>(
-		`INSERT INTO ${schema}.session (user_id, token_sha256, idle_expires_at, absolute_expires_at)
-		 VALUES ($1, $2, now() + interval '1 day', now() + interval '30 days') RETURNING id`,
-		[userId, randomBytes(32)],
+		`INSERT INTO ${schema}.session
+		   (user_id, token_sha256, idle_expires_at, absolute_expires_at, token_mac, token_mac_key_version)
+		 VALUES ($1, $2, now() + interval '1 day', now() + interval '30 days', $3, 1) RETURNING id`,
+		[userId, randomBytes(32), randomBytes(32)],
 	);
 	if (row === undefined) {
 		throw new Error("the session was not created");
@@ -60,7 +61,7 @@ async function userOwnedTableNames(): Promise<string[]> {
 }
 
 describe("the shipped schema", () => {
-	it("creates the sixteen tables of architecture 3.17", async () => {
+	it("creates the seventeen tables of architecture 3.17 and 3.18", async () => {
 		const rows = await connection.query<{ table_name: string }>(
 			"SELECT table_name FROM information_schema.tables WHERE table_schema = $1 ORDER BY table_name",
 			[schema],
@@ -77,6 +78,7 @@ describe("the shipped schema", () => {
 			"rate_bucket",
 			"recovery_code",
 			"schema_migration",
+			"security_state",
 			"session",
 			"totp_credential",
 			"totp_used_step",
@@ -188,14 +190,17 @@ describe("deleting a user (S-TOKEN-5)", () => {
 			[userId, randomBytes(8).toString("hex")],
 		);
 		await connection.query(
-			`INSERT INTO ${schema}.one_time_token (token_sha256, purpose, user_id, expires_at)
-			 VALUES ($1, 'email_verify', $2, now() + interval '1 hour')`,
-			[bytes(), userId],
+			`INSERT INTO ${schema}.one_time_token
+			   (token_sha256, purpose, user_id, expires_at, token_mac, token_mac_key_version)
+			 VALUES ($1, 'email_verify', $2, now() + interval '1 hour', $3, 1)`,
+			[bytes(), userId, bytes()],
 		);
 		await connection.query(
-			`INSERT INTO ${schema}.pending_authentication (token_sha256, user_id, factors_completed, expires_at)
-			 VALUES ($1, $2, '{password}', now() + interval '10 minutes')`,
-			[bytes(), userId],
+			`INSERT INTO ${schema}.pending_authentication
+			   (token_sha256, user_id, factors_completed, expires_at, token_mac, token_mac_key_version,
+			    session_epoch, attempt_generation)
+			 VALUES ($1, $2, '{password}', now() + interval '10 minutes', $3, 1, 1, 1)`,
+			[bytes(), userId, bytes()],
 		);
 		await connection.query(
 			`INSERT INTO ${schema}.totp_credential (user_id, secret_enc, key_version) VALUES ($1, $2, 1)`,
@@ -217,9 +222,10 @@ describe("deleting a user (S-TOKEN-5)", () => {
 			[userId, bytes(), bytes()],
 		);
 		await connection.query(
-			`INSERT INTO ${schema}.webauthn_challenge (challenge_sha256, purpose, user_id, expires_at)
-			 VALUES ($1, 'register', $2, now() + interval '5 minutes')`,
-			[bytes(), userId],
+			`INSERT INTO ${schema}.webauthn_challenge
+			   (challenge_sha256, purpose, user_id, expires_at, token_mac, token_mac_key_version)
+			 VALUES ($1, 'register', $2, now() + interval '5 minutes', $3, 1)`,
+			[bytes(), userId, bytes()],
 		);
 		await connection.query(
 			`INSERT INTO ${schema}.oauth_flow
@@ -238,8 +244,14 @@ describe("deleting a user (S-TOKEN-5)", () => {
 			[userId],
 		);
 
+		await connection.query(
+			`INSERT INTO ${schema}.security_state (user_id, version, digest, key_version)
+			 VALUES ($1, 1, $2, 1)`,
+			[userId, bytes()],
+		);
+
 		const owned = await userOwnedTableNames();
-		expect(owned).toHaveLength(13);
+		expect(owned).toHaveLength(14);
 
 		await connection.query(`DELETE FROM ${schema}.user WHERE id = $1`, [userId]);
 

@@ -74,11 +74,12 @@ afterAll(async () => {
 	await mounted.connection.close();
 });
 
-const PERMITTED_SESSION_WRITES = ["last_used_at", "idle_expires_at"];
+//the token mac binds the idle deadline so an extension writes it again (E-3520)
+const PERMITTED_SESSION_WRITES = ["last_used_at", "idle_expires_at", "token_mac"];
 
 /**
- * What a reading route may change, taken out of a snapshot: the rate buckets, and the two
- * deadline columns of the caller's own session row.
+ * What a reading route may change, taken out of a snapshot: the rate buckets, and the idle
+ * deadline of the caller's own session row with its last use and the MAC over it.
  */
 function withoutPermittedWrites(
 	snapshot: ReadonlyMap<string, readonly string[]>,

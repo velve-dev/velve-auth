@@ -36,6 +36,12 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
+      # The nightly tier runs the unit project, the acceptance case included, and that case fails
+      # rather than skips without a provider. This file was the workflow E-1906's guard could not
+      # see, and the tier went red on it every night (E-2900).
+      - name: Start the provider the acceptance case signs in through
+        run: ./tools/start-dex.sh
+
       - name: Nightly tier
         run: pnpm test:nightly
 
@@ -62,5 +68,7 @@ jobs:
       - name: What ships
         run: pnpm audit --prod
 
+      # One advisory is ignored in package.json, against a package only a development dependency
+      # reaches, and test/audit-exception.test.ts holds it to that and to its removal (E-2901).
       - name: What builds and tests it
         run: pnpm audit

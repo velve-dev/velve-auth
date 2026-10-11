@@ -5,13 +5,15 @@ import type { Clock } from "../http/environment.js";
 import type { VelveErrorCode } from "../http/error-map.js";
 import type { RateLimitRule } from "../http/rate-limit.js";
 import type { RouteDeclaration } from "../http/route.js";
+import type { SecurityStateFloor, SecurityStateSealedEvent } from "../security-state/anchor.js";
 
 export type RevokeReason =
 	| "sign_out"
 	| "revoked_by_user"
 	| "password_changed"
 	| "password_reset"
-	| "identity_linked";
+	| "identity_linked"
+	| "email_verified";
 
 export interface SignInEvent {
 	readonly method: "password" | "passkey" | "oauth" | "magic_link";
@@ -115,6 +117,15 @@ export type PluginRoute<Id extends string> = Omit<
 	"caller" | "originCheck" | "pendingCookie" | "oauthStateCookie" | "requestBody"
 > & { readonly caller: PluginCallerRequirement; readonly originCheck: "checked" };
 
+/** an anchor kept outside the reach of whoever can write the velve schema, which learns every new seal and sets a floor under its version */
+export interface SecurityStateAnchor {
+	recordSeal(event: SecurityStateSealedEvent, context: FrozenContext): Promise<void>;
+	minimumVersion(
+		input: { readonly userId: string },
+		context: FrozenContext,
+	): Promise<SecurityStateFloor | null>;
+}
+
 /** a plugin, whose declaration type cannot overwrite a core route */
 export interface VelvePlugin<Id extends string = string> {
 	readonly id: Id;
@@ -124,4 +135,5 @@ export interface VelvePlugin<Id extends string = string> {
 	readonly hooks?: PluginHooks;
 	readonly errorCodes?: readonly `${Id}.${string}`[];
 	readonly rateLimitRules?: Readonly<Record<`${Id}.${string}`, RateLimitRule>>;
+	readonly securityStateAnchor?: SecurityStateAnchor;
 }

@@ -1,6 +1,7 @@
 import type { Driver } from "../../db/driver.js";
 import { qualifiedTableName } from "../../db/identifier.js";
 import type { AuthenticationFactor } from "../../http/caller.js";
+import type { StoredTokenMac } from "../../token/binding.js";
 
 const AUTHENTICATION_FACTORS: readonly AuthenticationFactor[] = [
 	"password",
@@ -12,11 +13,13 @@ const AUTHENTICATION_FACTORS: readonly AuthenticationFactor[] = [
 
 export type SecondFactor = "totp" | "webauthn" | "recovery";
 
-export interface PendingAuthenticationInsert {
+export interface PendingAuthenticationInsert extends StoredTokenMac {
 	readonly userId: string;
 	readonly tokenHash: Uint8Array;
 	readonly factorsCompleted: readonly AuthenticationFactor[];
 	readonly lifetimeInSeconds: number;
+	readonly sessionEpoch: number;
+	readonly attemptGeneration: number;
 }
 
 export interface StoredPendingAuthentication {
@@ -40,9 +43,30 @@ export interface RemovedPendingAuthentication {
 	readonly factorsCompleted: readonly AuthenticationFactor[];
 }
 
-export interface CountedAttempt {
+/** a row whose MAC is still to be checked, with the completed factors exactly as stored */
+export interface PendingCandidate<Decoded> extends StoredTokenMac {
+	readonly userId: string;
 	readonly attempts: number;
-	readonly exhausted: boolean;
+	/** null where the column holds something that is no factor name */
+	readonly storedFactorNames: readonly string[] | null;
+	/** the epoch stored with the row, which its MAC binds */
+	readonly sessionEpoch: number;
+	/** the account's epoch now, read in the statement that read the row; 1 for an account without a seal row */
+	readonly currentEpoch: number;
+	/** the attempt generation stored with the row, which its MAC binds */
+	readonly attemptGeneration: number;
+	/** the account's attempt generation now, or null for an account without a seal row */
+	readonly currentAttemptGeneration: number | null;
+	/** the token hash of the pending row whose booking moved the account's attempt generation last */
+	readonly attemptLast: Uint8Array | null;
+	decode(): Decoded;
+}
+
+/** what a new pending row binds of its account's state */
+export interface PendingAccountState {
+	readonly sessionEpoch: number;
+	/** null for an account without a seal row, whose rows bind the first generation */
+	readonly attemptGeneration: number | null;
 }
 
 export interface PendingAuthenticationRepositoryOptions {
@@ -55,16 +79,20 @@ export interface PendingAuthenticationRepository {
 	insertPendingAuthentication(
 		input: PendingAuthenticationInsert,
 	): Promise<StoredPendingAuthentication>;
+	//the epoch and generation a new row binds are the account's own, which its token is about to prove (E-3484)
+	accountStateOf(input: { readonly userId: string }): Promise<PendingAccountState>;
 	findPendingAuthenticationByTokenHash(
 		tokenHash: Uint8Array,
-	): Promise<PendingAuthenticationWithOwner | null>;
-	countFailedAttempt(input: {
+	): Promise<PendingCandidate<PendingAuthenticationWithOwner> | null>;
+	//an attempt must be booked only over the counter and mac that were checked (S-INTEG-9)
+	bookAttempt(input: {
 		readonly tokenHash: Uint8Array;
-		readonly maximumAttempts: number;
-	}): Promise<CountedAttempt | null>;
+		readonly checked: StoredTokenMac & { readonly attempts: number };
+		readonly next: StoredTokenMac & { readonly attemptGeneration: number };
+	}): Promise<boolean>;
 	deletePendingAuthenticationByTokenHash(
 		tokenHash: Uint8Array,
-	): Promise<RemovedPendingAuthentication | null>;
+	): Promise<PendingCandidate<RemovedPendingAuthentication> | null>;
 }
 
 interface PendingRowShape {
@@ -83,9 +111,28 @@ interface EnrolmentColumns {
 
 interface InsertedPendingRowShape extends PendingRowShape, EnrolmentColumns {}
 
-interface OwnedPendingRowShape extends InsertedPendingRowShape {
+interface MacColumns {
+	readonly token_mac: Uint8Array;
+	readonly token_mac_key_version: number;
+	readonly session_epoch: string;
+	readonly current_epoch: string;
+	readonly attempt_generation: string;
+	readonly current_attempt_generation: string | null;
+	readonly attempt_last: Uint8Array | null;
+}
+
+interface OwnedPendingRowShape
+	extends Omit<InsertedPendingRowShape, "factors_completed">,
+		MacColumns {
+	readonly factor_names: string;
 	readonly disabled_at: unknown;
 	readonly observed_at: unknown;
+}
+
+interface RemovedPendingRowShape extends MacColumns {
+	readonly user_id: string;
+	readonly factor_names: string;
+	readonly attempts: number;
 }
 
 //an invalid date is still a date so an out of range deadline must be caught here (E-1584)
@@ -115,6 +162,33 @@ function toFactors(joined: string): readonly AuthenticationFactor[] {
 		}
 	}
 	return names.filter(isAuthenticationFactor);
+}
+
+//a comma inside a factor name must not split it in two (S-INTEG-9)
+function storedNamesOf(json: string): readonly string[] | null {
+	const names: unknown = JSON.parse(json);
+	return Array.isArray(names) && names.every((name) => typeof name === "string") ? names : null;
+}
+
+function candidateOf<Decoded>(
+	row: RemovedPendingRowShape,
+	decode: (factorsCompleted: string) => Decoded,
+): PendingCandidate<Decoded> {
+	const storedFactorNames = storedNamesOf(row.factor_names);
+	return {
+		userId: row.user_id,
+		attempts: row.attempts,
+		storedFactorNames,
+		sessionEpoch: Number(row.session_epoch),
+		currentEpoch: Number(row.current_epoch),
+		attemptGeneration: Number(row.attempt_generation),
+		currentAttemptGeneration:
+			row.current_attempt_generation === null ? null : Number(row.current_attempt_generation),
+		attemptLast: row.attempt_last,
+		tokenMac: row.token_mac,
+		tokenMacKeyVersion: row.token_mac_key_version,
+		decode: () => decode((storedFactorNames ?? []).join(",")),
+	};
 }
 
 //the array literal is built from a closed set so no request value can reach it
@@ -155,14 +229,32 @@ function toStored(row: InsertedPendingRowShape): StoredPendingAuthentication {
 //enrolments are read in the writing statement so a caller cannot name a missing factor (E-735)
 function insertStatement(table: string, totp: string, webauthn: string, recovery: string): string {
 	return `WITH inserted AS (
-		INSERT INTO ${table} (token_sha256, user_id, factors_completed, expires_at)
-		VALUES ($1, $2, $3::text[], now() + make_interval(secs => $4::double precision))
+		INSERT INTO ${table}
+			(token_sha256, user_id, factors_completed, expires_at, token_mac, token_mac_key_version,
+			session_epoch, attempt_generation)
+		VALUES ($1, $2, $3::text[], now() + make_interval(secs => $4::double precision), $5, $6,
+			$7::bigint, $8::bigint)
 		RETURNING user_id, factors_completed, attempts, created_at, expires_at
 	)
 	SELECT i.user_id, array_to_string(i.factors_completed, ',') AS factors_completed,
 		i.attempts, i.created_at, i.expires_at,
 		${enrolmentColumns(totp, webauthn, recovery, "i.user_id")}
 	FROM inserted i`;
+}
+
+//an account without a seal row is at the first epoch for a pending row in either mode (E-3484)
+function epochColumns(stored: string, states: string, owner: string): string {
+	return `${stored}::text AS session_epoch,
+		COALESCE((SELECT st.session_epoch FROM ${states} st WHERE st.user_id = ${owner}), 1)::text
+			AS current_epoch`;
+}
+
+//the generation a booking moves is read with the row to tell a row written back from a live one (E-3519)
+function generationColumns(row: string, states: string): string {
+	return `${row}.attempt_generation::text AS attempt_generation,
+		(SELECT st.attempt_generation::text FROM ${states} st WHERE st.user_id = ${row}.user_id)
+			AS current_attempt_generation,
+		(SELECT st.attempt_last FROM ${states} st WHERE st.user_id = ${row}.user_id) AS attempt_last`;
 }
 
 function enrolmentColumns(totp: string, webauthn: string, recovery: string, owner: string): string {
@@ -178,9 +270,13 @@ function resolveStatement(
 	totp: string,
 	webauthn: string,
 	recovery: string,
+	states: string,
 ): string {
-	return `SELECT p.user_id, array_to_string(p.factors_completed, ',') AS factors_completed,
-		p.attempts, p.created_at, p.expires_at, u.disabled_at, now() AS observed_at,
+	return `SELECT p.user_id, array_to_json(p.factors_completed)::text AS factor_names,
+		p.attempts, p.created_at, p.expires_at, p.token_mac, p.token_mac_key_version,
+		${epochColumns("p.session_epoch", states, "p.user_id")},
+		${generationColumns("p", states)},
+		u.disabled_at, now() AS observed_at,
 		${enrolmentColumns(totp, webauthn, recovery, "p.user_id")}
 	FROM ${table} p
 	JOIN ${users} u ON u.id = p.user_id
@@ -189,15 +285,24 @@ function resolveStatement(
 
 function countAttemptStatement(table: string): string {
 	return `UPDATE ${table} /* no owner predicate: S-OWNER-2, E-242, the predicate is the secret itself */
-	SET attempts = attempts + 1
-	WHERE token_sha256 = $1 AND expires_at > now()
+	SET attempts = $3, token_mac = $4, token_mac_key_version = $5, attempt_generation = $6
+	WHERE token_sha256 = $1 AND token_mac = $2 AND attempts = $3 - 1 AND expires_at > now()
 	RETURNING attempts`;
 }
 
-function deleteStatement(table: string): string {
+function deleteStatement(table: string, states: string): string {
 	return `DELETE FROM ${table} /* no owner predicate: S-OWNER-2, E-242, the predicate is the secret itself */
 	WHERE token_sha256 = $1 AND expires_at > now()
-	RETURNING user_id, array_to_string(factors_completed, ',') AS factors_completed`;
+	RETURNING user_id, array_to_json(factors_completed)::text AS factor_names, attempts,
+		token_mac, token_mac_key_version,
+		${epochColumns(`${table}.session_epoch`, states, `${table}.user_id`)},
+		${generationColumns(table, states)}`;
+}
+
+function accountStateStatement(states: string): string {
+	return `SELECT COALESCE((SELECT session_epoch FROM ${states} WHERE user_id = $1), 1)::text
+		AS session_epoch,
+		(SELECT attempt_generation FROM ${states} WHERE user_id = $1)::text AS attempt_generation`;
 }
 
 export function createPendingAuthenticationRepository(
@@ -208,35 +313,43 @@ export function createPendingAuthenticationRepository(
 	const webauthn = qualifiedTableName(options.schema, "webauthn_credential");
 	const recovery = qualifiedTableName(options.schema, "recovery_code");
 	const insertSql = insertStatement(table, totp, webauthn, recovery);
+	const states = qualifiedTableName(options.schema, "security_state");
 	const resolveSql = resolveStatement(
 		table,
 		qualifiedTableName(options.schema, "user"),
 		totp,
 		webauthn,
 		recovery,
+		states,
 	);
 	const countAttemptSql = countAttemptStatement(table);
-	const deleteSql = deleteStatement(table);
+	const deleteSql = deleteStatement(table, states);
+	const accountStateSql = accountStateStatement(states);
 
 	async function removeByTokenHash(
 		driver: Driver,
 		tokenHash: Uint8Array,
-	): Promise<RemovedPendingAuthentication | null> {
-		const [row] = await driver.query<{ user_id: string; factors_completed: string }>(deleteSql, [
-			tokenHash,
-		]);
+	): Promise<PendingCandidate<RemovedPendingAuthentication> | null> {
+		const [row] = await driver.query<RemovedPendingRowShape>(deleteSql, [tokenHash]);
 		return row === undefined
 			? null
-			: { userId: row.user_id, factorsCompleted: toFactors(row.factors_completed) };
+			: candidateOf(row, (factorsCompleted) => ({
+					userId: row.user_id,
+					factorsCompleted: toFactors(factorsCompleted),
+				}));
 	}
 
 	return {
-		async insertPendingAuthentication({ userId, tokenHash, factorsCompleted, lifetimeInSeconds }) {
+		async insertPendingAuthentication(insert) {
 			const [row] = await options.driver.query<InsertedPendingRowShape>(insertSql, [
-				tokenHash,
-				userId,
-				toFactorArray(factorsCompleted),
-				lifetimeInSeconds,
+				insert.tokenHash,
+				insert.userId,
+				toFactorArray(insert.factorsCompleted),
+				insert.lifetimeInSeconds,
+				insert.tokenMac,
+				insert.tokenMacKeyVersion,
+				insert.sessionEpoch,
+				insert.attemptGeneration,
 			]);
 			if (row === undefined) {
 				throw new TypeError("the insert of a pending authentication returned no row");
@@ -244,31 +357,41 @@ export function createPendingAuthenticationRepository(
 			return toStored(row);
 		},
 
-		async findPendingAuthenticationByTokenHash(tokenHash) {
-			const [row] = await options.driver.query<OwnedPendingRowShape>(resolveSql, [tokenHash]);
-			if (row === undefined) {
-				return null;
-			}
+		async accountStateOf({ userId }) {
+			const [row] = await options.driver.query<{
+				session_epoch: string;
+				attempt_generation: string | null;
+			}>(accountStateSql, [userId]);
 			return {
-				...toStored(row),
-				userDisabledAt: toOptionalDate(row.disabled_at),
-				observedAt: toDate(row.observed_at),
+				sessionEpoch: Number(row?.session_epoch),
+				attemptGeneration:
+					row?.attempt_generation === null || row?.attempt_generation === undefined
+						? null
+						: Number(row.attempt_generation),
 			};
 		},
 
-		//the count and the removal are one transaction so a fifth failure cannot leave the row
-		countFailedAttempt({ tokenHash, maximumAttempts }) {
-			return options.driver.transaction(async (tx) => {
-				const [row] = await tx.query<{ attempts: number }>(countAttemptSql, [tokenHash]);
-				if (row === undefined) {
-					return null;
-				}
-				const exhausted = row.attempts >= maximumAttempts;
-				if (exhausted) {
-					await removeByTokenHash(tx, tokenHash);
-				}
-				return { attempts: row.attempts, exhausted };
-			});
+		async findPendingAuthenticationByTokenHash(tokenHash) {
+			const [row] = await options.driver.query<OwnedPendingRowShape>(resolveSql, [tokenHash]);
+			return row === undefined
+				? null
+				: candidateOf(row, (factorsCompleted) => ({
+						...toStored({ ...row, factors_completed: factorsCompleted }),
+						userDisabledAt: toOptionalDate(row.disabled_at),
+						observedAt: toDate(row.observed_at),
+					}));
+		},
+
+		async bookAttempt({ tokenHash, checked, next }) {
+			const rows = await options.driver.query(countAttemptSql, [
+				tokenHash,
+				checked.tokenMac,
+				checked.attempts + 1,
+				next.tokenMac,
+				next.tokenMacKeyVersion,
+				next.attemptGeneration,
+			]);
+			return rows.length === 1;
 		},
 
 		deletePendingAuthenticationByTokenHash: (tokenHash) =>

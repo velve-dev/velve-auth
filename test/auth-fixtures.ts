@@ -8,6 +8,7 @@ import { rootKeyProvider } from "../src/core/keys/index.js";
 import { createVelveAuth, type VelveAuth } from "../src/index.js";
 import { openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
+import { resealDirectly } from "./security-state-fixtures.js";
 
 export const TEST_ORIGIN = "https://app.example.com";
 
@@ -102,6 +103,8 @@ export interface MountedAuth<M extends IdentityMode = "email"> {
 	readonly schema: string;
 	readonly log: LogSink;
 	readonly email: EmailOutbox;
+	/** seals an account again after a test changed its rows by SQL, as the library would have */
+	readonly reseal: (userId: string) => Promise<void>;
 }
 
 /**
@@ -133,17 +136,19 @@ export async function mountAuthInMode<M extends IdentityMode>(
 	const { connection, schema } = await openMigratedSchema(prefix);
 	const log = createLogSink();
 	const email = createEmailOutbox();
+	const keys = overrides.keys ?? testKeyProvider();
 	const auth = createVelveAuth<M>({
 		identity,
 		database: connection,
 		schema,
-		keys: testKeyProvider(),
+		keys,
 		origins: [TEST_ORIGIN],
 		email: { send: email.send },
 		log: log.write,
 		...overrides,
 	} as VelveAuthConfig<M>);
-	return { auth, handler: toWebHandler(auth), connection, schema, log, email };
+	const reseal = (userId: string) => resealDirectly(connection, schema, keys, userId);
+	return { auth, handler: toWebHandler(auth), connection, schema, log, email, reseal };
 }
 
 export async function mountAuth(
@@ -153,16 +158,19 @@ export async function mountAuth(
 	const { connection, schema } = await openMigratedSchema(prefix);
 	const log = createLogSink();
 	const email = createEmailOutbox();
+	const keys = overrides.keys ?? testKeyProvider();
 	const auth = createVelveAuth(
 		configFor({
 			database: connection,
 			schema,
+			keys,
 			log: log.write,
 			email: { send: email.send },
 			...overrides,
 		}),
 	);
-	return { auth, handler: toWebHandler(auth), connection, schema, log, email };
+	const reseal = (userId: string) => resealDirectly(connection, schema, keys, userId);
+	return { auth, handler: toWebHandler(auth), connection, schema, log, email, reseal };
 }
 
 export function requestTo(

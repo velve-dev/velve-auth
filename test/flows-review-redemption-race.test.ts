@@ -13,6 +13,9 @@ const REPETITIONS = 5;
 type Handler = (request: Request) => Promise<Response>;
 
 let connections: TestConnection[] = [];
+//every instance over one database answers to one key ring, as a deployment's processes do
+const SHARED_KEYS = testKeyProvider();
+
 let handlers: Handler[] = [];
 let schema: string;
 const outbox: EmailMessage[] = [];
@@ -22,7 +25,7 @@ function handlerOn(connection: TestConnection): Handler {
 		identity: { mode: "email" },
 		database: connection,
 		schema,
-		keys: testKeyProvider(),
+		keys: SHARED_KEYS,
 		origins: [TEST_ORIGIN],
 		// The race is the subject; a bucket that refuses the forty-ninth request would measure itself.
 		rateLimit: {

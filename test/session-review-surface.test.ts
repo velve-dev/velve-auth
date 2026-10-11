@@ -197,3 +197,14 @@ describe("DOCUMENTATION.md covers every method the session service offers", () =
 		expect(methods.filter((name) => !documentation.includes(`\`${name}(`))).toEqual([]);
 	});
 });
+
+//every session issue is bound to the version and epoch of the check that authorised it (S-INTEG-9, E-3403)
+describe("no issue is authorised by the read its own lock takes", () => {
+	it("leaves read_under_lock out of every module of the core", () => {
+		const naming = coreFiles().filter((file) =>
+			readFileSync(file, "utf8").includes("read_under_lock"),
+		);
+
+		expect(naming).toStrictEqual([]);
+	});
+});
