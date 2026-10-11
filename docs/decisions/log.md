@@ -15098,3 +15098,43 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Comparing build entries by their first lines or their headings only, which would have passed the old E-100's paragraphs. (b) Making the log quote the case study's rendering, which turns the source around. (c) Reading E-01 … E-46 from the log as well, which would stop comparing the case study with section 7, the source E-1970 names for them.
 **Reason.** A copy nothing compares with its source drifts, and E-100 is the measurement: it drifted the moment its source changed.
 **Price.** A Where line anywhere but at the end of a case-study entry leaves blank lines the log does not have, and the copy then fails until the line is moved. A change to a log entry the case study holds now fails until the case study is brought into step, which is intended.
+
+<a id="e-3540"></a>
+
+### A push to main publishes the package through npm trusted publishing
+`E-3540` · gate and infrastructure · publish path, decided by the owner, reverses E-2760
+
+**Context.** Under `E-2760` the package was published from the maintainer's machine, so that no registry credential was stored on GitHub, and `E-2761` gave up provenance for it. The owner decided that a push to `main` publishes the package automatically through npm trusted publishing, which takes GitHub's OIDC token as the proof of where the publish runs and needs no stored credential either. That is the migration `E-1416` wrote down and `E-2760` (a) rejected only because it was not that branch's choice.
+**Rejected.** (a) A token secret, `NPM_TOKEN` read into `NODE_AUTH_TOKEN`, which is the long-lived credential with publish rights `E-1416` called transitional and `E-2760` removed. (b) Keeping the manual publish as the path. It runs on whatever machine and npm the maintainer has, carries no provenance, and nothing enforces that the whole sequence is run. (c) A second filename or a job in `release.yml`. npm's trusted publisher registration names one workflow file, and the owner registers `publish.yml`.
+**Reason.** `.github/workflows/publish.yml` runs on every push to `main`. Its `publish` job is the only job in any workflow holding `id-token: write`, together with `contents: write` for the tag push; the workflow grants `contents: read` to everything else. No workflow names a token, `registry-url` or a secret. The publish is `npm publish --provenance --access public --tag "$DIST_TAG"`, with the dist-tag from `pnpm run release-dist-tag`. `test/release-workflow.test.ts` asserts all of it, and each of its new cases went red on a fault planted into the file: a tag trigger, a cancelling concurrency group, a publish without the skip condition, a missing `pnpm gate`, a publish without `--provenance`, npm 11.5.0, a third permission, a `NODE_AUTH_TOKEN`, the tag pushed before the publish, `id-token` at workflow level, and a second `npm publish` in another job. The maintainer's sequence in `docs/working-method.md` and its test are left as they are, because changing them was outside this change; it remains usable as a fallback, and it publishes without provenance.
+**Price.** Whoever can change `main` or `publish.yml` can now publish the package: a compromised account with merge rights, a weakened branch protection, or a malicious action pulled in by a workflow publishes something the registry attests as built from this repository. Branch protection on `main`, the review that gates it, and the set of allowed actions are now part of the supply chain. Renaming `publish.yml` stops publishing, and nothing in this repository can see that. `release.yml` still states that the maintainer publishes and still fires on a `v*` tag, but the tag `publish.yml` pushes is pushed with the workflow's own token, and GitHub starts no workflow for a push made with it, so the tag's run no longer happens; bringing `release.yml` into step was outside this change.
+
+<a id="e-3541"></a>
+
+### The publish is skipped for a version the registry already has, and two pushes never publish twice
+`E-3541` · gate and infrastructure · publish workflow, settled
+
+**Context.** Every push to `main` runs `publish.yml`, and most of them do not raise the version. Two pushes close together would otherwise run two publishes of one version.
+**Rejected.** (a) A new tool for the registry read, which this change was not allowed to add. (b) Cancelling the older run on a newer push, which can cancel a publish after `npm publish` returned and before the tag was pushed.
+**Reason.** The `decide` job asks `npm view "$NAME@$VERSION" version`. Measured here with npm 10.9.4 against the registry: an existing version printed it and exited 0, a version the package does not have and a package the registry has never seen both exited 1 with `E404`. The step reads exit 0 with the version as published, exit 0 with nothing as absent, `E404` as absent, and anything else fails the job, so an unreachable registry never reads as absent. `verify` and `publish` run only when it says absent. The workflow's one concurrency group, `publish`, has `cancel-in-progress: false`, so a second push waits and then finds its version published.
+**Price.** The read runs on the npm the Node image bundles, whose answer for an absent version was measured on 10.9.4 only. A newer npm that answered an absent version in a third way fails the `decide` job rather than publishing, which costs a release and not a wrong publish. GitHub keeps one pending run per group, so of three quick pushes the middle one is dropped; it raised no version the third does not also carry.
+
+<a id="e-3542"></a>
+
+### The publish runs the whole gate and the release tier itself rather than calling ci.yml
+`E-3542` · gate and infrastructure · publish workflow, settled
+
+**Context.** Architecture 6.19 puts the release tier before every release, and a publish over a commit the gate has not passed is worse than none (`E-1429`). `ci.yml`'s concurrency group is `ci-${{ github.ref }}` with `cancel-in-progress: true`, and it already runs on every push to `main`.
+**Rejected.** (a) Calling `ci.yml` or `release.yml` from `publish.yml`. A called run reports the caller's ref, so it shares the group with `ci.yml`'s own run on the same push and one of the two cancels the other; repairing the group is a change to `ci.yml` this change was not allowed to make. (b) Waiting for `release-tier.yml` to be green on the commit through `pnpm check:release-tier`, which checks once and would need a polling loop, and leaves the gate unrun.
+**Reason.** The `verify` job checks out the full history, runs `pnpm check:release-tag "v$VERSION" "$DIST_TAG"`, starts the provider, runs `pnpm gate` and then `pnpm test:release`, and `publish` needs it. On `main` the log and attribution checks resolve a branch that is not ahead of `origin/main`: `check:log-append` requires an added line only when there are commits ahead, and `check:attribution` scans the whole history instead of a range.
+**Price.** The gate runs once more per release than before, on one leg (PostgreSQL 16, the Node `.node-version` names) rather than the three of `ci.yml`, which run on the same push but do not block the publish. The nightly tier no longer runs on the released commit, which `release.yml` did over the tag.
+
+<a id="e-3543"></a>
+
+### The publish pins its npm and cuts the tag before it publishes
+`E-3543` · gate and infrastructure · publish workflow, settled
+
+**Context.** npm's trusted publishing needs npm 11.5.1 or newer, and which npm the Node in `.node-version` bundles is not pinned by anything in this repository. `E-2765` cut the tag before the publish so that a refusal costs nothing.
+**Rejected.** Reading the bundled npm's version and installing only when it is older, which makes the publish run on whatever the image carries that day.
+**Reason.** The `publish` job installs `npm@11.20.0`, released 2026-09-22, and prints its version. It builds, cuts the annotated tag `v<version>` as `github-actions[bot]`, publishes, pushes the tag, and runs `pnpm check:published-version "$DIST_TAG"`. The tag is annotated rather than signed, because a signing key on the runner would be a stored credential.
+**Price.** A publish that succeeds and whose tag push then fails leaves a published version without its tag, and a rerun of the job fails at `npm publish` over the published version; the tag has to be pushed by hand. `check:published-version` does not check the attestation, because the tool was not this change's to edit; the attestation is visible with `npm audit signatures`, and nothing in this repository fails when it is missing.
