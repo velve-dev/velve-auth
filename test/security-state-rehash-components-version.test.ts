@@ -10,7 +10,7 @@ import {
 import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
 import type { TestConnection } from "./db-postgres-connection.js";
 import { generateRootKey } from "./keys-fixtures.js";
-import { seedAccount } from "./security-state-fixtures.js";
+import { resealDirectly, seedAccount } from "./security-state-fixtures.js";
 
 //only a rehash that changes nothing but the stored password hash keeps the components version (E-3600)
 
@@ -72,15 +72,12 @@ function passwordReplacement(
 
 async function sealedAccount(): Promise<{ userId: string; componentsVersion: number }> {
 	const userId = await seedAccount(connection, schema, { password: true });
-	const first = await sealAccount(services(), userId, {
-		epoch: "keep",
-		write: async () => null,
-		after: (read) => componentsAfter(read, {}),
-	});
-	if (first.kind !== "sealed") {
-		throw new Error(`the first seal was refused: ${first.reason}`);
-	}
-	return { userId, componentsVersion: first.sealed.generations.componentsVersion };
+	await resealDirectly(connection, schema, keys, userId);
+	const [row] = await connection.query<{ components_version: string }>(
+		`SELECT components_version::text FROM ${schema}.security_state WHERE user_id = $1`,
+		[userId],
+	);
+	return { userId, componentsVersion: Number(row?.components_version) };
 }
 
 async function componentsVersionAcross(
