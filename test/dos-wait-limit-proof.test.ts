@@ -245,19 +245,22 @@ describe("T-DOS-4 — a sign-in that waits past the limit is refused, not queued
 			}
 			const queued = performance.now();
 			waited.push(
-				semaphore.run(() => Promise.resolve()).then(
-					() => Number.NaN,
-					() => performance.now() - queued,
-				),
+				semaphore
+					.run(() => Promise.resolve())
+					.then(
+						() => Number.NaN,
+						() => performance.now() - queued,
+					),
 			);
 		}
 		const refusedAfter = await Promise.all(waited);
 		releaseHolder();
 		await holder;
 
-		expect(refusedAfter.filter((elapsed) => Number.isNaN(elapsed)), "a waiter granted").toStrictEqual(
-			[],
-		);
+		expect(
+			refusedAfter.filter((elapsed) => Number.isNaN(elapsed)),
+			"a waiter granted",
+		).toStrictEqual([]);
 		expect(
 			refusedAfter.filter((elapsed) => elapsed < waitLimitInMilliseconds),
 			"a waiter refused before its wait reached the limit",
