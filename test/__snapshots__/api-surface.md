@@ -2404,7 +2404,7 @@ import { OwnedRowRepository, OwnedRowRepositoryOptions, UnknownColumnError, crea
 
 //#region src/index.d.ts
 declare function createVelveAuth<M extends IdentityMode>(config: VelveAuthConfig<M>): VelveAuth<M>;
-declare const VELVE_AUTH_VERSION = "2.0.0";
+declare const VELVE_AUTH_VERSION = "2.0.1";
 //#endregion
 export {
 	type Actor,
