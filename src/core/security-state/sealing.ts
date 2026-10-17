@@ -44,6 +44,8 @@ export interface SealingChange<T> {
 	afterSeal?(tx: Driver, sealed: SealTarget, written: T): Promise<void>;
 	/** the generations the change moves, decided on the verified read */
 	moves?(read: SecurityStateRead): GenerationMoves;
+	/** set only by a rehash, which stores the password a sign-in has just verified again under other parameters or another key version */
+	readonly restoresTheVerifiedPassword?: true;
 }
 
 /** which generations a change moves, each with the token hash of the row that moved it where the seal names one */
@@ -340,6 +342,7 @@ export async function sealUnderAccountLock<T>(
 		version,
 		epoch,
 		previous: generations.componentsVersion,
+		restoresTheVerifiedPassword: change.restoresTheVerifiedPassword === true,
 	});
 	const sealed: SealTarget = { ...target, componentsVersion };
 	const { keyVersion, digest } = await computeSeal(context.keys, {
@@ -367,11 +370,30 @@ export async function sealUnderAccountLock<T>(
 function componentsVersionAfter(
 	read: SecurityStateRead,
 	after: SealedComponents,
-	seal: { readonly version: number; readonly epoch: "keep" | "raise"; readonly previous: number },
+	seal: {
+		readonly version: number;
+		readonly epoch: "keep" | "raise";
+		readonly previous: number;
+		readonly restoresTheVerifiedPassword: boolean;
+	},
 ): number {
-	return read.seal === null || seal.epoch === "raise" || !sameComponents(read, after)
+	const signsInAsBefore =
+		sameComponents(read, after) ||
+		(seal.restoresTheVerifiedPassword && onlyThePasswordHashMoved(read, after));
+	return read.seal === null || seal.epoch === "raise" || !signsInAsBefore
 		? seal.version
 		: seal.previous;
+}
+
+//a rehash keeps what a check before it authorised as the same password still signs the account in (E-3600)
+function onlyThePasswordHashMoved(read: SecurityStateRead, after: SealedComponents): boolean {
+	const before = sealedComponentsOf(read).password;
+	return (
+		before !== null &&
+		after.password !== null &&
+		before.setBySessionId === after.password.setBySessionId &&
+		sameComponents(read, { ...after, password: before })
+	);
 }
 
 function sameComponents(read: SecurityStateRead, after: SealedComponents): boolean {
