@@ -207,7 +207,7 @@ describe("T-DOS-4 — a sign-in that waits past the limit is refused, not queued
 					"a place granted after waiting out the limit",
 				).toStrictEqual([]);
 				expect(
-					waits.refused.filter((waited) => waited < DEFAULT_WAIT_LIMIT_IN_MILLISECONDS - 1),
+					waits.refused.filter((waited) => waited < DEFAULT_WAIT_LIMIT_IN_MILLISECONDS),
 					"a place refused before the limit",
 				).toStrictEqual([]);
 				expect(refused.every((answer) => answer.code === "rate_limited")).toBe(true);
@@ -223,6 +223,49 @@ describe("T-DOS-4 — a sign-in that waits past the limit is refused, not queued
 		},
 		120_000,
 	);
+
+	//a timer comes due on the loop's millisecond clock up to a millisecond before the wait has (E-3571)
+	it("refuses no waiter before it has waited the limit out on the clock the limit is measured on", async () => {
+		const waitLimitInMilliseconds = 20;
+		const waiters = 60;
+		const semaphore = createKdfSemaphore({ limit: 1, waitLimitInMilliseconds });
+		let releaseHolder = (): void => undefined;
+		const holder = semaphore.run(
+			() =>
+				new Promise<void>((resolve) => {
+					releaseHolder = resolve;
+				}),
+		);
+
+		const waited: Promise<number>[] = [];
+		for (let index = 0; index < waiters; index += 1) {
+			const offsetUntil = performance.now() + Math.random();
+			while (performance.now() < offsetUntil) {
+				//each waiter queues at a different fraction of the loop's millisecond
+			}
+			const queued = performance.now();
+			waited.push(
+				semaphore
+					.run(() => Promise.resolve())
+					.then(
+						() => Number.NaN,
+						() => performance.now() - queued,
+					),
+			);
+		}
+		const refusedAfter = await Promise.all(waited);
+		releaseHolder();
+		await holder;
+
+		expect(
+			refusedAfter.filter((elapsed) => Number.isNaN(elapsed)),
+			"a waiter granted",
+		).toStrictEqual([]);
+		expect(
+			refusedAfter.filter((elapsed) => elapsed < waitLimitInMilliseconds),
+			"a waiter refused before its wait reached the limit",
+		).toStrictEqual([]);
+	});
 
 	//a busy event loop runs the freed place's grant before the due timer that would refuse the waiter
 	it("refuses a waiter whose limit passed while the loop was busy instead of granting it the freed place", async () => {

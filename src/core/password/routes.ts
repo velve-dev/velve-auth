@@ -118,6 +118,7 @@ function rehashUnderTheLock(
 			{ unproven: userId },
 			{
 				epoch: "keep",
+				restoresTheVerifiedPassword: true,
 				write: async (tx, read) => {
 					//a rehash only replaces the ciphertext the sign-in verified and the read still holds (S-INTEG-4)
 					if (

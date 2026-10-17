@@ -56,6 +56,23 @@ export function createKdfSemaphore(options: KdfSemaphoreOptions): KdfSemaphore {
 		}
 	}
 
+	function refuseOnceTheLimitHasPassed(waiter: Waiter, delayInMilliseconds: number): void {
+		waiter.timer = setTimeout(() => {
+			//the timer runs on the loop's millisecond clock and can come due before the wait has (E-3571)
+			if (!hasWaitedOutTheLimit(waiter)) {
+				const remaining = waitLimitInMilliseconds - (performance.now() - waiter.queuedAt);
+				refuseOnceTheLimitHasPassed(waiter, remaining);
+				return;
+			}
+			const queued = waiting.indexOf(waiter);
+			if (queued !== -1) {
+				waiting.splice(queued, 1);
+			}
+			//waiting past the limit is a refusal and never a memory error (S-DOS-4)
+			waiter.refuse(new VelveError("rate_limited"));
+		}, delayInMilliseconds);
+	}
+
 	function acquire(): Promise<void> {
 		if (inFlight < options.limit) {
 			enter();
@@ -70,16 +87,8 @@ export function createKdfSemaphore(options: KdfSemaphoreOptions): KdfSemaphore {
 				timer: undefined,
 			};
 
-			waiter.timer = setTimeout(() => {
-				const queued = waiting.indexOf(waiter);
-				if (queued !== -1) {
-					waiting.splice(queued, 1);
-				}
-				//waiting past the limit is a refusal and never a memory error (S-DOS-4)
-				waiter.refuse(new VelveError("rate_limited"));
-			}, waitLimitInMilliseconds);
-
 			waiting.push(waiter);
+			refuseOnceTheLimitHasPassed(waiter, waitLimitInMilliseconds);
 		});
 	}
 

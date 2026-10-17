@@ -71,7 +71,7 @@ pnpm add @velve/auth
 ```
 
 That is the whole install: no tag to remember, no `postinstall`, no native
-binding, no build step. `latest` points at `2.0.0` and `^2.0.0` resolves to it.
+binding, no build step. `latest` points at `2.0.1` and `^2.0.0` resolves to it.
 
 ## Example
 
@@ -134,12 +134,14 @@ what was rejected, the reason and the price. `pnpm check:decision-refs` fails if
 
 ## Status
 
-> **Status: 2.0.0.** `latest` points at it, so `pnpm add @velve/auth` installs
-> it. Under semver the documented surface is a promise: nothing in it changes
-> shape without a major version, and 2.0.0 is one. It is a security release,
+> **Status: 2.0.1.** `latest` points at it, so `pnpm add @velve/auth` installs
+> it. It is a patch of 2.0.0 that fixes two bugs and changes nothing else; see
+> [`docs/releases/2.0.1.md`](./docs/releases/2.0.1.md). Under semver the
+> documented surface is a promise: nothing in it changes shape without a major
+> version, and 2.0.0 is one. 2.0.0 is a security release,
 > prepared as 1.2.0 and never published under that number, and it ships as a
 > major because some of its fixes break existing installations (E-3020). What
-> breaks, in short:
+> 2.0.0 breaks, in short:
 >
 > - `@velve/auth/postgres-js`, `/neon` and `/import` are removed; they exported
 >   nothing (E-3021).

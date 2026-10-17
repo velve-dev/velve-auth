@@ -67,6 +67,18 @@ function runsTheUnitProject(command: string): boolean {
 	return script !== undefined && SCRIPTS_RUNNING_THE_UNIT_PROJECT.includes(script);
 }
 
+const SCRIPTS_RUNNING_THE_GATE = Object.entries(manifest.scripts)
+	.filter(([, body]) => /\bpnpm test(?:\s|$)/.test(body))
+	.map(([script]) => script);
+
+function runsTheUnitProjectItselfOrThroughTheGate(command: string): boolean {
+	const script = scriptNamedBy(command);
+	return (
+		runsTheUnitProject(command) ||
+		(script !== undefined && SCRIPTS_RUNNING_THE_GATE.includes(script))
+	);
+}
+
 /** `needs: a` and `needs: [a, b]` are the same declaration, and the chain below reads both. */
 /** A comment is prose about the file, and the comment beside the job below states the very
  * expression it warns against — reading it as code reports the repaired file as broken. */
@@ -272,6 +284,28 @@ describe("the release workflow", () => {
 		},
 	);
 
+	/**
+	 * A case of the unit project reads commits by name with `git rev-list`, which a shallow
+	 * checkout does not hold, and the nightly tier failed on it because only ci.yml and the
+	 * publish's verification fetched the whole history (E-3572). This reads every workflow and
+	 * requires every job that runs the unit project, itself or through `pnpm gate`, to check out
+	 * with `fetch-depth: 0`.
+	 */
+	it.each(readdirSync(`${repositoryRoot}.github/workflows`))(
+		"checks out the whole history in every job of %s that runs the unit project",
+		(name) => {
+			for (const [jobName, region] of jobRegions(workflow(name))) {
+				if (!commands(region).some(runsTheUnitProjectItselfOrThroughTheGate)) {
+					continue;
+				}
+				expect(
+					withoutYamlComments(region),
+					`${name} job ${jobName} runs the unit project on a shallow checkout`,
+				).toMatch(/- uses: actions\/checkout@v\d+\n\s+with:\n(?:\s+.+\n)*?\s+fetch-depth: 0\n/);
+			}
+		},
+	);
+
 	it("recognises every script that runs the unit project", () => {
 		expect(SCRIPTS_RUNNING_THE_UNIT_PROJECT).toContain("test");
 		expect(SCRIPTS_RUNNING_THE_UNIT_PROJECT).toContain("test:nightly");
@@ -416,5 +450,17 @@ describe("the publish workflow", () => {
 
 		expect(order.every((position) => position > 0)).toBe(true);
 		expect([...order].sort((a, b) => a - b)).toStrictEqual(order);
+	});
+
+	/** npm was still processing 2.0.0 when the registry check's default 180 s ran out (E-3574). */
+	it("gives the registry check after the publish fifteen minutes", () => {
+		const region = withoutYamlComments(job("publish", publishJobs));
+		const step = region.slice(
+			region.lastIndexOf("\n      - ", region.indexOf("check:published-version")),
+		);
+
+		expect(step).toMatch(
+			/^\n {6}- name: .+\n {8}env:\n {10}VELVE_REGISTRY_DEADLINE_MS: "900000"\n {8}run: pnpm check:published-version "\$DIST_TAG"\n/,
+		);
 	});
 });

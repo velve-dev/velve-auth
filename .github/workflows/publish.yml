@@ -135,4 +135,9 @@ jobs:
           git tag --annotate "v$VERSION" --message "v$VERSION"
       - run: npm publish --provenance --access public --tag "$DIST_TAG"
       - run: git push origin "refs/tags/v$VERSION"
-      - run: pnpm check:published-version "$DIST_TAG"
+      # npm was still processing 2.0.0 when the check's default of 180 s ran out, so the check
+      # after a publish waits fifteen minutes before it calls the version absent (E-3574).
+      - name: Check the registry serves the published version
+        env:
+          VELVE_REGISTRY_DEADLINE_MS: "900000"
+        run: pnpm check:published-version "$DIST_TAG"
