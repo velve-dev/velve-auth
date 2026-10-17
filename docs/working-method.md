@@ -223,7 +223,7 @@ The maintainer runs it as `pnpm run --silent release-dist-tag` to choose the --t
 
 ### `pnpm check:published-version`
 
-Takes the dist-tag as its argument; VELVE_REGISTRY names a registry other than npm's and VELVE_REGISTRY_DEADLINE_MS how long it polls for a publish to become readable. Tells a registry saying the version is absent from one that could not be asked, and refuses only on the second. The maintainer runs it after publishing from their own machine, and no workflow runs it, because no workflow publishes and only the maintainer knows when the publish has happened (E-2760). It asks for no provenance attestation: npm mints one only from a CI provider's OIDC token, so a version published from a workstation carries none (E-2761). pnpm gate does not run it, because a version nobody has published has nothing to resolve
+Takes the dist-tag as its argument; VELVE_REGISTRY names a registry other than npm's and VELVE_REGISTRY_DEADLINE_MS how long it polls for a publish to become readable. Tells a registry saying the version is absent from one that could not be asked, and refuses only on the second. publish.yml runs it after its publish on every push to main that raises the version, with VELVE_REGISTRY_DEADLINE_MS at fifteen minutes, and the maintainer runs it after the manual fallback (E-3540). It asks for no provenance attestation: npm mints one only from a CI provider's OIDC token, so a version published from a workstation carries none (E-2761). pnpm gate does not run it, because a version nobody has published has nothing to resolve
 
 ### Publishing a version
 
