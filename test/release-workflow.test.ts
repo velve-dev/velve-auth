@@ -67,6 +67,18 @@ function runsTheUnitProject(command: string): boolean {
 	return script !== undefined && SCRIPTS_RUNNING_THE_UNIT_PROJECT.includes(script);
 }
 
+const SCRIPTS_RUNNING_THE_GATE = Object.entries(manifest.scripts)
+	.filter(([, body]) => /\bpnpm test(?:\s|$)/.test(body))
+	.map(([script]) => script);
+
+function runsTheUnitProjectItselfOrThroughTheGate(command: string): boolean {
+	const script = scriptNamedBy(command);
+	return (
+		runsTheUnitProject(command) ||
+		(script !== undefined && SCRIPTS_RUNNING_THE_GATE.includes(script))
+	);
+}
+
 /** `needs: a` and `needs: [a, b]` are the same declaration, and the chain below reads both. */
 /** A comment is prose about the file, and the comment beside the job below states the very
  * expression it warns against — reading it as code reports the repaired file as broken. */
@@ -268,6 +280,28 @@ describe("the release workflow", () => {
 					steps.slice(0, firstSuiteRun),
 					`${name} job ${jobName} runs the unit project before starting the provider`,
 				).toContain("./tools/start-dex.sh");
+			}
+		},
+	);
+
+	/**
+	 * A case of the unit project reads commits by name with `git rev-list`, which a shallow
+	 * checkout does not hold, and the nightly tier failed on it because only ci.yml and the
+	 * publish's verification fetched the whole history (E-3572). This reads every workflow and
+	 * requires every job that runs the unit project, itself or through `pnpm gate`, to check out
+	 * with `fetch-depth: 0`.
+	 */
+	it.each(readdirSync(`${repositoryRoot}.github/workflows`))(
+		"checks out the whole history in every job of %s that runs the unit project",
+		(name) => {
+			for (const [jobName, region] of jobRegions(workflow(name))) {
+				if (!commands(region).some(runsTheUnitProjectItselfOrThroughTheGate)) {
+					continue;
+				}
+				expect(
+					withoutYamlComments(region),
+					`${name} job ${jobName} runs the unit project on a shallow checkout`,
+				).toMatch(/- uses: actions\/checkout@v\d+\n\s+with:\n(?:\s+.+\n)*?\s+fetch-depth: 0\n/);
 			}
 		},
 	);

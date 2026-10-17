@@ -18358,3 +18358,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Widening the case's allowance from 1 ms to 2 ms, which would make the case agree with a refusal S-DOS-4 does not allow. Rounding the delay up by a millisecond, which only moves the bound by a guessed amount and still disagrees with `hasWaitedOutTheLimit`.
 **Reason.** The timer now asks `hasWaitedOutTheLimit` when it runs and, while the wait is still short, sets itself again for what is left, so a refusal happens only once the wait has reached the limit on the clock the freed-place check already uses. A blocking-tier case queues sixty waiters at different fractions of a millisecond behind a held place with a 20 ms limit; it failed three of three runs before the change and passes after it. The nightly case's allowance of a millisecond under the limit is removed, since nothing now refuses before it. The nightly case then passed 12 of 12 runs started four at a time.
 **Price.** A refusal can now come up to a loop turn after the limit rather than up to a millisecond before it, which T-DOS-4's 500 ms allowance for the answer covers.
+
+<a id="e-3572"></a>
+
+### Every job that runs the unit project checks out the whole history
+`E-3572` · gate and infrastructure · workflows, settled
+
+**Context.** The nightly run 39014886262 failed `test/security-state-spec-counts.test.ts`, which counts commits with `git rev-list --reverse 21c536b^..6abacf9`: `nightly.yml` checked out with the default depth of one commit, and git answered "unknown revision". ci.yml's gate and publish.yml's verification fetch the whole history; nightly.yml's `nightly` job and release.yml's `tiers` job, which also run the unit project through `pnpm test:nightly`, did not. release-tier.yml runs only the release project, whose files read no history, and the audit job runs no tests.
+**Rejected.** Fetching only the two commits the case names, which would leave the next case that reads history to fail the same way on the one workflow it was not tried on. Skipping the case on a shallow checkout, which would hide it on the tier it fails on.
+**Reason.** Both jobs check out with `fetch-depth: 0`. A case in `test/release-workflow.test.ts` reads every workflow and requires every job that runs the unit project, itself or through a script that runs `pnpm test` such as `pnpm gate`, to check out with `fetch-depth: 0`, as the provider case beside it does for Dex (E-2900). It failed on exactly those two jobs before the change.
+**Price.** The two jobs fetch the whole history, a few seconds on this repository's size. The case reads the workflows as text, so a checkout written in another shape than `with:` under the step would be reported as shallow.
