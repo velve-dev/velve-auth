@@ -18378,3 +18378,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** An ignore entry for either, which E-2901's pattern keeps for an advisory with no patched version. `pnpm update source-map-js smol-toml --depth Infinity`, which also rewrote every specifier in `package.json` to the installed version, the six core dependencies included. A `pnpm.overrides` entry kept in `package.json`, which would hold the two packages at a floor nothing upstream asks for.
 **Reason.** The lockfile alone now resolves `source-map-js` 1.2.2 and `smol-toml` 1.9.1; nine lines changed and `package.json` did not. They were moved by adding an override for the two, installing, removing the override and installing again, which kept the new resolutions. `pnpm install --frozen-lockfile` accepts the result, `pnpm audit --prod` finds nothing, and `pnpm audit` reports only the advisory E-2901 ignores and exits 0.
 **Price.** The next advisory against a development dependency fails the nightly audit again; that is what the job is for.
+
+<a id="e-3574"></a>
+
+### The registry check after the publish waits fifteen minutes
+`E-3574` · gate and infrastructure · publish workflow, settled
+
+**Context.** publish.yml published 2.0.0 and then ran `pnpm check:published-version "$DIST_TAG"`, which polls the registry until the version and its dist-tag read back. It gave up after its default of 180 s while npm was still processing the version, so the job went red on a publish that had succeeded. How long npm took in the end was not measured here.
+**Rejected.** Raising the tool's default, which also lengthens the maintainer's run from their own machine and the fault cases that rely on it being finite. Dropping the step, which would leave a publish that never becomes readable unreported.
+**Reason.** The step sets `VELVE_REGISTRY_DEADLINE_MS` to 900000 for itself alone, so only the check that runs straight after a publish waits fifteen minutes. A case in `test/release-workflow.test.ts` requires that environment on that step, and failed before the change.
+**Price.** A publish that never becomes readable now holds the job fifteen minutes before it fails, and fifteen minutes is a choice, not a measurement of how long npm can take.

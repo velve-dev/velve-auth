@@ -451,4 +451,16 @@ describe("the publish workflow", () => {
 		expect(order.every((position) => position > 0)).toBe(true);
 		expect([...order].sort((a, b) => a - b)).toStrictEqual(order);
 	});
+
+	/** npm was still processing 2.0.0 when the registry check's default 180 s ran out (E-3574). */
+	it("gives the registry check after the publish fifteen minutes", () => {
+		const region = withoutYamlComments(job("publish", publishJobs));
+		const step = region.slice(
+			region.lastIndexOf("\n      - ", region.indexOf("check:published-version")),
+		);
+
+		expect(step).toMatch(
+			/^\n {6}- name: .+\n {8}env:\n {10}VELVE_REGISTRY_DEADLINE_MS: "900000"\n {8}run: pnpm check:published-version "\$DIST_TAG"\n/,
+		);
+	});
 });
