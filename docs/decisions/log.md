@@ -18368,3 +18368,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Fetching only the two commits the case names, which would leave the next case that reads history to fail the same way on the one workflow it was not tried on. Skipping the case on a shallow checkout, which would hide it on the tier it fails on.
 **Reason.** Both jobs check out with `fetch-depth: 0`. A case in `test/release-workflow.test.ts` reads every workflow and requires every job that runs the unit project, itself or through a script that runs `pnpm test` such as `pnpm gate`, to check out with `fetch-depth: 0`, as the provider case beside it does for Dex (E-2900). It failed on exactly those two jobs before the change.
 **Price.** The two jobs fetch the whole history, a few seconds on this repository's size. The case reads the workflows as text, so a checkout written in another shape than `with:` under the step would be reported as shallow.
+
+<a id="e-3573"></a>
+
+### The two development-only advisories are closed by patched versions inside the ranges already declared
+`E-3573` · gate and infrastructure · dependencies, settled
+
+**Context.** The nightly audit job failed on two advisories besides the one E-2901 ignores: GHSA-68fv-2mgg-jv7q, high, against `source-map-js` before 1.2.2, reached through `@vitest/coverage-v8` > `magicast` and through `vite` > `postcss`; and GHSA-r4xh-jqrq-34v2, moderate, against `smol-toml` up to 1.8.0, reached through `knip`. `pnpm audit --prod` found nothing; both are reached only by development dependencies. `magicast` asks for `source-map-js@^1.2.1` and `knip` 5.88.1 for `smol-toml@^1.5.2`, so the patched 1.2.2 and 1.9.1 are inside what is already declared.
+**Rejected.** An ignore entry for either, which E-2901's pattern keeps for an advisory with no patched version. `pnpm update source-map-js smol-toml --depth Infinity`, which also rewrote every specifier in `package.json` to the installed version, the six core dependencies included. A `pnpm.overrides` entry kept in `package.json`, which would hold the two packages at a floor nothing upstream asks for.
+**Reason.** The lockfile alone now resolves `source-map-js` 1.2.2 and `smol-toml` 1.9.1; nine lines changed and `package.json` did not. They were moved by adding an override for the two, installing, removing the override and installing again, which kept the new resolutions. `pnpm install --frozen-lockfile` accepts the result, `pnpm audit --prod` finds nothing, and `pnpm audit` reports only the advisory E-2901 ignores and exits 0.
+**Price.** The next advisory against a development dependency fails the nightly audit again; that is what the job is for.
