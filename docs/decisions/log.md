@@ -18398,3 +18398,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a), which adds a sealed integer, a column and a migration to a patch release to carry what `components_version` already carries since E-3527, the version of the last change of a sign-in method. (b), which is the retry after a missed issue that section 3.18 forbids and E-3527 already turned down, and which would need a second read of the state under the lock to tell a rehash from any other change.
 **Reason.** What a check authorises is the sign-in methods it read, and a rehash of the password the sign-in just verified changes none of them: the same password signs the account in afterwards. E-3527 already keeps the components version across a seal that changes nothing a session would rest on, and (c) extends that to the one change that alters a component's bytes without altering what it accepts. The marker is set by the one caller that holds the verified plaintext, and the comparison refuses it wherever anything but the hash moved, so a database writer gains nothing it could not do before.
 **Price.** One comparison of two encodings of the account's components more, and only on a rehash that wrote: 0.22 ms measured over 5000 pairs on this machine for an account with a password, TOTP, a passkey, an identity and ten recovery codes. A session issued after the rehash binds the version the rehash sealed, as every issue binds the current one. The specification's definition of `components_version` gains an exception, in both languages.
+
+<a id="e-3601"></a>
+
+### The breaking-change checks read the notes of the release that made the breaks
+`E-3601` · release-2-0-1 · release notes, settled
+
+**Context.** `test/release-notes-pending-cancel.test.ts` read `docs/releases/<version>.md` for the version package.json states and required those notes to open with *Breaking changes* and to list every break E-3023 names. Raising the version to 2.0.1 pointed it at notes for a patch that breaks nothing, and fifteen of its cases failed. The case now reads the breaks from `docs/releases/2.0.0.md`, the release that made them, and keeps one case that the notes of the current version exist and carry it in their title.
+**Rejected.** Copying the breaking-change section of 2.0.0 into the 2.0.1 notes so the case passes unchanged, which would tell an operator upgrading from 2.0.0 that a patch breaks what it does not.
+**Reason.** The breaks belong to 2.0.0 and stay true there; what each release must have is notes of its own.
+**Price.** A later major has to name its own notes in the case again, as E-3023 did for 2.0.0.

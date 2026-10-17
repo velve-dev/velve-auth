@@ -6,16 +6,24 @@ import { describe, expect, it } from "vitest";
  * E-2830 made `auth.pending.cancel` take the call fields, so a 1.1 caller passing `{ pendingToken }`
  * alone no longer compiles, and its Price says the release notes have to name the break. The
  * release is 2.0.0 (E-3020), and its notes open with every break before anything else (E-3023).
+ * A later release in the 2.x line has notes of its own, which must exist and carry its version,
+ * while the breaks stay in the notes of the release that made them (E-3601).
  */
+
+const BREAKING_RELEASE = "2.0.0";
 
 const { version } = JSON.parse(
 	readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"),
 ) as { version: string };
 
-const notes = readFileSync(
-	fileURLToPath(new URL(`../docs/releases/${version}.md`, import.meta.url)),
-	"utf8",
-);
+function releaseNotesOf(release: string): string {
+	return readFileSync(
+		fileURLToPath(new URL(`../docs/releases/${release}.md`, import.meta.url)),
+		"utf8",
+	);
+}
+
+const notes = releaseNotesOf(BREAKING_RELEASE);
 
 function between(startMarker: string, endMarker: string): string {
 	const start = notes.indexOf(startMarker);
@@ -34,9 +42,15 @@ function breakingChanges(): string {
 	return between("\n## Breaking changes\n", "\n## ");
 }
 
-describe(`the ${version} release notes (E-2830, E-3023)`, () => {
+describe(`the ${version} release notes`, () => {
 	it("are titled with the version package.json states", () => {
-		expect(notes.split("\n")[0]).toBe(`# @velve/auth ${version}`);
+		expect(releaseNotesOf(version).split("\n")[0]).toBe(`# @velve/auth ${version}`);
+	});
+});
+
+describe(`the ${BREAKING_RELEASE} release notes (E-2830, E-3023)`, () => {
+	it("are titled with their version", () => {
+		expect(notes.split("\n")[0]).toBe(`# @velve/auth ${BREAKING_RELEASE}`);
 	});
 
 	it("name pending.cancel among the changes that can break compilation", () => {
