@@ -15,6 +15,7 @@ import {
 import { postTo } from "./flows-fixtures.js";
 import { generateRootKey } from "./keys-fixtures.js";
 import { drawTestPassword } from "./password-fixtures.js";
+import { resealDirectly } from "./security-state-fixtures.js";
 import { median } from "./timing-fixtures.js";
 
 /**
@@ -88,6 +89,7 @@ async function createAccounts(prefix: string, sealedUnder: typeof staleKeys, phc
 			scheme: "argon2id",
 			setBySessionId: null,
 		});
+		await resealDirectly(migrated.connection, migrated.schema, currentKeys, userId);
 		accounts.push({ email, userId });
 	}
 	return accounts;
