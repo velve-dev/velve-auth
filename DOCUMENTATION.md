@@ -385,7 +385,7 @@ the seal covers and when it is written and checked is in
 | `digest` | `bytea` | exactly 32 bytes, the HMAC-SHA256 under `state-mac` |
 | `key_version` | `integer` | at least 1; the `state-mac` version `digest` was taken under |
 | `session_epoch` | `bigint` | from 1, default 1, to 9007199254740991; replaced by a new random value, different from the current one, on every revocation of all of the account's sessions and every administrator reseal, compared only for equality, and every session's MAC binds the epoch it was issued under |
-| `components_version` | `bigint` | from 1, default 1; the `version` of the last seal that changed a component or the epoch, which a session issue is conditional on (E-3527) |
+| `components_version` | `bigint` | from 1, default 1; the `version` of the last seal that changed a component or the epoch, which a session issue is conditional on (E-3527); a rehash that stores the password a sign-in just verified again and changes nothing else leaves it standing (E-3600) |
 | `session_generation` | `bigint` | from 1, default 1, to 9007199254740991; drawn anew by every revocation of a single session, and every live session's MAC binds the current one ([Generations](#generations)) |
 | `attempt_generation`, `attempt_last` | `bigint`, `bytea` | the generation drawn anew by every booked second-factor attempt, default 1, and the `token_sha256` of the pending row whose booking drew it, or null |
 | `email_verify_generation`, `password_reset_generation`, `email_change_generation`, `magic_link_generation` | `bigint` | one generation per one-time token purpose, default 1, drawn anew by every redemption of that purpose that takes effect |
@@ -2683,7 +2683,9 @@ it after it has sent its answer, so the rehash never lengthens the measured
 sign-in (S-TIM-5). It takes a place in the same semaphore as the check, so a
 rehash wave after a parameter increase cannot displace live sign-ins (S-DOS-6).
 Losing the compare and swap is harmless — it returns `false` and the next
-sign-in tries again.
+sign-in tries again. The rehash reseals the account but keeps its
+`components_version`, so another sign-in of the same account that was checked
+before it and has not issued yet still receives its session (T-RACE-6, E-3600).
 
 #### `setPassword({ actor, plaintext, setBySessionId }, environment)`
 
@@ -9456,7 +9458,9 @@ caller names the components version and epoch its check read, a sign-in whose
 check came before a password change or any other reseal that changes a component
 or the epoch, with the KDF running in between outside any transaction, inserts
 nothing; a reseal that only draws a [generation](#generations) or renews the key
-leaves `components_version` standing and the sign-in goes through (E-3527); under `"read_under_lock"` it still
+leaves `components_version` standing and the sign-in goes through (E-3527), and so does
+the background rehash of another sign-in of the same account, which stores the
+password that sign-in verified again and changes no other component (E-3600); under `"read_under_lock"` it still
 inserts under the state the lock reads, as before. An insert
 that writes nothing is told apart under the lock by `sealVerifiesAfterMissedIssue`,
 an optional member of the session service's options and of
@@ -9879,6 +9883,7 @@ sign-in methods is a `SealingChange<T>`:
 | `write(tx, read, next)` | `Promise<T>` | writes the change over the locked transaction; that transaction refuses a second read of the state. `next` is the `SealTarget` — `{ version, sessionEpoch }` and the generations — the new seal will carry, so a kept session can be rebound under the new epoch and a moved generation is known to the write |
 | `after(read, written)` | `SealedComponents` | the components after the change, from the verified read and what `write` returned |
 | `afterSeal(tx, sealed, written)` | `Promise<void>`, optional | runs in the same transaction once the new seal row is written; a change that signs the caller in issues its session here, under the version and epoch it just sealed |
+| `restoresTheVerifiedPassword` | `true`, optional | set by the background rehash alone; a seal whose components differ from the read's only in the password's hash and its key version then keeps `components_version`, so a sign-in checked before the rehash is still issued its session (E-3600). Any other difference, `set_by_session_id` included, moves it as usual |
 
 #### `sealAccount(services, userId, change)`
 
