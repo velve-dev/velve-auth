@@ -123,7 +123,8 @@ it, annotated, after the publish.
 The release notes for 2.0.0, including every breaking change and what an
 operator upgrading from 1.1.0 has to do, are in
 [docs/releases/2.0.0.md](docs/releases/2.0.0.md). 1.x gets no further releases
-(E-3020).
+(E-3020). 2.0.1 is a patch with no migration, no breaking change and no new
+configuration; its notes are in [docs/releases/2.0.1.md](docs/releases/2.0.1.md).
 
 ### PostgreSQL versions
 
