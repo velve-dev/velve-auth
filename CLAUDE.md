@@ -582,6 +582,7 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-3480 … E-3509 | outside the waves · `security-state-tokens`, third range — the keyed token hashes' answers to their third and later reviews and the foundation's final round. Counted over the rows standing at 8bdfd1e |
 | E-3510 … E-3539 | outside the waves · `security-state`, seventh range — the specification brought into step with what the branches built. Counted over the rows standing at 8bdfd1e |
 | E-3540 … E-3569 | gate and infrastructure, seventeenth range — publishing from main through trusted publishing, reversing E-2760. Counted over the rows standing at 4be78c6 |
+| E-3570 … E-3599 | gate and infrastructure, eighteenth range — the nightly tier and the publish check brought to green on main after 2.0.0. Counted over the rows standing at 83e9ae1 |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
