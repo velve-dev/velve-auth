@@ -460,7 +460,7 @@ interface WebAuthnConfig {
   readonly relyingPartyName: string;
   readonly userVerification: "preferred" | "required";
 }
-/** four kinds answer the four one-time-token purposes and the last two are the enumeration cover */
+/** four kinds answer the four one-time-token purposes, two are the enumeration cover and the last tells the previous address of a change */
 type EmailMessage = {
   expiresAt: Date;
   kind: "email_verification";
@@ -494,6 +494,10 @@ type EmailMessage = {
   kind: "request_for_unknown_address";
   requested: "magic_link" | "password_reset";
   to: string;
+} | {
+  kind: "email_change_notice";
+  to: string;
+  userId: string;
 };
 interface EmailConfig {
   send: (message: EmailMessage) => Promise<void>;
@@ -2154,6 +2158,10 @@ interface UserCreateEvent {
 interface UserCreatedEvent extends UserCreateEvent {
   readonly userId: string;
 }
+/** an address change that has committed, which names the account and never an address */
+interface EmailChangedEvent {
+  readonly userId: string;
+}
 interface SessionRevokeEvent {
   readonly reason: RevokeReason;
   readonly sessionId: string;
@@ -2189,8 +2197,9 @@ interface FrozenContext {
   };
   log(level: "error" | "info" | "warn", message: string, fields?: Readonly<Record<string, unknown>>): void;
 }
-/** the seven hook points, where a hook refuses by throwing and cannot replace the response */
+/** the eight hook points, where a hook refuses by throwing and cannot replace the response */
 interface PluginHooks {
+  afterEmailChange?: (event: EmailChangedEvent, context: FrozenContext) => Promise<void>;
   afterSessionCreate?: (event: SessionCreatedEvent, context: FrozenContext) => Promise<void>;
   afterSignIn?: (event: SignInCompletedEvent, context: FrozenContext) => Promise<void>;
   afterUserCreate?: (event: UserCreatedEvent, context: FrozenContext) => Promise<void>;
@@ -2232,6 +2241,7 @@ interface VelvePlugin<Id extends string = string> {
 }
 //#endregion
 export {
+	EmailChangedEvent,
 	FrozenContext,
 	FrozenRepositories,
 	PluginActor,
@@ -2410,7 +2420,7 @@ import { CookieAttributes, CookieInstruction } from "./core/http/cookies.mjs";
 import { Clock } from "./core/http/environment.mjs";
 import { AnyErrorCode, PluginErrorCode, PluginErrorDefinition, VelveError, VelveErrorCode, registerPluginErrorCodes, resolveErrorCode } from "./core/http/error-map.mjs";
 import { SecurityStateFloor, SecurityStateSealedEvent } from "./core/security-state/anchor.mjs";
-import { FrozenContext, FrozenRepositories, PluginActor, PluginHooks, PluginMigration, PluginRoute, RevokeReason, SecurityStateAnchor, SessionCreateEvent, SessionCreatedEvent, SessionRevokeEvent, SignInCompletedEvent, SignInEvent, UserCreateEvent, UserCreatedEvent, VelvePlugin } from "./core/plugin/config.mjs";
+import { EmailChangedEvent, FrozenContext, FrozenRepositories, PluginActor, PluginHooks, PluginMigration, PluginRoute, RevokeReason, SecurityStateAnchor, SessionCreateEvent, SessionCreatedEvent, SessionRevokeEvent, SignInCompletedEvent, SignInEvent, UserCreateEvent, UserCreatedEvent, VelvePlugin } from "./core/plugin/config.mjs";
 import { AnyRoute, CallerRequirement, OriginRequirement } from "./core/http/route.mjs";
 import { PendingToken } from "./core/factor/pending/token.mjs";
 import { SessionToken } from "./core/session/token.mjs";
@@ -2459,6 +2469,7 @@ export {
 	type ConsumedOAuthFlow,
 	type CookieAttributes,
 	type CookieInstruction,
+	EmailChangedEvent,
 	type EmailConfig,
 	EmailFlowSurface,
 	type EmailMessage,

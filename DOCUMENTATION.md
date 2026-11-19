@@ -5294,6 +5294,11 @@ A token presented for a disabled account answers the same way and moves
 nothing, and it is spent all the same: it stays unusable after `user.enable`
 (E-2880).
 
+A change that commits sends `email_change_notice` to the address the account
+held until then, after the commit, and then runs `afterEmailChange` with the
+account id; a failure of either answers with that failure and leaves the change
+standing. See [The address change notice](#the-address-change-notice) (S-LINK-8).
+
 ### `auth.password.requestReset(input)`
 
 | Parameter | Type |
@@ -5399,7 +5404,7 @@ The difference from a rollback is one window: a process that dies between the
 commit and the compensation leaves a live artefact whose message never arrived.
 It expires on its own deadline like any other.
 
-### The six message kinds
+### The seven message kinds
 
 Declared in the configuration chapter as `EmailMessage`. Which flow sends which:
 
@@ -5411,6 +5416,7 @@ Declared in the configuration chapter as `EmailMessage`. Which flow sends which:
 | `magic_link` | `signIn.magicLink.request`, known address | yes |
 | `sign_up_attempt_on_existing_account` | sign-up on a taken address | **no** |
 | `request_for_unknown_address` | reset or magic link, unknown address | **no** |
+| `email_change_notice` | `email.redeemChange`, to the previous address, after the change has committed — see [The address change notice](#the-address-change-notice) | **no** |
 
 The fifth carries no token on purpose, and that satisfies `S-ENUM-4` rather
 than deviating from it: the library builds no URL on any path, so the
@@ -6079,7 +6085,7 @@ compile (E-349).
 | `rateLimit` | `Partial<RateLimitConfig>` | 30 @ 1 per 2 s per address, 5 @ 1 per 300 s per account | bucket sizes and the alert callback |
 | `email` | `EmailConfig` | — | the send callback; required in `"email"` and `"username_email"` |
 | `oauth` | `OAuthConfig` | none | the providers, `trustedProviders` and `storeTokens`; declared in `core/oauth/config.ts` and read by no route yet |
-| `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register: their routes join the table, their hooks are dispatched at the seven points — [the table says which of them have a producer](#which-points-have-a-producer) — and six ways of configuring them wrongly refuse the start |
+| `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register: their routes join the table, their hooks are dispatched at the eight points — [the table says which of them have a producer](#which-points-have-a-producer) — and six ways of configuring them wrongly refuse the start |
 | `webauthn` | `WebAuthnConfig` | none | the relying party; its absence removes the WebAuthn routes |
 | `totp` | `Partial<TotpConfig>` | tolerance 1 step | issuer name and tolerance window; the tolerance reaches the code comparison |
 | `recoveryCodes` | `RecoveryCodesConfig` | 10 codes in groups of 5; **required** in `"username"` | how many codes and in what grouping; both reach the generator |
@@ -6677,7 +6683,7 @@ directly, for a caller that is not a browser.
 ## Plugins
 
 Architecture 3.11 and 3.15 G: the registry, the
-topological sort over `dependsOn`, the frozen context, the seven enumerated hook
+topological sort over `dependsOn`, the frozen context, the eight enumerated hook
 points and the veto a hook holds, and what a plugin may contribute — routes under
 `/x/<plugin-id>/…`, tables prefixed `<plugin-id>_`, error codes, rate-limit rules
 and its own dependency declaration, which is how 3.11's first list reads. Also
@@ -6692,7 +6698,7 @@ may add can only be read after the chapter that says what it is added to and wha
 happens when the addition is refused. Its migrations are the same versioned
 runner, which stands further above still.
 
-The registry, the frozen context and the seven hook points are built, and so is
+The registry, the frozen context and the eight hook points are built, and so is
 everything the three declared fields promise: a plugin's migrations run, its
 error codes answer, and its rate-limit rules replace the ones its routes
 declare. What is still not built is listed at the end of this chapter.
@@ -6785,7 +6791,7 @@ migration, and removing a plugin leaves its tables where they are.
 | `dependsOn` | `readonly string[]?` | Ids this plugin must run after. Sorted topologically at start. |
 | `migrations` | `readonly PluginMigration<Id>[]?` | Run by the same versioned runner the core's use, under a ledger of the plugin's own; see below. |
 | `routes` | `readonly PluginRoute<Id>[]?` | Route *declarations*. The registry passes each to `defineRoute`, so a plugin route reaches the table through the same constructor and the same checks as a core route. Three fields of the core declaration are **absent** from it and a fourth is narrowed to one value: see below. |
-| `hooks` | `PluginHooks?` | Any of the seven points below. |
+| `hooks` | `PluginHooks?` | Any of the eight points below. |
 | `errorCodes` | `readonly \`${Id}.${string}\`[]?` | The codes this plugin's routes may answer with. Each answers `400` with the library's own message; see below. |
 | `rateLimitRules` | `Readonly<Record<\`${Id}.${string}\`, RateLimitRule>>?` | A rule per route name, which **replaces** the `rateLimit` that route declares. The key must name a route this plugin contributes. |
 | `securityStateAnchor` | `SecurityStateAnchor?` | An anchor for the security state, which learns every new seal and sets a floor under its version (3.18). Not a hook point; see [`securityStateAnchor`](#securitystateanchor). |
@@ -6866,7 +6872,7 @@ short of `Object.prototype`. A plugin written as a **class** carries its methods
 on a prototype, which is the most ordinary way to write one — and it was accepted
 while `Object.keys` was what looked. `constructor` is the one name skipped,
 because every prototype carries it and nothing here reads it. The same reading is
-applied to `hooks`, so a hooks object written as a class is held to the seven
+applied to `hooks`, so a hooks object written as a class is held to the eight
 points as well.
 
 A field the interface **does** declare and this version does not read was a
@@ -7249,7 +7255,7 @@ enumerates four.
 
 **Every field is now read once**, at the start, into a plain object nothing else
 can reach: the id, the dependencies, each migration's four fields, each route's
-ten, the seven hook points, the error codes and the rate-limit map. Every check
+ten, the eight hook points, the error codes and the rate-limit map. Every check
 below reads that object, and so do the route table, the migration runner and the
 hook dispatcher. There is one read and one value.
 
@@ -7260,7 +7266,7 @@ prototype still reaches the route the way it did before — which is what the
 copied, so a plugin that mutates its own declaration after `createVelveAuth`
 returns changes nothing that runs.
 
-### The seven hook points
+### The eight hook points
 
 ```ts
 beforeSignIn(event: SignInEvent, context: FrozenContext): Promise<void>
@@ -7270,6 +7276,7 @@ afterSessionCreate(event: SessionCreatedEvent, context: FrozenContext): Promise<
 beforeUserCreate(event: UserCreateEvent, context: FrozenContext): Promise<void>
 afterUserCreate(event: UserCreatedEvent, context: FrozenContext): Promise<void>
 beforeSessionRevoke(event: SessionRevokeEvent, context: FrozenContext): Promise<void>
+afterEmailChange(event: EmailChangedEvent, context: FrozenContext): Promise<void>
 ```
 
 Every return type is `Promise<void>`, and that is the whole of what "a listener
@@ -7285,7 +7292,7 @@ answers `500 internal_error` without the plugin's text.
 
 #### Which points have a producer
 
-The dispatcher runs all seven and the paragraph above describes all seven, but a
+The dispatcher runs all eight and the paragraph above describes all eight, but a
 point only fires if an operation reaches it. **This table is the one place that
 says which do**, and a plugin registering a point that does not is told nothing
 at start.
@@ -7299,6 +7306,7 @@ at start.
 | `beforeUserCreate` | **yes** |
 | `afterUserCreate` | **yes** |
 | `beforeSessionRevoke` | **yes** |
+| `afterEmailChange` | **yes** |
 
 Which operations reach a point is stated in the chapter of the feature that
 built them; `beforeSessionRevoke`'s are named below. **The cell is a yes or
@@ -7953,7 +7961,7 @@ the route's name.
 
 ### Not built here
 
-- **A hook point with no producer** does not run, and [the table above](#which-points-have-a-producer) is where that is said — one cell per point, so a feature that gives one its first producer flips a cell and never a count. All seven have a producer now. What the session points do not yet reach — the two password resets and the re-issue on a credential change — is stated in [the sign-in, session and user points](#the-sign-in-session-and-user-points).
+- **A hook point with no producer** does not run, and [the table above](#which-points-have-a-producer) is where that is said — one cell per point, so a feature that gives one its first producer flips a cell and never a count. All eight have a producer now. What the session points do not yet reach — the two password resets and the re-issue on a credential change — is stated in [the sign-in, session and user points](#the-sign-in-session-and-user-points).
 - **A plugin cannot roll a migration back.** There is no `down`, and removing a
   plugin from the configuration leaves its tables and its ledger rows standing.
   Dropping them is the application's to do, by hand — or the plugin's, in a
@@ -10158,7 +10166,7 @@ hands every check and change the ports of the configured anchors (E-3175).
 
 ### `securityStateAnchor`
 
-A member of [`VelvePlugin`](#velveplugin), and not an eighth hook point: it
+A member of [`VelvePlugin`](#velveplugin), and not a ninth hook point: it
 observes after a seal is committed and refuses through the floor it answers,
 never by throwing to veto (3.11, E-3084).
 
@@ -10496,7 +10504,130 @@ given no JavaScript array (E-3692).
 
 ## The address change notice
 
-> Reserved for the `address-change-notice` feature of release 3.0.0 and not written yet. Only that feature writes into this chapter (`CLAUDE.md` §5), and its writer deletes this note when filling it.
+When `email.redeemChange` confirms a change of address, the library tells the
+address the account had until then, through the same `email.send` every other
+message goes through, and then tells the plugins through a hook point of their
+own. Both happen after the change has committed, both on every confirmed change,
+and neither has an option: an account takeover usually starts by moving the
+address, and the previous address is the one place its owner still reads
+(S-LINK-8, E-3710).
+
+### The message: `email_change_notice`
+
+```ts
+{ kind: "email_change_notice"; to: string; userId: string }
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `kind` | `"email_change_notice"` | the seventh member of `EmailMessage` |
+| `to` | `string` | the address the account held when the change was confirmed, read under the account lock in the confirmation's own transaction |
+| `userId` | `string` | the account whose address changed |
+
+The message says that the address has changed and nothing else. It carries **no
+token and no link**: there is nothing to confirm and nothing to undo through it,
+and the library builds no URLs anyway. It carries **not the new address**, in full
+or masked: whoever reads the old mailbox is not necessarily the owner of the
+account, and a mailbox someone has taken over would otherwise learn where the
+account went. The owner knows what they changed it to (E-3711). The template is
+the application's: "the email address of your account was changed; if that was
+not you, contact us", with a link to the application's own support or sign-in
+page, which needs no artefact.
+
+`to` is the address the confirmation itself read, under `FOR NO KEY UPDATE` on
+the account row and in the same statement that verified the seal, so it is the
+address the change replaced and not one read earlier in the request (E-3712).
+
+### When it is sent
+
+Exactly once for each change that commits, on the HTTP route
+`POST /email/redeem-change` and on the direct call
+`auth.email.redeemChange` alike, after the transaction has committed and before
+the answer is built.
+
+| Redemption | Notice | `afterEmailChange` |
+|---|---|---|
+| a change that commits | one, to the previous address | once |
+| an invented, spent or replayed token | none | not called |
+| the losing one of two simultaneous redemptions of one token | none | not called |
+| a target address another account took after the request | none | not called |
+| a token presented for a disabled account | none | not called |
+| a change to the address the account already holds | none | not called |
+
+The redemption that finds the target taken still answers byte for byte as an
+invented token does (S-ENUM-5): neither of them sends anything, so the notice adds
+no difference between them. A change to the address the account already holds
+commits — it confirms that address — but moves nothing, so there is nothing to
+tell (E-3715). There is always a previous address: the route exists only in the
+modes `email` and `username_email`, where `user_identity_mode` requires one on
+every account.
+
+No other operation sends it. A first confirmation through
+`email.redeemVerification` or a magic link confirms the address the account
+already has, and a password reset does not touch the address.
+
+### When `send` throws on it
+
+The answer is `500 internal_error`, with nothing of the callback's message in it,
+and **the change stays committed**: the new address, its confirmation, the spent
+token and whatever the first confirmation of the new address removed (S-LINK-4).
+There is nothing to undo, because the notice carries no artefact; and undoing the
+change itself would take a second sealing transaction, after the owner has
+already proved the new address, to protect a message that only reports it. The
+hook below still runs. The link answers `invalid_token` from then on, and the
+next read of the account shows the new address (E-3713).
+
+This is the one message whose failure does not take the operation back with it,
+and it is the same rule every `after` hook point follows: once a transaction has
+committed, a failure after it decides the answer and nothing else.
+
+### Not sending it
+
+There is no option. An application that does not want to deliver the notice
+drops the kind in its own callback:
+
+```ts
+email: {
+  send: async (message) => {
+    if (message.kind === "email_change_notice") return
+    await deliver(message)
+  },
+}
+```
+
+A `send` that switches over `message.kind` exhaustively stops compiling until it
+handles the new kind, which is the intended way to learn about it (E-3710).
+
+### `afterEmailChange`
+
+```ts
+afterEmailChange?: (event: EmailChangedEvent, context: FrozenContext) => Promise<void>
+
+interface EmailChangedEvent { readonly userId: string }
+```
+
+The eighth hook point of [`PluginHooks`](#the-eight-hook-points), for an
+application that writes its own notification or its own audit entry. The event
+carries **only the account id** — neither the previous nor the new address. A
+hook that needs the new one reads the account through
+`context.repositories.findUserById`; the previous one is not offered, because it
+is the address the library has just stopped trusting (E-3714).
+`EmailChangedEvent` is exported as a type from `@velve/auth`.
+
+It runs once per committed change, after the transaction has committed and after
+the notice has been handed to `send`, on the plugin's ordinary context: the
+transaction is over, so there is no lent connection, and `findUserById` already
+sees the new address. Plugins run in dependency order, as at every point.
+
+**It cannot veto.** A hook that throws answers the request with the plugin's
+registered code, or with `500 internal_error` for an unregistered one, as at
+every point; the change stays committed and the notice has already gone. The
+notice runs first so that a refusing plugin cannot keep the previous address from
+being told, and a failed notice does not keep the plugins from being told either.
+Where both fail, the request answers `500 internal_error`, even for a hook that
+refuses with its own registered code, and the one log line names both failures,
+a hook's refusal with a registered code by that code, so a notice that was not
+sent is never hidden by a refusing hook (E-3717, E-3718).
 
 ## The no-recovery switch
 
