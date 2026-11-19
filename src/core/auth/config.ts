@@ -59,7 +59,7 @@ export interface WebAuthnConfig {
 	readonly userVerification: "required" | "preferred";
 }
 
-/** four kinds answer the four one-time-token purposes and the last two are the enumeration cover */
+/** four kinds answer the four one-time-token purposes, two are the enumeration cover and the last tells the previous address of a change */
 export type EmailMessage =
 	| { kind: "email_verification"; to: string; userId: string; token: string; expiresAt: Date }
 	| { kind: "password_reset"; to: string; userId: string; token: string; expiresAt: Date }
@@ -73,7 +73,8 @@ export type EmailMessage =
 	  }
 	| { kind: "magic_link"; to: string; userId: string; token: string; expiresAt: Date }
 	| { kind: "sign_up_attempt_on_existing_account"; to: string; userId: string }
-	| { kind: "request_for_unknown_address"; to: string; requested: "password_reset" | "magic_link" };
+	| { kind: "request_for_unknown_address"; to: string; requested: "password_reset" | "magic_link" }
+	| { kind: "email_change_notice"; to: string; userId: string };
 
 export interface EmailConfig {
 	send: (message: EmailMessage) => Promise<void>;

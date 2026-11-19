@@ -161,6 +161,7 @@ export async function redeemChange(
 		for (const purpose of ONE_TIME_TOKEN_PURPOSES) {
 			await tokens.withdrawTokensOf({ actor: account.actor, purpose });
 		}
+		const newEmail = addressIn(redeemed.payload);
 		//redeeming proves the new address and a collision must leave both changes undone
 		const confirmed = await confirmAddress({
 			transaction,
@@ -169,18 +170,65 @@ export async function redeemChange(
 			sessions: environment.services.sessions,
 			actor: account.actor,
 			confirmingSession,
-			newEmail: addressIn(redeemed.payload),
+			newEmail,
 			securityState: environment.services.securityState,
 			spent: redeemed.spent,
 		});
-		return { userId: account.user.id, toRecord: confirmed.toRecord };
+		const change: CommittedChange = {
+			userId: account.user.id,
+			//the previous address is the one the confirmation read under the account lock (E-3712)
+			previousEmail: confirmed.toRecord.read.email,
+			newEmail,
+		};
+		return { change, toRecord: confirmed.toRecord };
 	});
 	if (redemption instanceof DisabledRedemption) {
 		recordSealLater(environment.services.securityState, redemption.toRecord, "token_redemption");
 		refuseADisabledAccount();
 	}
 	recordSealLater(environment.services.securityState, redemption.toRecord, "token_redemption");
-	const userId = redemption.userId;
+	await tellOfTheCommittedChange(environment, redemption.change);
 
-	return { user: await readUserOrRefuse(environment, driver, userId) };
+	return { user: await readUserOrRefuse(environment, driver, redemption.change.userId) };
+}
+
+interface CommittedChange {
+	readonly userId: string;
+	readonly previousEmail: string | null;
+	readonly newEmail: string;
+}
+
+//a refusing plugin must not keep the previous address from being told (E-3714)
+async function tellOfTheCommittedChange(
+	environment: FlowEnvironment,
+	change: CommittedChange,
+): Promise<void> {
+	if (change.previousEmail === change.newEmail) {
+		return;
+	}
+	const unsent = await noticeThePreviousAddress(environment, change).then(
+		() => null,
+		(failure: unknown) => ({ failure }),
+	);
+	await environment.services.pluginRuntime.hooks.afterEmailChange({ userId: change.userId });
+	//a notice that could not be sent fails the answer and leaves the committed change standing (E-3713)
+	if (unsent !== null) {
+		throw unsent.failure;
+	}
+}
+
+//whoever holds the old mailbox learns neither the new address nor a link (E-3711)
+async function noticeThePreviousAddress(
+	environment: FlowEnvironment,
+	change: CommittedChange,
+): Promise<void> {
+	const email = environment.services.email;
+	if (email === undefined || change.previousEmail === null) {
+		return;
+	}
+	await sendOrUndo(mailerOf(environment, email), null, {
+		kind: "email_change_notice",
+		to: change.previousEmail,
+		userId: change.userId,
+	});
 }
