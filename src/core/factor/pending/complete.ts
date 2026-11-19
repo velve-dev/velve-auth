@@ -97,7 +97,7 @@ export function createSecondFactorCompletion(
 				});
 
 				const consumed = await pending.consume(pendingToken);
-				//a held back reset completes only with its new password and never as a sign-in (S-FIX-7)
+				//a held back reset completes only with its new password and never as a sign-in (S-FIX-8)
 				if (consumed.reset !== null) {
 					throw new ConcealedError("pending_consumed");
 				}

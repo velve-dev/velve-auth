@@ -47,7 +47,7 @@ function phcBindingOf(userId: string): EnvelopeBinding {
 	return { column: "password_credential.phc", owner: userId, row: userId };
 }
 
-//this is the only place a PHC string becomes a credential column value (E-3634)
+//this is the only place a PHC string becomes a credential column value (E-3631)
 export function sealPhc(keys: KeyProvider, userId: string, phc: string): Promise<SealedPhc> {
 	return encryptBound(keys, phcBindingOf(userId), utf8.encode(phc));
 }
