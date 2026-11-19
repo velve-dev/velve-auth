@@ -18478,3 +18478,93 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Keeping `checkAccount` and calling the record harmless, which is the reading the review refused. Adding a flag to `checkAccount` that suppresses the record, in a file outside this feature. Not consulting the anchors at all, which would let a seal a writer rolled back below an anchor's floor resolve to an account that the redemption then refuses with `version_below_anchor`, the oracle E-3691 rules out.
 **Reason.** `verifiedReadOf` in `src/core/token/resolution.ts` consults the anchors for their floors, which only reads, reads the state, verifies the seal with `checkSecurityState` and compares it with the floors with `compareWithAnchors`, and treats a broken seal and a version below, a digest unlike or an unavailable anchor as `checkedRead` does: one alarm with the occasion `token_redemption` and the answer `null`. It never calls `recordSealWithAnchors`. The review's case failed before the change and passes after it, and the five planted faults of E-3691 still fail their cases. `test/token-resolution-anchor-floor.test.ts` holds the floors still asked: an anchor whose floor is above the account's seal makes the resolve answer `null` with one alarm `version_below_anchor`, and the case fails when the anchors' answer is replaced by none.
 **Price.** The rule that turns a seal verdict and an anchor verdict into a broken state is spelled twice, in `brokenVerdictOf` in `runtime.ts` and in `brokenReasonOf` in `resolution.ts`, like the two comparisons E-3695 restates. An anchor that is behind stays behind until a check other than a resolve records with it.
+
+<a id="e-3630"></a>
+
+### A mailed reset of an account with a second factor answers second_factor_required
+`E-3630` · reset-second-factor · 3.6 and 3.15 B.4, breaking, settled
+
+**Context.** `auth.password.redeemReset` spent the token, wrote the password, revoked every session and issued a new one, so whoever held the mailbox skipped TOTP and passkeys, while `signIn.magicLink.redeem`, which the same mailbox opens, already stopped at `second_factor_required` (E-735). The maintainer asked that the mailed reset ask for an enrolled second factor and named it the breaking change of 3.0.0.
+**Rejected.** (a) Keeping `SetPasswordResult` and signalling the second factor by a missing `sessionToken`, which C.1 already rejected for the sign-in: a field that is sometimes set gets read unchecked. (b) A new route or method for the held back reset, which leaves the old one answering a session for an account with a factor unless every caller migrates. (c) A configuration switch, which would leave the bypass as the default for a path the maintainer said changes by design.
+**Reason.** The answer is now the union `RedeemResetResult` on `status`: `"password_reset"` with the four fields `SetPasswordResult` had, or `"second_factor_required"` with `pendingToken` and `pending` in exactly the shape the magic link answers, the pending cookie set and no session. This follows ASVS 4.0.3 V2.5.6 and NIST SP 800-63B, which do not let a recovery path lower the assurance an account's own sign-in requires. Migration path for the release notes: `auth.password.redeemReset` and `POST /password/redeem-reset` now answer a union. Check `result.status`. `"password_reset"` carries `sessionToken`, `session` and `revokedOtherSessionsCount` as before, and over HTTP the session token travels in its cookie as before. `"second_factor_required"` carries `pendingToken` and `pending` exactly as `signIn.magicLink.redeem` does, sets `__Host-velve_pending` and issues no session; complete it with `factor.totp.verify`, `factor.webauthn.authenticate.start` and `finish`, or `factor.recovery.verify`, which answer `signed_in`, and only that completion writes the new password and revokes every session. A client that renders the magic link's second-factor step can reuse it unchanged.
+**Price.** Every caller of `redeemReset` and its route breaks at compile time where it read `sessionToken` without checking `status`, which is the point, and at run time where it reads the JSON untyped. A user with a factor who lost it cannot reset by mail alone any more and needs `redeemResetWithRecoveryCode` or the operator.
+
+<a id="e-3631"></a>
+
+### The held back password lives sealed in two new columns of the pending row
+`E-3631` · reset-second-factor · storage format, frozen
+
+**Context.** The requirement holds the new password, validated and hashed before the token is spent, only in the pending authentication and never in clear text. `velve.pending_authentication` had no column for it, and `encryptBound` accepts only the columns `src/core/keys/envelope-binding.ts` lists.
+**Rejected.** (a) Holding the plain password until the completion, to hash it then, which puts a password in the database and the KDF after the factor. (b) Sealing it under the existing `password_credential.phc` binding with the token hash as the row, which works cryptographically but names a column the ciphertext is not stored in. (c) A table of its own, which needs a second removal and a second MAC to stay in step with the pending row. (d) Putting it in a one-time token's payload, which is clear text under a MAC.
+**Reason.** Migration 5 adds `new_password_phc bytea` and `new_password_key_version integer`, both null or both set by a constraint, and the bound column `pending_authentication.new_password_phc` under `password-enc`, with the owner `user_id` and the row `token_sha256`, so the envelope opens in no other pending row and in no credential (S-INTEG-1). The PHC string, not the password, is sealed, exactly what `password_credential.phc` stores. Two nullable columns rewrite no row, so no pending sign-in in flight ends at the upgrade.
+**Price.** A fifth migration, and a PHC string now becomes a column value in a second place, which the comment on `sealPhc` no longer denies. The envelope is not rewrapped by a key rotation of `password-enc`; it lives five minutes, and a pending reset whose `password-enc` version left the ring in that time is refused as a broken state and has to be requested again.
+
+<a id="e-3632"></a>
+
+### The removal of a reset's pending row is the proof its completion acts under
+`E-3632` · reset-second-factor · owner proof, settled
+
+**Context.** The completion writes the password and lists and revokes every session, and each of these repository methods takes an `Actor`. On the TOTP and passkey paths the request carries no session, token or code an actor could come from; a cast is refused by T-OWNER-7 and `actorOfMaintenance` names a call without a route.
+**Rejected.** (a) Issuing the session first and taking the actor from its resolution, which launders a proof through a row the path wrote itself and issues under an epoch the revocation then leaves. (b) Spending the mailed token only at the completion, which keeps the link valid for the whole wait. (c) Writing the session and credential rows by raw SQL in the flow, past the owner predicate of S-OWNER-1.
+**Reason.** `ConsumedPendingReset` in `src/core/db/actor.ts` is asserted only where `DELETE … RETURNING` removed a pending row that carries a new password, in `src/core/factor/pending/repository.ts`, and only reaches the flow after the row's MAC verified, as `ConsumedRecoveryCode` is asserted where a code was removed (E-612). The removal follows a factor the same request just checked, so it proves the account as the recovery code's removal does.
+**Price.** A sixth proof brand, and `test/owner-proof-brand-proof.test.ts` lists one more producer for it and for `UserId`.
+
+<a id="e-3633"></a>
+
+### Recovery codes count as a second factor for the mailed reset
+`E-3633` · reset-second-factor · behaviour, settled
+
+**Context.** The requirement names `secondFactorsOf`, which returns TOTP, WebAuthn and recovery codes, and L-13 says recovery codes are a second factor and not a sign-in method. An account whose only factor is recovery codes therefore has its reset held back too.
+**Rejected.** Leaving such an account on the old reset, which lets the mailbox alone replace the password of an account whose owner set up a second factor, and gives an attacker the cheaper of two paths.
+**Reason.** The reset asks for what a sign-in of the same account asks for, which is the factor list `secondFactorsOf` already computes for the pending row, so both answers agree. The code spent at the completion is gone, as at a sign-in.
+**Price.** A user with codes only who lost them cannot reset by mail and has nothing else to offer; their way back is the operator. Completing a reset with a code spends one of ten, as `redeemResetWithRecoveryCode` does.
+
+<a id="e-3634"></a>
+
+### The pending row's token MAC binds the held back password
+`E-3634` · reset-second-factor · S-INTEG-9, storage format, frozen
+
+**Context.** The envelope binding stops a ciphertext being copied into another row, but not a writer emptying the two columns, which would turn the held back reset into a sign-in completed by the factor alone with the password silently unchanged.
+**Rejected.** (a) Leaving presence unbound and recording the downgrade as a price, which the stop report proposed and the orchestrator ruled out. (b) Binding the row under a different purpose for a reset, which would have needed no change to `src/core/token/binding.ts` but gives one table two purposes.
+**Reason.** The pending variant of `TokenRowContent` gains `newPassword`, and the encoding appends the SHA-256 of the ciphertext and its key version only when they are present, so a row without a new password encodes, and keeps verifying, exactly as before. The service binds and checks it on insert, booking and removal, and `src/core/token/rebind.ts` selects the two columns so a maintenance pass rebinds a reset row instead of refusing it. A row with one column set is malformed and refused before anything in it is read. Planted faults: with the binding ignoring the columns, the emptied-row case completes as a sign-in and fails its test.
+**Price.** The encoding has an optional tail, so the MAC of a row depends on whether it holds a password; `test/integ-token-binding-vectors.test.ts` still pins the form without one and no vector pins the form with one.
+
+<a id="e-3635"></a>
+
+### The factor's own bookkeeping commits in its check, and the completion requires the seal that check read or left
+`E-3635` · reset-second-factor · transaction boundary, settled
+
+**Context.** The requirement says the password is written, and every session revoked, in the same transaction that verifies the factor. A factor is checked in its service, `src/core/factor/totp`, `recovery` and `webauthn`, which this branch does not touch, and each check commits what it must: the booked attempt, which has to stand even when the factor is wrong, the claimed TOTP step, the spent recovery code and the passkey's signature counter and challenge. A sign-in already completes this way: the check, then one transaction that removes the pending row and issues the session authorised by the seal the check read (S-FIX-1, S-INTEG-5).
+**Rejected.** (a) Moving each check into the completing transaction, which needs the three services rebuilt around an outer transaction and would roll the booked attempt back with a wrong factor, the attack L-8 exists for. (b) Writing the password in the factor's own transaction, which has the same problem and would also write it before the pending row is removed.
+**Reason.** The completion is one transaction that removes the pending row, takes the account lock, refuses unless the seal's components version and epoch are exactly those the factor check read or, for a recovery code, left, writes the password, announces and revokes every session and issues the session under the new seal. That is equivalent for the requirement: no password is written unless the factor verified, no factor verified writes a password over a state other than the one it was verified against, and nothing between the verdict and the write can change the account without the write refusing. The orchestrator ruled this boundary.
+**Price.** A completion that fails after its check, because the account changed in between, a plugin refused the session or the connection broke, leaves the factor's bookkeeping in place without a password change: a claimed TOTP step, which only means the next code is needed, or a spent recovery code, which is one of ten gone. A refused completion of a sign-in costs the same today (E-2792).
+
+<a id="e-3636"></a>
+
+### The session points run at the completion and the sign-in points not at all
+`E-3636` · reset-second-factor · 3.11, settled
+
+**Context.** The requirement asks that `beforeSessionCreate` and the other plugin points run when the session is actually issued. The reset ran `beforeSessionCreate` and `beforeSessionRevoke` inside its transaction and `afterSessionCreate` after it (E-2796, E-2580), and never `beforeSignIn` or `afterSignIn`; a factor route completing a sign-in runs `afterSignIn` because its first factor ran `beforeSignIn` (E-2792).
+**Rejected.** (a) Running the session points at the redemption, which would tell a plugin about a session that may never exist. (b) Running `afterSignIn` at the completion, which reports a sign-in whose `beforeSignIn` never ran and has no honest method to name.
+**Reason.** The redemption of a held back reset calls no hook. The completion runs the reset's own points, in the reset's order, at the moment it issues: `beforeSessionCreate` with the factors `password` and the one completed, `beforeSessionRevoke` with the reason `password_reset` for each session, both on the transaction's connection, and `afterSessionCreate` after the commit. The session records `password` and the factor, as a password sign-in through the same factor would.
+**Price.** A plugin that counts sign-ins through `afterSignIn` sees a held back reset no more than it saw a reset before. A refusal at `beforeSessionCreate` rolls the completion back with the pending row standing, but the factor's check is spent (E-3635).
+
+<a id="e-3637"></a>
+
+### The redemption decides under the account lock and keeps the epoch
+`E-3637` · reset-second-factor · S-INTEG-3, settled
+
+**Context.** Whether the reset is held back depends on the account's factors, and a factor added or removed between a read and the write would decide it on a stale state.
+**Rejected.** Reading the factors with an unlocked check before the transaction, which lets an enrolment that commits in between be skipped.
+**Reason.** The one sealing transaction the reset already ran decides on its verified read: `epoch` is a function of the read, `keep` where a factor holds the reset back and `raise` otherwise, and the spent token's generation moves either way, so a token written back after the redemption is refused (E-3522). A disabled account is never held back and answers as before (E-2879). The pending row is begun after the commit and binds the epoch the redemption sealed and the factors it read, and is withdrawn where a factor went missing in between, as the magic link's is.
+**Price.** A crash between the commit and the pending row leaves the token spent without a pending state; the user requests another link.
+
+<a id="e-3638"></a>
+
+### A completion over a changed or disabled account answers as its factor fails
+`E-3638` · reset-second-factor · S-INTEG-5, settled
+
+**Context.** A completion that finds the seal moved since its factor check, and one that finds the account disabled under the lock, need an answer from the factor route's own codes.
+**Rejected.** Answering `invalid_pending_authentication` for the moved seal, which differs from the sign-in, whose issue misses in the same case and answers as the factor fails.
+**Reason.** The moved seal answers the factor's missed-issue reason, `invalid_factor_code`, `webauthn_credential_rejected` or `invalid_recovery_code`, exactly as a sign-in's missed issue does, and raises no alarm, since the seal verified under the lock. A disabled account answers as a missing pending state, which is what the factor check answers for it (`resolutionOf`). The sign-in completion refuses a pending row that carries a new password, so no caller of `completeSecondFactor` can turn a reset into a sign-in.
+**Price.** A user who changed something in another tab between the factor and its completion sees a wrong-code answer for a right code once, and the next code completes.
