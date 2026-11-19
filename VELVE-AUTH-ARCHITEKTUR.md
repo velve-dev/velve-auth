@@ -43,7 +43,7 @@ Velve Auth ist eine Anmeldebibliothek für TypeScript und PostgreSQL, die im Pro
 
 **Die Laufzeit.** Reines TypeScript, kein eigenes Rust/WASM-Modul, sechs Abhängigkeiten ohne native Bindungen. Gemessen auf 2 vCPU, also Größenordnung statt Absolutwert: Argon2id bei OWASP-Parametern kostet 263 ms in JavaScript gegen 76 ms in WASM — aber WASM scheitert in Cloudflare Workers an `Wasm code generation disallowed by embedder` und ist auf Caprock unerprobt (SCHÄTZUNG), und ein eigenes Rust-Modul wäre gegenüber fertigem WASM nur 1,6-mal schneller, um den Preis einer zweiten Werkzeugkette und eines unprüfbaren Binärblobs. Der entscheidende Befund: `@noble/hashes`, `hash-wasm` und eine Rust-WASI-Variante erzeugen **bytegleiche** Argon2id-Hashes. Die Rechenmaschine ist damit austauschbar, ohne einen einzigen gespeicherten Hash anzufassen.
 
-**Die Absicherung.** 134 Sicherheitsanforderungen in neunzehn Fehlerklassen, jede mit mindestens einem Testfall und einer vorab festgelegten Zahl als Schwelle; 138 Testfälle, von denen 119 jeden Commit blockieren. Fünfzehn der 33 Better-Auth-Advisories sind unmittelbar auf Velve Auth übertragbar und werden von benannten Anforderungen ausgeschlossen; achtzehn sind nicht anwendbar, weil die betroffene Funktion nicht existiert.
+**Die Absicherung.** 136 Sicherheitsanforderungen in neunzehn Fehlerklassen, jede mit mindestens einem Testfall und einer vorab festgelegten Zahl als Schwelle; 140 Testfälle, von denen 121 jeden Commit blockieren. Fünfzehn der 33 Better-Auth-Advisories sind unmittelbar auf Velve Auth übertragbar und werden von benannten Anforderungen ausgeschlossen; achtzehn sind nicht anwendbar, weil die betroffene Funktion nicht existiert.
 
 **Ehrlich benannte Grenzen.** In der Konfiguration `username` gibt es kein Zurücksetzen per E-Mail — die Bibliothek verweigert dort den Start, wenn keine Wiederherstellungscodes konfiguriert sind. Benutzernamen sind per Definition aufzählbar, sobald eine Verfügbarkeitsprüfung angeboten wird; das steht im Datenblatt statt als stille Lücke im Code. Der verschlüsselte Kennwortspeicher bedeutet: Schlüsselverlust ist Kennwortverlust. Importierte bcrypt-Hashes prüfen nur die ersten 72 Byte, bis der Rehash sie ersetzt hat. Ein Schreiber auf der Datenbank, der auch den Wurzelschlüssel hat, hat alles, und ohne den Anker aus Abschnitt 3.18 kann er ein Konto auf einen alten, in sich stimmigen Stand zurücksetzen. Und ob Node auf Caprock startet und der gewählte PostgreSQL-Treiber dort funktioniert, ist die einzige nennenswerte ungeprüfte Annahme des ganzen Entwurfs.
 
@@ -55,8 +55,8 @@ Velve Auth ist eine Anmeldebibliothek für TypeScript und PostgreSQL, die im Pro
 2. Sprache und Laufzeit — die Bewertung, die Messungen, die Empfehlung
 3. Zielarchitektur — Paketstruktur, Schema, Sitzungen, Prüfpfad, Identität, zweiter Faktor, Tokens, Schlüssel, Ratenbegrenzung, Drittanbieter, Plugins, öffentliche Schnittstelle, Fehlerbehandlung, entschiedene Lücken, Integrität des Sicherheitszustands
 4. Migrationsmodul — fünf Quellen, je Quellschema, Zuordnung, Hash-Übernahme, Verluste, Folgearbeit
-5. Sicherheitsanforderungen — 134 Anforderungen in neunzehn Fehlerklassen, mit Abdeckungstabelle der 33 Advisories
-6. Prüfplan — 138 Testfälle mit vorab festgelegten Schwellen
+5. Sicherheitsanforderungen — 136 Anforderungen in neunzehn Fehlerklassen, mit Abdeckungstabelle der 33 Advisories
+6. Prüfplan — 140 Testfälle mit vorab festgelegten Schwellen
 7. Entscheidungsprotokoll — E-01 bis E-46, Ausgangsbestand für die Fallstudie
 
 Der Bauauftrag liegt getrennt als `CLAUDE-CODE-AUFTRAG.md`.
@@ -112,7 +112,7 @@ Fundstellen sind relativ zu `/home/claude/better-auth/` und stammen aus den Vorb
 | A28 `beforeEmailVerification` / `afterEmailVerification` | Zwei Hooks um den Verifikationsvorgang (`init-options.ts:752,761`) | Weglassen | Die Anwendung übernimmt: die Erweiterungspunkte sind aufgezählt (Abschnitt 3.11) und enthalten keine Verifikations-Hooks. Der Rückgabewert der Route sagt dasselbe, ohne dass Fremdcode im Vorgang steht. |
 | A29 Kennwort-Reset anfordern | `POST /request-password-reset`, Antwort immer `{status:true}` (`api/routes/password.ts:35-150`) | Übernehmen | Als `POST /password/request-reset` mit Antwort 204 ohne Körper, Artefakt mit `purpose='password_reset'`, Frist 1 h; ein neu angeforderter Token löscht die vorherigen desselben Nutzers. |
 | A30 Reset-Link-Einstieg | `GET /reset-password/:token` redirected mit `?token=` (`password.ts:152-227`) | Übernehmen | Der Einstieg per Link bleibt; die Landeseite ist eine Seite der Anwendung, die das Token an `POST /password/redeem-reset` weiterreicht. Einen umleitenden Endpunkt gibt es nicht, weil die Bibliothek keine URLs baut (Abschnitt 3.15, A.7) — und damit auch keine, die sie validieren müsste. |
-| A31 Kennwort zurücksetzen | `POST /reset-password`, Token atomar konsumiert (`password.ts:229-335`) | Übernehmen | Als `POST /password/redeem-reset`: Konsum und Kennwortschreiben in einer Transaktion; die Antwort trägt ein neues Sitzungstoken, alle anderen Sitzungen sind widerrufen (A34). |
+| A31 Kennwort zurücksetzen | `POST /reset-password`, Token atomar konsumiert (`password.ts:229-335`) | Übernehmen | Als `POST /password/redeem-reset`: Konsum und Kennwortschreiben in einer Transaktion; die Antwort trägt ein neues Sitzungstoken, alle anderen Sitzungen sind widerrufen (A34). Hat das Konto einen zweiten Faktor, warten Kennwort, Widerruf und Sitzung auf dessen Abschluss (3.6). |
 | A32 `resetPasswordTokenExpiresIn` | Option, Vorgabe 3600 s (`init-options.ts:826`) | Anders lösen | Feste Frist von 1 h, siehe A27. |
 | A33 `onPasswordReset` | Callback nach erfolgreichem Reset (`init-options.ts:831`) | Weglassen | Die Anwendung übernimmt: sie ruft die Route selbst auf bzw. bekommt deren Ergebnis. Ein zusätzlicher Callback bringt hier keinen Zustand, den der Aufrufer nicht schon hat. |
 | A34 `revokeSessionsOnPasswordReset` | Widerruft alle Sessions — **Vorgabe aus** (`password.ts:328-330`) | Übertreffen | Kennwort-Reset und Kennwortänderung widerrufen alle anderen Sitzungen. Das ist kein Schalter (Abschnitt 3.5). Ein Reset, der die Sitzung des Angreifers stehen lässt, ist kein Reset. |
@@ -1498,6 +1498,45 @@ Kennwort von vorn (L-8).
   Wechsel des Verfahrens werden alle neu erzeugt und die alten in derselben
   Transaktion gelöscht.
 
+#### Der gemailte Kennwort-Reset bei einem zweiten Faktor
+
+Hat ein Konto einen zweiten Faktor — ein bestätigtes TOTP-Geheimnis, einen Passkey oder
+Wiederherstellungscodes, also genau die Faktoren, die eine Anmeldung anbietet —, schreibt die
+Einlösung eines gemailten Reset-Tokens (`password.redeemReset`) das Kennwort nicht (S-FIX-7). Sie
+prüft und hasht das neue Kennwort wie bisher, bevor der Token verbraucht wird, verbraucht ihn unter
+der Kontosperre, zieht die Generation seines Zwecks neu und behält die Epoche; sie widerruft keine
+Sitzung, stellt keine aus und ruft keinen Hook. Sie antwortet `{ status: "second_factor_required",
+pendingToken, pending }` wie die Magic-Link-Einlösung und setzt `__Host-velve_pending`. Die Zeile in
+`velve.pending_authentication` hält das neue Kennwort als PHC-String in `new_password_phc`,
+verschlüsselt unter `password-enc` und gebunden an den Eigentümer `user_id` und die Zeile
+`token_sha256` (S-INTEG-1), mit seiner Schlüsselversion in `new_password_key_version`; ihr
+`token_mac` bindet zusätzlich den SHA-256-Wert dieses Chiffrats und seine Schlüsselversion
+(S-INTEG-9). Eine Zeile ohne neues Kennwort wird genau so kodiert wie vor Migration 5.
+
+Erst der Abschluss über eine der vier Routen schreibt das Kennwort (S-FIX-8). Die Faktorprüfung
+läuft wie bei einer Anmeldung in ihrem Dienst und schreibt dort, was sie immer schreibt: den
+gebuchten Versuch, den beanspruchten TOTP-Schritt, den verbrauchten Wiederherstellungscode, den
+Signaturzähler des Passkeys. Danach entfernt eine Transaktion die Zeile, sperrt das Konto, lehnt ab,
+wenn das Siegel nicht mehr das ist, das die Faktorprüfung gelesen oder hinterlassen hat — mit dem
+gewöhnlichen Fehlschlag des Faktorwegs (S-INTEG-5) —, schreibt das Kennwort, widerruft alle
+Sitzungen mit dem Grund `password_reset` und stellt eine neue Sitzung mit
+`factors = {password, <Faktor>}` aus. `beforeSessionCreate` und `beforeSessionRevoke` laufen in
+dieser Transaktion, `afterSessionCreate` nach ihr; `beforeSignIn` und `afterSignIn` laufen wie beim
+Reset ohne zweiten Faktor nicht. Ein falscher Faktor, das Ende der fünf Versuche (L-8), der Ablauf,
+`pending.cancel`, ein ablehnender `beforeSessionCreate` und ein inzwischen geändertes Konto lassen
+Kennwort und Sitzungen unverändert. Ohne zweiten Faktor bleibt der Reset, wie er war, und antwortet
+`{ status: "password_reset", sessionToken, session, revokedOtherSessionsCount }`.
+`redeemResetWithRecoveryCode` bleibt unverändert, weil der Code selbst der zweite Faktor ist.
+
+```sql
+-- Migration 5
+ALTER TABLE velve.pending_authentication
+  ADD COLUMN new_password_phc bytea,
+  ADD COLUMN new_password_key_version integer CHECK (new_password_key_version >= 1),
+  ADD CONSTRAINT pending_authentication_new_password_whole
+    CHECK ((new_password_phc IS NULL) = (new_password_key_version IS NULL));
+```
+
 ### 3.7 Einmal-Artefakte
 
 Jedes Einmal-Artefakt ist eine Zeile mit `sha256(token)` als Primärschlüssel,
@@ -2208,16 +2247,21 @@ interface PasswordNamespace<M extends IdentityMode> {
     : Promise<SetPasswordResult>
   requestReset: OnlyWhen<ModeHasEmail<M>, (i: { email: string }) => Promise<void>>
   redeemReset:  OnlyWhen<ModeHasEmail<M>, (i: { token: string; newPassword: string })
-    => Promise<SetPasswordResult>>
+    => Promise<RedeemResetResult>>
 }
 interface SetPasswordResult {
   sessionToken: SessionToken            // neu; das alte ist ungültig
   session: Session
   revokedOtherSessionsCount: number
 }
+type RedeemResetResult =
+  | ({ status: "password_reset" } & SetPasswordResult)
+  | { status: "second_factor_required"; pendingToken: PendingToken; pending: PendingAuthentication }
 ```
 
-Alle vier schreibenden Methoden widerrufen **alle anderen** Sitzungen und geben ein neues Token
+`redeemReset` schreibt bei einem Konto mit zweitem Faktor zunächst nichts als den verbrauchten Token
+und antwortet `second_factor_required`; Kennwort, Widerruf und neue Sitzung entstehen beim Abschluss
+dieses Faktors (3.6). Alle vier schreibenden Methoden widerrufen **alle anderen** Sitzungen und geben ein neues Token
 zurück. Das ist kein Schalter; ein Feld `revokeOtherSessions` existiert nicht. `set` ist für
 Konten ohne Passwort-Credential und schlägt fehl, wenn bereits eines existiert — zwei Methoden
 statt eines optionalen `currentPassword`, weil ein optionales aktuelles Kennwort genau die
@@ -2680,7 +2724,7 @@ einsetzt; `caller: "session"` erzeugt genau diese eine Differenz zwischen den Si
 | POST | `/password/set` | `{ newPassword }` | `SetPasswordResult` | 200, 400, 401, 403, 409 | IP+Konto | ja |
 | POST | `/password/change` | `{ currentPassword, newPassword }` | `SetPasswordResult` | 200, 400, 401, 403 | IP+Konto | ja |
 | POST | `/password/request-reset` | `{ email }` | — | 204, 400 | IP+Konto | ja |
-| POST | `/password/redeem-reset` | `{ token, newPassword }` | `SetPasswordResult` | 200, 400 | IP | ja |
+| POST | `/password/redeem-reset` | `{ token, newPassword }` | `RedeemResetResult` | 200, 400 | IP | ja |
 | POST | `/password/redeem-reset-with-recovery-code` | `SignInLookup & { recoveryCode, newPassword }` | `SetPasswordResult` | 200, 400, 401 | IP+Konto | ja |
 | POST | `/email/request-verification` | — | — | 204, 401 | IP+Konto | ja |
 | POST | `/email/redeem-verification` | `{ token }` | `{ user }` | 200, 400 | IP | ja |
@@ -4244,6 +4288,8 @@ Der Entwurf wird hier **nicht** geändert. Wo die Ausarbeitung eine Lücke in de
 - **S-FIX-4:** Der Zustand zwischen korrektem Kennwort und zweitem Faktor ist keine Zeile in `velve.session`, sondern eine Zeile in `velve.pending_authentication` mit eigenem Token in einem eigenen Cookie. *(Abschnitt 3.6, erster Absatz)*
 - **S-FIX-5:** Der Sitzungscookie trägt in jeder Antwort den Namen, standardmäßig `__Host-velve_session` oder so, wie `session.cookieName` ihn konfiguriert, kein `Domain`-Attribut und `Path=/`; der Server setzt für den Sitzungscookie in einer Antwort niemals mehr als einen `Set-Cookie`-Kopfeintrag. *(Abschnitt 3.5, Cookie-Absatz)*
 - **S-FIX-6:** Kennwort-Reset und Kennwortänderung widerrufen alle anderen Sitzungen des Nutzers; es existiert keine Konfigurationsoption, die dieses Verhalten abschaltet. *(Abschnitt 3.5: „Das ist kein Schalter.")*
+- **S-FIX-7:** Hat ein Konto einen zweiten Faktor — ein bestätigtes TOTP-Geheimnis, einen Passkey oder Wiederherstellungscodes —, schreibt die Einlösung eines gemailten Reset-Tokens kein Kennwort, widerruft keine Sitzung und erzeugt keine Zeile in `velve.session`; sie verbraucht den Token, antwortet `second_factor_required` mit einem Zwischenzustand wie die Magic-Link-Einlösung, und das neue Kennwort steht nur als an Eigentümer und `token_sha256` gebundener Umschlag seines PHC-Strings in dieser Zeile, dessen SHA-256-Wert und Schlüsselversion ihr `token_mac` bindet. *(Abschnitt 3.6, Der gemailte Kennwort-Reset bei einem zweiten Faktor)*
+- **S-FIX-8:** Kennwort, Widerruf aller Sitzungen und neue Sitzung eines so zurückgehaltenen Resets entstehen erst beim Abschluss des zweiten Faktors, in der Transaktion, die die Zeile des Zwischenzustands entfernt, und nur, wenn das Siegel unter der Kontosperre noch das ist, das die Faktorprüfung gelesen oder hinterlassen hat; ein falscher Faktor, das Ende der fünf Versuche, der Ablauf, der Abbruch und ein inzwischen geändertes Konto lassen Kennwort und Sitzungen unverändert, und von zwei Abschlüssen derselben Zeile wirkt höchstens einer. *(Abschnitt 3.6, Der gemailte Kennwort-Reset bei einem zweiten Faktor)*
 
 ---
 
@@ -4641,9 +4687,9 @@ Bei der Ausarbeitung dieses Abschnitts und des Prüfplans wurden dreizehn Lücke
 
 ## 6. Prüfplan
 
-Zu jeder der 134 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID trägt dieselbe Klasse und dieselbe Nummer wie die Anforderung: `T-OWNER-3` prüft `S-OWNER-3`. Hinzu kommen vier ergänzende Testfälle, die keiner einzelnen Anforderung zugeordnet sind, sondern eine Klasse breiter absichern (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — zusammen **138 Testfälle**.
+Zu jeder der 136 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID trägt dieselbe Klasse und dieselbe Nummer wie die Anforderung: `T-OWNER-3` prüft `S-OWNER-3`. Hinzu kommen vier ergänzende Testfälle, die keiner einzelnen Anforderung zugeordnet sind, sondern eine Klasse breiter absichern (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — zusammen **140 Testfälle**.
 
-**Spalten.** *Art* ist eine von sechs: `Unit`, `Integration`, `Property` (fast-check), `Statistisch`, `Nebenläufigkeit`, `Statisch` (Lint-Regel, AST-Analyse, Typprüfung); Kombinationen sind mit `+` angegeben. *Schwelle* ist eine Zahl oder ein hartes Kriterium — kein Test in diesem Plan besteht mit „keine Fehler". *Läuft in* ist eine von drei Stufen: `CI bei jedem Commit` (119 Testfälle, dazu der statische Teil von T-RACE-2 und der Teil von T-INTEG-5 außer dem Zeitteil), `CI nächtlich` (15, dazu der Nebenläufigkeitsteil von T-RACE-2 und der Zeitteil von T-INTEG-5), `vor jedem Release` (2).
+**Spalten.** *Art* ist eine von sechs: `Unit`, `Integration`, `Property` (fast-check), `Statistisch`, `Nebenläufigkeit`, `Statisch` (Lint-Regel, AST-Analyse, Typprüfung); Kombinationen sind mit `+` angegeben. *Schwelle* ist eine Zahl oder ein hartes Kriterium — kein Test in diesem Plan besteht mit „keine Fehler". *Läuft in* ist eine von drei Stufen: `CI bei jedem Commit` (121 Testfälle, dazu der statische Teil von T-RACE-2 und der Teil von T-INTEG-5 außer dem Zeitteil), `CI nächtlich` (15, dazu der Nebenläufigkeitsteil von T-RACE-2 und der Zeitteil von T-INTEG-5), `vor jedem Release` (2).
 
 **Grundsatz der Stufenzuordnung.** Alles Deterministische blockiert jeden Commit. Alles Statistische und alles, was länger als 60 Sekunden läuft, läuft nächtlich auf einem dedizierten Läufer und meldet als Ticket, nicht als roter Build. Der Grund steht in Abschnitt 6.20.
 
@@ -4674,6 +4720,8 @@ Zu jeder der 134 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID
 | T-FIX-4 | S-FIX-4 | Integration | Anmeldung mit korrektem Kennwort bei aktivem zweitem Faktor; danach Tabellen zählen. | `velve.session` **+0 Zeilen**, `velve.pending_authentication` **+1 Zeile**; die Antwort setzt `__Host-velve_pending`, nicht den Sitzungscookie (standardmäßig `__Host-velve_session` oder so, wie `session.cookieName` ihn konfiguriert) | CI bei jedem Commit |
 | T-FIX-5 | S-FIX-5 | Integration | `Set-Cookie`-Kopfzeilen jeder Antwort parsen, die eine Sitzung erzeugt. | Genau **1** Eintrag mit Sitzungsnamen; Attributmenge exakt `{HttpOnly, Secure, SameSite=Lax, Path=/}`; **kein** `Domain` | CI bei jedem Commit |
 | T-FIX-6 | S-FIX-6 | Integration + Statisch | Drei Sitzungen A (aufrufend), B, C anlegen; Kennwort ändern und separat zurücksetzen. Zusätzlich Typprüfung: die Optionstypen enthalten keinen Schlüssel, der diesen Widerruf steuert. | B und C liefern die Antwort „nicht angemeldet", A bleibt gültig: **2/2 je Ereignis**; **0 Optionsschlüssel** | CI bei jedem Commit |
+| T-FIX-7 | S-FIX-7 | Integration | Konto mit TOTP, mit Passkey und mit Wiederherstellungscodes allein je einen Reset-Token einlösen lassen; Antwort, Cookies, Hooks, Sitzungen und die Spalten der Zwischenzustandszeile lesen; als Schreiber der Datenbank den Umschlag leeren, gegen den einer anderen Zeile tauschen und in die Zeile einer Anmeldung kopieren. | Antwort `second_factor_required` in **3/3**, **0** neue Sitzungen, **0** widerrufene, **0** `beforeSessionCreate`; das alte Kennwort meldet sich an, das neue nicht; die Zeile enthält weder das Kennwort noch `$argon2id$`; geleerter, getauschter und kopierter Umschlag **3/3** abgelehnt, mit Alarm `token_binding_mismatch` | CI bei jedem Commit |
+| T-FIX-8 | S-FIX-8 | Integration + Nebenläufigkeit | Den zurückgehaltenen Reset mit TOTP, Passkey und Wiederherstellungscode abschließen; mit falschem Code bis zum Budget, nach Abbruch, nach Ablauf, mit ablehnendem `beforeSessionCreate`, nach einer Kennwortänderung und nach einer Änderung des Kontos zwischen Faktorprüfung und Abschluss; zwei Abschlüsse derselben Zeile mit zwei Codes zugleich über einen Pool. | Abschluss **3/3** mit neuer Kennwortanmeldung, alter Sitzung widerrufen, genau **1** Sitzung, Faktoren `{password, <Faktor>}`; in **6/6** Ablehnungsfällen altes Kennwort und alte Sitzung unverändert; von zwei gleichzeitigen Abschlüssen **genau 1** erfolgreich | CI bei jedem Commit |
 
 ---
 
@@ -5037,7 +5085,7 @@ Für ein Ein-Personen-Team lohnt sich das **nicht auf dem gesamten Bestand**: ei
 - **Ziel: Mutations-Score ≥ 85 % auf diesem Ausschnitt**, gemessen **vor jedem Release**, nicht bei jedem Commit.
 - **Der Wert für ein Ein-Personen-Team ist nicht die Zahl, sondern die Liste der überlebenden Mutanten.** Sie ist eine Arbeitsliste fehlender Zusicherungen und ersetzt den Code-Review durch eine zweite Person an genau der Stelle, an der ein solcher Review am meisten wert wäre.
 
-**Abdeckung ist kein Sicherheitsmaß.** Die 138 Testfälle dieses Plans sind das Sicherheitsmaß; die Abdeckungszahl ist nur die Warnleuchte, die anzeigt, dass ein neuer Zweig ohne Testfall hinzugekommen ist. Kein Testfall dieses Plans darf mit dem Argument „die Abdeckung stimmt ja" entfallen.
+**Abdeckung ist kein Sicherheitsmaß.** Die 140 Testfälle dieses Plans sind das Sicherheitsmaß; die Abdeckungszahl ist nur die Warnleuchte, die anzeigt, dass ein neuer Zweig ohne Testfall hinzugekommen ist. Kein Testfall dieses Plans darf mit dem Argument „die Abdeckung stimmt ja" entfallen.
 
 ---
 
