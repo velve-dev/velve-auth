@@ -1,9 +1,15 @@
 import type { OneTimeTokenRepository, ReadOneTimeToken } from "../db/repositories/token.js";
 import { equalsInConstantTime } from "../keys/constant-time.js";
 import type { KeyProvider } from "../keys/provider.js";
+import type { SecurityStateAlarmReason } from "../security-state/alarm.js";
+import { compareWithAnchors, consultAnchors } from "../security-state/anchor.js";
 import { FIRST_GENERATIONS } from "../security-state/encoding.js";
-import type { SecurityStateRead } from "../security-state/read.js";
-import { checkAccount, type SecurityStateRuntime } from "../security-state/runtime.js";
+import {
+	checkSecurityState,
+	readSecurityState,
+	type SecurityStateRead,
+} from "../security-state/read.js";
+import type { SecurityStateRuntime } from "../security-state/runtime.js";
 import {
 	checkTokenBinding,
 	reportBrokenState,
@@ -58,6 +64,39 @@ async function libraryWrote(
 		});
 	}
 	return verdict === "valid";
+}
+
+function brokenReasonOf(
+	verdict: Awaited<ReturnType<typeof checkSecurityState>>["verdict"],
+	anchorVerdict: ReturnType<typeof compareWithAnchors>,
+): SecurityStateAlarmReason | null {
+	if (verdict !== "valid" && verdict !== "unsealed") {
+		return verdict;
+	}
+	return anchorVerdict === "version_below_anchor" ||
+		anchorVerdict === "anchor_mismatch" ||
+		anchorVerdict === "anchor_unavailable"
+		? anchorVerdict
+		: null;
+}
+
+//the seal is verified against the anchors without recording it with one that is behind (E-3696)
+async function verifiedReadOf(
+	runtime: SecurityStateRuntime,
+	userId: string,
+): Promise<SecurityStateRead | null> {
+	const anchorReading = await consultAnchors(runtime.anchors, userId);
+	const read = await readSecurityState(runtime.driver, runtime.schema, userId);
+	if (read === null) {
+		return null;
+	}
+	const { verdict } = await checkSecurityState(runtime.keys, read, runtime.sealing);
+	const broken = brokenReasonOf(verdict, compareWithAnchors(read.seal, anchorReading));
+	if (broken !== null) {
+		runtime.alarms.raise({ userId, occasion: OCCASION, reason: broken });
+		return null;
+	}
+	return read;
 }
 
 //the address the link was mailed to must still be the sealed one as a redemption demands (S-INTEG-9)
@@ -123,14 +162,14 @@ export function createOneTimeTokenResolution(
 		if (userId === null) {
 			return null;
 		}
-		const check = await checkAccount(options.securityState, userId, OCCASION);
-		if (check.kind !== "usable") {
+		const read = await verifiedReadOf(options.securityState, userId);
+		if (read === null) {
 			return null;
 		}
 		const answersAsRedemptionWould =
-			addressStillTheAccounts(options, userId, row, check.read) &&
-			generationStillTheAccounts(options, userId, row, check.read, tokenSha256) &&
-			!check.read.disabled;
+			addressStillTheAccounts(options, userId, row, read) &&
+			generationStillTheAccounts(options, userId, row, read, tokenSha256) &&
+			!read.disabled;
 		return answersAsRedemptionWould ? { userId, purpose: row.purpose } : null;
 	};
 }
