@@ -184,7 +184,7 @@ async function replacePassword(
 	const { schema, keys, sessions, pluginRuntime, securityState } = environment.services;
 	const sessionId = randomUuid();
 	const outcome: { result?: SetPasswordResult } = {};
-	//a disabled account is refused as today and is never held back for a factor
+	//a disabled account is refused and never held back for a factor
 	const heldBackBy = (read: SecurityStateRead) =>
 		read.disabled ? NO_FACTOR_HOLDS_IT_BACK : (input.heldBackBy?.(read) ?? NO_FACTOR_HOLDS_IT_BACK);
 	const sealed = await sealChange(
