@@ -47,6 +47,14 @@ here as well, where nothing removes it.
 - [Security state: keyed token hashes](#security-state-keyed-token-hashes)
 - [Security state: the seal](#security-state-the-seal)
 - [Security state: administration and migration](#security-state-administration-and-migration)
+- [Password reset with a second factor](#password-reset-with-a-second-factor)
+- [Proof of work](#proof-of-work)
+- [Resolving a one-time token](#resolving-a-one-time-token)
+- [The address change notice](#the-address-change-notice)
+- [The no-recovery switch](#the-no-recovery-switch)
+- [Recovery to a new passkey](#recovery-to-a-new-passkey)
+- [Discoverable registration](#discoverable-registration)
+- [Verified attestation and the authenticator allowlist](#verified-attestation-and-the-authenticator-allowlist)
 - [Using it with an AI coding agent](#using-it-with-an-ai-coding-agent)
 - [Licence](#licence)
 
@@ -10349,6 +10357,38 @@ It refuses with a `SecurityStateMaintenanceError` and changes nothing:
 
 An account at the largest version is recovered by hand: delete its sessions and
 its seal row by SQL and let `sealSecurityState()` seal it in mode `"migrating"`.
+
+## Password reset with a second factor
+
+> Reserved for the `reset-second-factor` feature of release 3.0.0 and not written yet. Only that feature writes into this chapter (`CLAUDE.md` §5), and its writer deletes this note when filling it.
+
+## Proof of work
+
+> Reserved for the `proof-of-work` feature of release 3.0.0 and not written yet. Only that feature writes into this chapter (`CLAUDE.md` §5), and its writer deletes this note when filling it.
+
+## Resolving a one-time token
+
+> Reserved for the `token-resolution` feature of release 3.0.0 and not written yet. Only that feature writes into this chapter (`CLAUDE.md` §5), and its writer deletes this note when filling it.
+
+## The address change notice
+
+> Reserved for the `address-change-notice` feature of release 3.0.0 and not written yet. Only that feature writes into this chapter (`CLAUDE.md` §5), and its writer deletes this note when filling it.
+
+## The no-recovery switch
+
+> Reserved for the `no-recovery-switch` feature of release 3.0.0 and not written yet. Only that feature writes into this chapter (`CLAUDE.md` §5), and its writer deletes this note when filling it.
+
+## Recovery to a new passkey
+
+> Reserved for the `passkey-recovery` feature of release 3.0.0 and not written yet. Only that feature writes into this chapter (`CLAUDE.md` §5), and its writer deletes this note when filling it.
+
+## Discoverable registration
+
+> Reserved for the `discoverable-registration` feature of release 3.0.0 and not written yet. Only that feature writes into this chapter (`CLAUDE.md` §5), and its writer deletes this note when filling it.
+
+## Verified attestation and the authenticator allowlist
+
+> Reserved for the `verified-attestation` feature of release 3.0.0 and not written yet. Only that feature writes into this chapter (`CLAUDE.md` §5), and its writer deletes this note when filling it.
 
 ## Using it with an AI coding agent
 

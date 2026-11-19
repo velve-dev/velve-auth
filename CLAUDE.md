@@ -584,6 +584,17 @@ number, so no branch ever has to renumber, and the merge order does not matter.
 | E-3540 … E-3569 | gate and infrastructure, seventeenth range — publishing from main through trusted publishing, reversing E-2760. Counted over the rows standing at 4be78c6 |
 | E-3570 … E-3599 | gate and infrastructure, eighteenth range — the nightly tier and the publish check brought to green on main after 2.0.0. Counted over the rows standing at 83e9ae1 |
 | E-3600 … E-3629 | outside the waves · `release-2-0-1` — the race between a background rehash and a session issue, and the 2.0.1 patch release. Counted over the rows standing at d7717d8 |
+| E-3630 … E-3659 | outside the waves · `reset-second-factor` — the mailed password reset asks for an enrolled second factor before it writes the password. Reserved together before the 3.0.0 features on feature/release-3-0-0 start, counted over the rows standing at 3694ac0 |
+| E-3660 … E-3689 | outside the waves · `proof-of-work` — the proof-of-work challenge, its browser solver and its verifier. Reserved together before the 3.0.0 features on feature/release-3-0-0 start, counted over the rows standing at 3694ac0 |
+| E-3690 … E-3709 | outside the waves · `token-resolution` — resolving a one-time token without spending it. Reserved together before the 3.0.0 features on feature/release-3-0-0 start, counted over the rows standing at 3694ac0 |
+| E-3710 … E-3729 | outside the waves · `address-change-notice` — telling the previous address about an address change. Reserved together before the 3.0.0 features on feature/release-3-0-0 start, counted over the rows standing at 3694ac0 |
+| E-3730 … E-3759 | outside the waves · `no-recovery-switch` — the per-account switch that turns every recovery path off. Reserved together before the 3.0.0 features on feature/release-3-0-0 start, counted over the rows standing at 3694ac0 |
+| E-3760 … E-3809 | outside the waves · `passkey-recovery` — recovery to a new passkey, with its waiting period. Reserved together before the 3.0.0 features on feature/release-3-0-0 start, counted over the rows standing at 3694ac0 |
+| E-3810 … E-3839 | outside the waves · `discoverable-registration` — requiring a discoverable credential at registration. Reserved together before the 3.0.0 features on feature/release-3-0-0 start, counted over the rows standing at 3694ac0 |
+| E-3840 … E-3869 | outside the waves · `verified-attestation` — verified attestation and the per-account authenticator allowlist. Reserved together before the 3.0.0 features on feature/release-3-0-0 start, counted over the rows standing at 3694ac0 |
+| E-3870 … E-3969 | outside the waves · `security-review` — the security review of the whole library, its map of every way into an account and its fixes. Reserved together before the 3.0.0 features on feature/release-3-0-0 start, counted over the rows standing at 3694ac0 |
+| E-3970 … E-3999 | outside the waves · `guide` — the guide for human readers under docs/guide. Reserved together before the 3.0.0 features on feature/release-3-0-0 start, counted over the rows standing at 3694ac0 |
+| E-4000 … E-4029 | outside the waves · `release-3-0-0` — the 3.0.0 release, the rules amended for the guide, and the release notes. Reserved together before the 3.0.0 features on feature/release-3-0-0 start, counted over the rows standing at 3694ac0 |
 
 The next wave's ranges are added to that table before its features start,
 continuing above the highest number already reserved. A range is assigned before the feature's writer starts and is not
