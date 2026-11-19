@@ -5,6 +5,7 @@ export type {
 	MagicLinkNamespace,
 	MailedPasswordNamespace,
 	RecoveryPasswordNamespace,
+	RedeemResetResult,
 	SetPasswordResult,
 	SignUpNamespace,
 } from "./results.js";

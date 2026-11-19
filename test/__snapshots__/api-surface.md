@@ -2451,7 +2451,7 @@ import { ResolvedSessionView } from "./core/auth/routes.mjs";
 import { TotpEnrollment } from "./core/factor/totp/secret.mjs";
 import { WebAuthnCredential } from "./core/factor/webauthn/credential-repository.mjs";
 import { WebAuthnAuthenticationChallenge, WebAuthnRegistrationChallenge } from "./core/factor/webauthn/service.mjs";
-import { ChangedUser, EmailNamespace, MagicLinkNamespace, MailedPasswordNamespace, RecoveryPasswordNamespace, SetPasswordResult, SignUpNamespace } from "./core/flows/results.mjs";
+import { ChangedUser, EmailNamespace, MagicLinkNamespace, MailedPasswordNamespace, RecoveryPasswordNamespace, RedeemResetResult, SetPasswordResult, SignUpNamespace } from "./core/flows/results.mjs";
 import { OAuthCallbackOutcome } from "./core/oauth/service.mjs";
 import { AuthenticatorResponse, RecoveryNamespace, SignInPasskeyNamespace, TotpNamespace, WebAuthnNamespace } from "./core/factor/routes.mjs";
 import { EmailFlowSurface } from "./core/flows/routes.mjs";
@@ -2534,6 +2534,7 @@ export {
 	type RecoveryCodesRequirement,
 	type RecoveryNamespace,
 	RecoveryPasswordNamespace,
+	RedeemResetResult,
 	type RedeemedOneTimeToken,
 	type ResolvedOneTimeToken,
 	type ResolvedSession,
