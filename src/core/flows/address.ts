@@ -222,7 +222,11 @@ async function tellOfTheCommittedChange(
 	}
 }
 
+//a refusal with a code is logged by its code as its message is the generic one the caller sees (E-3718)
 function messageOf(failure: unknown): string {
+	if (failure instanceof VelveError) {
+		return failure.code;
+	}
 	return failure instanceof Error ? failure.message : String(failure);
 }
 

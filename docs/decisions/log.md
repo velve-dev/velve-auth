@@ -18557,3 +18557,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Answering the hook's failure and logging the send failure beside it, which needs a log the flow does not hold: `RouteServices` carries no log sink, and adding one is outside this feature's files. (b) Answering the send failure and dropping the hook's, which loses the other half the same way.
 **Reason.** Where both fail, the redemption throws one `AggregateError` that carries both failures and a message naming both, so the error map's one log line records that the notice was not sent and why the hook failed. A failure that is not a `VelveError` answers `500 internal_error`, which is what the failed send answers on its own, so the send failure decides the answer too. Where only one fails, nothing changes.
 **Price.** A hook that refuses with its own registered code while the notice also fails answers `500 internal_error` rather than its code. The log line's message is longer than the error map's other diagnostics and carries both texts as the callbacks wrote them.
+
+<a id="e-3718"></a>
+
+### The log line of a double failure names a refusing hook by its code
+`E-3718` · address-change-notice · failure handling, settled
+
+**Context.** E-3717 made a failed notice and a failing `afterEmailChange` leave as one `AggregateError` whose message names both, built from each failure's `message`. A hook that refuses with a registered plugin code throws a `VelveError`, whose `message` is the generic text the caller is shown, "The request was refused.", so the log line named the failed send and then a refusal no operator could trace to a plugin. The re-review found it and wrote the case "the log line of both failing keeps the code a refusing hook threw" in `test/address-change-notice-review-flow.test.ts`, which failed on the code as E-3717 left it.
+**Rejected.** Logging the plugin's code through a field of its own beside the error map's `cause`, which needs a log sink the flow does not hold (E-3717 (a)).
+**Reason.** For a `VelveError` the aggregate's message takes its `code` instead of its `message`; every other failure keeps its message as before. The code is what `registerPluginErrorCodes` keys a plugin's refusal by and starts with the plugin's id, so the line names the plugin. The message stays in the aggregate, which the error map answers as `500 internal_error` without its text, so nothing new reaches the caller.
+**Price.** A plugin that throws a `VelveError` with a core code is logged by that core code, which names no plugin; and the text E-3717's Reason calls "the message naming both" now names a refusal by its code rather than its words.

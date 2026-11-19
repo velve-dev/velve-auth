@@ -10626,7 +10626,8 @@ notice runs first so that a refusing plugin cannot keep the previous address fro
 being told, and a failed notice does not keep the plugins from being told either.
 Where both fail, the request answers `500 internal_error`, even for a hook that
 refuses with its own registered code, and the one log line names both failures,
-so a notice that was not sent is never hidden by a refusing hook (E-3717).
+a hook's refusal with a registered code by that code, so a notice that was not
+sent is never hidden by a refusing hook (E-3717, E-3718).
 
 ## The no-recovery switch
 
