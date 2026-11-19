@@ -279,6 +279,8 @@ The state between the first factor and the second.
 | `token_mac_key_version` | `integer` | at least 1; the `token-mac` version `token_mac` was taken under; indexed |
 | `session_epoch` | `bigint` | 1 to 2^53 − 1; the account's `session_epoch` when the row was created, 1 for an account without a seal row; bound into `token_mac` (migration 4) |
 | `attempt_generation` | `bigint` | 1 to 2^53 − 1; the account's `attempt_generation` when the row was created or its last booking drew; bound into `token_mac` (migration 4, [Generations](#generations)) |
+| `new_password_phc` | `bytea` | null except on a mailed reset held back for a second factor: the new password's PHC string, AES-256-GCM under `password-enc`, bound to `user_id` and `token_sha256`; its SHA-256 is bound into `token_mac` (migration 5, [Password reset with a second factor](#password-reset-with-a-second-factor)) |
+| `new_password_key_version` | `integer` | at least 1; the `password-enc` version of `new_password_phc`, null exactly when it is; bound into `token_mac` (migration 5) |
 
 ### `velve.totp_credential`
 
@@ -431,9 +433,10 @@ the two byte for byte.
 | `0002_identity_username_email.sql` | 2 | `CHECK (email IS NOT NULL AND username IS NOT NULL)` |
 | `0003_security_state.sql` | 3 | the table `velve.security_state` |
 | `0004_token_mac.sql` | 4 | locks the four token tables, deletes every session, one-time token, pending authentication and WebAuthn challenge, and adds `token_mac` and an indexed `token_mac_key_version` to the four tables; stop every 1.x instance first, and rerun it if PostgreSQL aborted it with a deadlock against a 1.x request still in flight |
+| `0005_pending_password_reset.sql` | 5 | adds the nullable `new_password_phc` and `new_password_key_version` to `velve.pending_authentication`, with the constraint `pending_authentication_new_password_whole` that sets both or neither; rewrites no row, so nobody is signed out and no pending state ends |
 
 Exactly one of the three version-2 files is applied — the one matching the
-configured identity mode. Migrations 3 and 4 are the same in every mode; migration 4
+configured identity mode. Migrations 3, 4 and 5 are the same in every mode; migration 4
 signs every user out, because no existing token row carries the MAC it adds. Changing the mode of a database that has already
 migrated is a schema change of its own; the runner will report the recorded
 migration 2 as changed rather than silently swapping the constraint.
@@ -5313,18 +5316,42 @@ one. Returns `void` and 204.
 | `token` | `string` |
 | `newPassword` | `string` |
 
-Spends the token, revokes **every** session of the account, writes the new
-credential and issues a new session. There is no option that keeps the other
-sessions alive. The password is validated and hashed before the token is spent,
-so a password the policy refuses does not burn the link.
+Answers a `RedeemResetResult`, a union on `status`. The password is validated
+and hashed before the token is spent, so a password the policy refuses does not
+burn the link.
 
-`SetPasswordResult`:
+For an account without a second factor it spends the token, revokes **every**
+session of the account, writes the new credential and issues a new session, and
+answers `status: "password_reset"`. There is no option that keeps the other
+sessions alive.
 
-| Field | Type | Notes |
-|---|---|---|
-| `sessionToken` | `SessionToken` | new; the caller is signed in |
-| `session` | `Session` | the row it names |
-| `revokedOtherSessionsCount` | `number` | every session the account had |
+For an account with a second factor — a confirmed TOTP secret, a passkey or
+recovery codes — it spends the token and writes nothing else: no password, no
+revocation, no session. It answers `status: "second_factor_required"` with the
+pending token and the factors on offer, exactly as `signIn.magicLink.redeem`
+does, and sets `__Host-velve_pending`. The new password is held, sealed, in the
+pending row until one of the four factor routes completes it; see
+[Password reset with a second factor](#password-reset-with-a-second-factor).
+
+| `status` | Field | Type | Notes |
+|---|---|---|---|
+| `"password_reset"` | `sessionToken` | `SessionToken` | new; the caller is signed in; over HTTP it travels in the session cookie only |
+| | `session` | `Session` | the row it names |
+| | `revokedOtherSessionsCount` | `number` | every session the account had |
+| `"second_factor_required"` | `pendingToken` | `PendingToken` | over HTTP it travels in `__Host-velve_pending` only |
+| | `pending` | `PendingAuthentication` | `factorsCompleted` is empty; `availableFactors` names the factors the account has |
+
+```ts
+const result = await auth.password.redeemReset({ token, newPassword, origin });
+if (result.status === "second_factor_required") {
+	// show the same second-factor step the magic link shows
+} else {
+	// result.sessionToken, result.session, result.revokedOtherSessionsCount
+}
+```
+
+Up to 2.x this method answered `SetPasswordResult` for every account, and an
+account with a second factor was reset by the mailbox alone (E-3630).
 
 The count is every session, not every session but the caller's: a reset is not
 made from a session, so there is none to exclude.
@@ -6571,9 +6598,9 @@ Without it a booking writes the row alone, as on an account without a seal row.
 
 | Method | Meaning |
 |---|---|
-| `begin({ userId, factorsCompleted })` | writes the row and draws the token; the statement that writes the row also reads which factors the account has, so `availableFactors` comes back computed and is never supplied |
-| `resolve(token)` | the state, or `null` — for an unknown token, an expired row, and a disabled account alike |
-| `consume(token)` | `DELETE … RETURNING`; the removal is the check, so two requests carrying the same token cannot both pass |
+| `begin({ userId, factorsCompleted, sessionEpoch?, offered?, newPassword? })` | writes the row and draws the token; the statement that writes the row also reads which factors the account has, so `availableFactors` comes back computed and is never supplied; `newPassword: { phc }` seals a mailed reset's PHC string into the row (S-FIX-7) |
+| `resolve(token)` | the state, or `null` — for an unknown token, an expired row, and a disabled account alike; on a row that holds a new password the resolution carries `completesReset: true`, which the factor routes read and the presentation drops |
+| `consume(token)` | `DELETE … RETURNING`; the removal is the check, so two requests carrying the same token cannot both pass; answers `reset`, the sealed new password with the proof `ConsumedPendingReset`, or `null` for a sign-in's row |
 | `cancel({ token })` | the abort button; without it a half-finished attempt stays valid for five minutes |
 
 The booking is not a method of the shipped service. `bookAttemptOn(pending, token)`,
@@ -6595,7 +6622,9 @@ neither effect. Without it the two halves live in different features — the
 pending row in this module, the session in `core/session` — and each can only
 reach one of them, which is how a spent intermediate state ends up with no
 session behind it. The resulting session carries the factors the pending row had
-completed plus the one just proved (S-FIX-1, S-RACE-5).
+completed plus the one just proved (S-FIX-1, S-RACE-5). It refuses a row that
+holds a new password as `invalid_pending_authentication`: a held back reset is
+completed by `completeResetBySecondFactor` and never as a sign-in.
 
 Five attempts, then the row is deleted and the attempt starts again at the
 password (L-8). The count and the deletion are one transaction, so a fifth
@@ -10365,7 +10394,115 @@ its seal row by SQL and let `sealSecurityState()` seal it in mode `"migrating"`.
 
 ## Password reset with a second factor
 
-> Reserved for the `reset-second-factor` feature of release 3.0.0 and not written yet. Only that feature writes into this chapter (`CLAUDE.md` §5), and its writer deletes this note when filling it.
+A mailed password reset does not get past a second factor. When the account has
+one — a confirmed TOTP secret, a passkey, or recovery codes, exactly the factors
+a sign-in of the same account offers — `auth.password.redeemReset` and
+`POST /password/redeem-reset` spend the token and answer
+`second_factor_required`, and only the completion of that factor writes the new
+password, revokes every session and issues one (architecture 3.6, S-FIX-7,
+S-FIX-8). Without a second factor the reset is the one it always was, answered
+with `status: "password_reset"`. There is nothing to configure.
+
+### The two steps
+
+1. **Redeem the link.** The application posts `{ token, newPassword }`. The new
+   password is checked against the policy and hashed first, so a refused
+   password does not burn the link. Then, in one transaction under the account
+   lock, the token is spent and the account's factors are read. With a factor,
+   the epoch is kept, no session is revoked or issued and no plugin hook runs; a
+   pending authentication is begun with no completed factor, the factors on
+   offer and the new password's PHC string sealed into it, and the answer is
+
+   ```ts
+   { status: "second_factor_required", pendingToken: PendingToken, pending: PendingAuthentication }
+   ```
+
+   with `__Host-velve_pending` set, exactly as `signIn.magicLink.redeem` answers.
+   Over HTTP the body carries `status` and `pending`; the token is in the cookie.
+2. **Complete the factor.** The client posts to one of the four routes the
+   pending cookie authorises, `POST /factor/totp/verify`,
+   `POST /factor/webauthn/authenticate/start` and `/finish`, or
+   `POST /factor/recovery/verify`, with the same inputs as for a sign-in. On
+   success the route answers `{ status: "signed_in", sessionToken, session, user }`
+   (and `signCountRegressed` on the passkey path), clears the pending cookie and
+   sets the session cookie. The session records the factors `password` and the
+   one just proved.
+
+### What the completion does, and in which transaction
+
+The factor is checked in its own service exactly as at a sign-in: the attempt is
+booked first (five per pending state, L-8), then the code, assertion or recovery
+code is judged, and the factor's own bookkeeping — the claimed TOTP step, the
+spent recovery code, the passkey's counter — is written there. Then one
+transaction
+
+- removes the pending row, which yields the sealed new password and the proof
+  the completion acts under;
+- takes the account lock and refuses unless the seal is exactly the one the
+  factor check read or left (E-3635);
+- runs `beforeSessionCreate` on the transaction's connection;
+- announces every session to `beforeSessionRevoke` with the reason
+  `password_reset` and deletes them;
+- writes the new password, recording the new session as the one that set it;
+- reseals with a new session epoch and issues the session under that seal.
+
+`afterSessionCreate` runs after the commit. `beforeSignIn` and `afterSignIn` run
+neither at the redemption nor at the completion, as for a reset without a second
+factor (E-3636).
+
+### What leaves the old password in place
+
+| Event | Answer | Old password and sessions |
+|---|---|---|
+| a wrong code or assertion | the factor's code, `invalid_factor_code`, `webauthn_credential_rejected` or `invalid_recovery_code` | unchanged |
+| the fifth wrong attempt | `too_many_factor_attempts`; the row is deleted | unchanged |
+| the five minutes run out | `invalid_pending_authentication` | unchanged |
+| `POST /pending/cancel` or `auth.pending.cancel` | `204`, then `invalid_pending_authentication` | unchanged |
+| a plugin refuses at `beforeSessionCreate` | the plugin's code; the pending row stands | unchanged |
+| a sealed change that keeps the session epoch — a factor enrolled or removed, recovery codes generated, the account disabled — between the factor check and the completion | the factor's code | unchanged |
+| a change that revokes every session — a password change, `session.revokeAll` — at any time before the completion | `invalid_pending_authentication` | the changed password stands |
+| the account disabled before the factor check | `invalid_pending_authentication` | unchanged |
+
+Two completions of the same pending row at once yield exactly one session; the
+removal of the row decides which. A reset token spent, expired, invented or
+presented for a disabled account answers `invalid_token` exactly as before.
+
+A failed completion after a successful factor check costs what the check spent:
+a TOTP step (the next code works) or one recovery code (E-3635).
+
+### Accounts whose only factor is recovery codes
+
+Recovery codes count. Such an account is asked for a recovery code, and the code
+the completion takes is spent, as at a sign-in (E-3633).
+`password.redeemResetWithRecoveryCode` is unchanged: the code it takes is itself
+the second factor.
+
+### How the new password is held
+
+`velve.pending_authentication.new_password_phc` holds the PHC string — never the
+password — encrypted under `password-enc` and bound to the row's owner and
+`token_sha256` (S-INTEG-1); `new_password_key_version` names the key version.
+Both are null on every other pending row, and the database refuses a row with
+only one of them. The row's `token_mac` binds the SHA-256 of the ciphertext and
+its key version (S-INTEG-9), so a database writer who empties, swaps or copies
+them is refused like a forged row, with the alarm `token_binding_mismatch`, and
+the reset is never turned into a sign-in. The maintenance rebinding of token
+rows reads both columns. Migration 5 adds them; see [Migrations](#migrations).
+
+### Migrating from 2.x
+
+`auth.password.redeemReset` and `POST /password/redeem-reset` answer
+`RedeemResetResult` instead of `SetPasswordResult`. Check `result.status`:
+
+- `"password_reset"` carries `sessionToken`, `session` and
+  `revokedOtherSessionsCount` as before;
+- `"second_factor_required"` carries `pendingToken` and `pending` as
+  `signIn.magicLink.redeem` does; send the user to the second-factor step the
+  magic link uses, and the factor route's `signed_in` answer is the moment the
+  new password takes effect.
+
+Run the migrations (`runMigrations` with `coreMigrations(mode)`) before starting
+3.0.0; migration 5 signs nobody out.
 
 ## Proof of work
 
