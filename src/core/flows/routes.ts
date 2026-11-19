@@ -17,6 +17,7 @@ import type {
 	MagicLinkNamespace,
 	MailedPasswordNamespace,
 	RecoveryPasswordNamespace,
+	RedeemResetResult,
 	SetPasswordResult,
 	SignUpNamespace,
 } from "./results.js";
@@ -282,7 +283,7 @@ function routesThatNeedAnAddress(environment: FlowEnvironment, email: EmailConfi
 		freshness: "not_required",
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
-		handler: async (input, context): Promise<SetPasswordResult> =>
+		handler: async (input, context): Promise<RedeemResetResult> =>
 			redeemReset(environment, context, input),
 	});
 

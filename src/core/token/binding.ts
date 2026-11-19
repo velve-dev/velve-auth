@@ -38,7 +38,7 @@ export type TokenRowContent =
 	| { readonly payload: OneTimeTokenPayload | null };
 
 /** what a pending row's MAC binds of the new password it holds, the ciphertext's SHA-256 and its key version */
-export interface SealedNewPasswordDigest {
+interface SealedNewPasswordDigest {
 	readonly ciphertextSha256: Uint8Array;
 	readonly keyVersion: number;
 }

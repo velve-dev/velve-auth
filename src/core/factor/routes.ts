@@ -7,6 +7,7 @@ import {
 	type RouteServices,
 } from "../auth/routes.js";
 import { type Actor, actorOfResolvedSession } from "../db/actor.js";
+import { completeResetBySecondFactor } from "../flows/reset.js";
 import type { ResolvedPendingAuthentication, Session } from "../http/caller.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import {
@@ -22,7 +23,11 @@ import {
 	signInMethodOfFirstFactor,
 	tellAfterSignIn,
 } from "../plugin/sign-in.js";
-import { toPendingToken, verifyUnderPendingAttemptLimit } from "./pending/index.js";
+import {
+	type PendingResolution,
+	toPendingToken,
+	verifyUnderPendingAttemptLimit,
+} from "./pending/index.js";
 import {
 	createRecoveryCodeService,
 	type RecoveryCodeService,
@@ -177,11 +182,24 @@ async function signedInBySecondFactor(
 	context: RequestContext,
 	spent: {
 		readonly held: HeldPendingState;
+		/** the resolution the factor check booked its attempt on, which says what the row completes */
+		readonly checked: PendingResolution;
 		readonly factor: "totp" | "webauthn" | "recovery";
 		readonly authorisedBy: CheckedSecondFactor["authorisedBy"];
 		readonly signCountRegressed?: boolean;
 	},
 ): Promise<SignInResult> {
+	//a held back reset writes its password with the session it issues and is no sign-in (S-FIX-8)
+	if (spent.checked.completesReset === true) {
+		return completeResetBySecondFactor({ services, semaphore: services.kdfSemaphore }, context, {
+			pendingToken: toPendingToken(spent.held.token),
+			factor: spent.factor,
+			authorisedBy: spent.authorisedBy,
+			...(spent.signCountRegressed === undefined
+				? {}
+				: { signCountRegressed: spent.signCountRegressed }),
+		});
+	}
 	const observed = { ipAddress: context.ipAddress, userAgent: context.userAgent };
 	const hooks = services.pluginRuntime.hooks;
 	const { userId, pending } = spent.held.resolution;
@@ -291,6 +309,7 @@ function totpRoutes(services: RouteServices, totp: TotpService) {
 			});
 			return signedInBySecondFactor(services, context, {
 				held,
+				checked: checked.resolution,
 				factor: "totp",
 				authorisedBy: checked.authorisedBy,
 			});
@@ -353,6 +372,7 @@ function recoveryRoutes(services: RouteServices, recovery: RecoveryCodeService) 
 			});
 			return signedInBySecondFactor(services, context, {
 				held,
+				checked: checked.resolution,
 				factor: "recovery",
 				authorisedBy: checked.authorisedBy,
 			});
@@ -459,15 +479,18 @@ function webAuthnRoutes(services: RouteServices, webauthn: WebAuthnService) {
 			const assertion = await verifyUnderPendingAttemptLimit(
 				services.pending,
 				toPendingToken(held.token),
-				(resolution) =>
-					webauthn.authenticate.finish({
+				async (resolution) => ({
+					checked: resolution,
+					...(await webauthn.authenticate.finish({
 						pending: resolution,
 						challengeToken: input.challengeToken,
 						response: input.response as unknown as AuthenticationResponseJSON,
-					}),
+					})),
+				}),
 			);
 			return signedInBySecondFactor(services, context, {
 				held,
+				checked: assertion.checked,
 				factor: "webauthn",
 				authorisedBy: assertion.authorisedBy,
 				signCountRegressed: assertion.signCountRegressed,
