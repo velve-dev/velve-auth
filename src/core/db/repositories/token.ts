@@ -44,6 +44,12 @@ interface ConsumedOneTimeToken extends StoredTokenMac {
 	readonly storedPayload: StoredPayload;
 }
 
+/** a standing row whose MAC is still to be checked, which proves no ownership because nothing removed it */
+export interface ReadOneTimeToken extends ConsumedOneTimeToken {
+	readonly purpose: OneTimeTokenPurpose;
+	readonly userId: string | null;
+}
+
 /** a removed row whose MAC is still to be checked before its owner or payload is used */
 export type OneTimeTokenCandidate = ConsumedOneTimeToken &
 	({ readonly userId: null } | { readonly userId: string; accept(): StoredOneTimeToken });
@@ -52,6 +58,11 @@ export interface OneTimeTokenRepository {
 	replaceOneTimeToken(input: OneTimeTokenReplacement): Promise<{ expiresAt: Date }>;
 	//a row that names no account is still checked and then answered exactly as no row is (S-TOKEN-4)
 	consumeOneTimeToken(input: OneTimeTokenLookup): Promise<OneTimeTokenCandidate | null>;
+	//a read names every purpose it accepts and removes nothing so it is no consumption (S-TOKEN-7)
+	readOneTimeToken(input: {
+		readonly tokenSha256: Uint8Array;
+		readonly purposes: readonly OneTimeTokenPurpose[];
+	}): Promise<ReadOneTimeToken | null>;
 	//a confirmed change of address withdraws every link still mailed to the old one (S-INTEG-9)
 	withdrawTokensOf(input: {
 		readonly actor: Actor;
@@ -121,6 +132,15 @@ interface ConsumedRowShape {
 	readonly token_mac_key_version: number;
 }
 
+//a driver is handed no javascript array and every purpose is a plain identifier
+function textArrayOf(purposes: readonly OneTimeTokenPurpose[]): string {
+	return `{${purposes.join(",")}}`;
+}
+
+interface ReadRowShape extends ConsumedRowShape {
+	readonly purpose: string;
+}
+
 //a generation the column could hold beyond the exact integers is read as none and fails the mac
 function generationOfColumn(value: string | null | undefined): number | null {
 	const generation = value === null || value === undefined ? Number.NaN : Number(value);
@@ -161,6 +181,10 @@ WHERE token_sha256 = $1 AND purpose = $2 AND expires_at > now()
 RETURNING user_id, payload::text AS payload_text, token_mac, token_mac_key_version`;
 
 	const withdrawStatement = `DELETE FROM ${table} WHERE user_id = $1 AND purpose = $2`;
+
+	const readStatement = `SELECT purpose, user_id, payload::text AS payload_text, token_mac, token_mac_key_version
+FROM ${table}
+WHERE token_sha256 = $1 AND purpose = ANY($2::text[]) AND expires_at > now()`;
 
 	return {
 		async replaceOneTimeToken(replacement) {
@@ -204,6 +228,24 @@ RETURNING user_id, payload::text AS payload_text, token_mac, token_mac_key_versi
 				}
 				return { expiresAt: toDate(row.expires_at) };
 			});
+		},
+
+		async readOneTimeToken({ tokenSha256, purposes }) {
+			const [row] = await options.driver.query<ReadRowShape>(readStatement, [
+				tokenSha256,
+				textArrayOf(purposes),
+			]);
+			const purpose = purposes.find((accepted) => accepted === row?.purpose);
+			if (row === undefined || purpose === undefined) {
+				return null;
+			}
+			return {
+				purpose,
+				userId: row.user_id,
+				storedPayload: storedPayloadOf(row.payload_text),
+				tokenMac: row.token_mac,
+				tokenMacKeyVersion: row.token_mac_key_version,
+			};
 		},
 
 		async consumeOneTimeToken({ tokenSha256, purpose }) {

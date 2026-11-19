@@ -147,6 +147,7 @@ describe("every state-changing method on the instance checks the origin (S-CSRF-
 		expect([...exempt].sort()).toStrictEqual(
 			[
 				"maintenance.sweep",
+				"oneTimeToken.resolve",
 				"pending.resolve",
 				"pending.resolveFromHeaders",
 				"session.resolve",

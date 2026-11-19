@@ -66,7 +66,8 @@ import { componentsAfter } from "../security-state/sealing.js";
 import { type SessionSettings, sessionSettingsOf } from "../session/config.js";
 import { createSessionService, type SessionService } from "../session/service.js";
 import { createOneTimeTokens } from "../token/one-time-token.js";
-import type { ModeHasUsername, RateLimitConfig, VelveAuthConfig } from "./config.js";
+import { createOneTimeTokenResolution, type ResolvedOneTimeToken } from "../token/resolution.js";
+import type { ModeHasEmail, ModeHasUsername, RateLimitConfig, VelveAuthConfig } from "./config.js";
 import { assertStoredIntegrityKeysTakeMac, schemaHoldsTheSealTable } from "./integrity-key-ring.js";
 import { type SweepReport, sweepExpiredRows } from "./maintenance.js";
 import { rateLimitConfigOf, routeAlarmReportedTo, routeFloodWatchOf } from "./rate-limiting.js";
@@ -153,6 +154,11 @@ export interface UsernameNamespace {
 	change(input: { newUsername: string } & ServerCallFields): Promise<{ readonly user: User }>;
 }
 
+/** what the application calls in its own process to learn whom and what a mailed link is for before redeeming it */
+export interface OneTimeTokenNamespace {
+	resolve(input: { token: string }): Promise<ResolvedOneTimeToken | null>;
+}
+
 export interface AuthInternals {
 	readonly routes: readonly AnyRoute[];
 	readonly identityMode: IdentityMode;
@@ -182,6 +188,9 @@ export type VelveAuth<M extends IdentityMode> = AuthInternals &
 		readonly user: UserNamespaceOf<M>;
 	} & (ModeHasUsername<M> extends true
 		? { readonly username: UsernameNamespace }
+		: Record<never, never>) &
+	(ModeHasEmail<M> extends true
+		? { readonly oneTimeToken: OneTimeTokenNamespace }
 		: Record<never, never>);
 
 function callerResolver(
@@ -223,6 +232,7 @@ export const SURFACE_NAMESPACES: readonly string[] = [
 	"pending",
 	"email",
 	"username",
+	"oneTimeToken",
 	"routes",
 	"identityMode",
 	"errorCodes",
@@ -347,6 +357,23 @@ async function setDisabledUnderTheSeal(
 	);
 }
 
+//a mailed link is routed before it is redeemed and only the instance may read it (E-3690)
+function oneTimeTokenSurfaceIn(
+	mode: IdentityMode,
+	environment: HttpEnvironment,
+	resolve: (token: string) => Promise<ResolvedOneTimeToken | null>,
+): { readonly oneTimeToken?: OneTimeTokenNamespace } {
+	if (mode === "username") {
+		return {};
+	}
+	return {
+		oneTimeToken: {
+			resolve: ({ token }) =>
+				failuresMappedAs("oneTimeToken.resolve", environment, () => resolve(token)),
+		},
+	};
+}
+
 function securityStateOf<M extends IdentityMode>(
 	config: VelveAuthConfig<M>,
 	resolved: {
@@ -418,8 +445,15 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const users = createUserRepository({ driver, schema });
 	const resolutions: ResolutionMemo = new WeakMap();
 
-	const oneTimeTokens = createOneTimeTokens(createOneTimeTokenRepository({ driver, schema }), {
+	const oneTimeTokenRepository = createOneTimeTokenRepository({ driver, schema });
+	const oneTimeTokens = createOneTimeTokens(oneTimeTokenRepository, {
 		keys: config.keys,
+		reportTokenBindingRefusal: securityState.reportTokenBindingRefusal,
+	});
+	const resolveOneTimeToken = createOneTimeTokenResolution({
+		repository: oneTimeTokenRepository,
+		keys: config.keys,
+		securityState,
 		reportTokenBindingRefusal: securityState.reportTokenBindingRefusal,
 	});
 
@@ -646,6 +680,8 @@ export function assembleVelveAuth<M extends IdentityMode>(
 							users.findUserByUsernameKey(comparisonFormOf(username)),
 					}),
 		} satisfies UserNamespaceInEveryMode,
+
+		...oneTimeTokenSurfaceIn(identity.mode, environment, resolveOneTimeToken),
 
 		...(usernameTable === null
 			? {}
