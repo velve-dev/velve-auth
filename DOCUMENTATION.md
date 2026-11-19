@@ -3604,9 +3604,13 @@ code in `purpose`, which is one of the four or `null` for the one code that fire
 because the purpose was not one of them (E-129, E-265). All three become
 `internal_error` over HTTP.
 
-`consumeOneTimeToken` is the only way a one-time token is ever read. There is no
-method that finds one, counts them or looks one up: a read before the write is
-the gap two of the advisories behind this library walked through (S-RACE-2).
+`consumeOneTimeToken` is the only way a one-time token is ever spent, and no
+redemption reads the row before it removes it: a read before the write is the
+gap two of the advisories behind this library walked through (S-RACE-2). The one
+read of the table is `readOneTimeToken`, behind `auth.oneTimeToken.resolve`; it
+removes nothing, and no redemption uses what it found (S-TOKEN-7, E-3692, see
+[Resolving a one-time token](#resolving-a-one-time-token)). There is still no
+method that counts tokens or looks one up by account.
 
 It is also the one row-removing statement in the library with no owner predicate,
 and it carries `/* no owner predicate: S-TOKEN-4 */` in its own SQL to say so — a
@@ -3693,7 +3697,7 @@ an actor (E-234, E-93).
 | `OneTimeTokenReplacement` | `{ tokenSha256: Uint8Array; purpose; payload: OneTimeTokenPayload \| null; tokenMac: Uint8Array; tokenMacKeyVersion: number }` with a `userId`, or `userId: null` and `serialisedOn` for a cover | the argument of `replaceOneTimeToken` |
 | `OneTimeTokenLookup` | `{ tokenSha256: Uint8Array; purpose }` | the argument of `consumeOneTimeToken` |
 | `OneTimeTokenCandidate` | `{ storedPayload; tokenMac; tokenMacKeyVersion }` with `userId: string` and `accept()`, or `userId: null` and no `accept` | the row `consumeOneTimeToken` returns, to be checked before use; `storedPayload` is `{ payload }`, or `null` where the column holds a value no issue writes |
-| `OneTimeTokenRepository` | `{ replaceOneTimeToken; consumeOneTimeToken }` | the result of `createOneTimeTokenRepository` |
+| `OneTimeTokenRepository` | `{ replaceOneTimeToken; consumeOneTimeToken; readOneTimeToken; withdrawTokensOf }` | the result of `createOneTimeTokenRepository` |
 | `OneTimeTokenErrorCode` | the three codes in the table above | `OneTimeTokenError.code` |
 | `OneTimeTokenError` | `Error` with `code` and `purpose: OneTimeTokenPurpose \| null` | every refusal the repository raises |
 
@@ -6316,6 +6320,7 @@ none either; see
 | `auth.pending` | `resolve`, `resolveFromHeaders`, `cancel` |
 | `auth.user` | `findById`, `findByEmail` (only in `"email"` and `"username_email"`), `findByUsername` (only in `"username"` and `"username_email"`), `disable`, `enable`, `delete` |
 | `auth.username` | `isAvailable`, `change` — present only in `"username"` and `"username_email"` |
+| `auth.oneTimeToken` | `resolve` — present only in `"email"` and `"username_email"`; no route, see [Resolving a one-time token](#resolving-a-one-time-token) |
 
 Every method reached through a route takes the six call fields beside its own
 input: `origin` (required, `string | null`), `sessionToken`, `pendingToken`,
