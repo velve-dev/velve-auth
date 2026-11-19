@@ -17,7 +17,7 @@ import { secretBytesOfBase32 } from "./totp-fixtures.js";
 import { createVirtualAuthenticator, type VirtualAuthenticator } from "./webauthn-simulator.js";
 
 /**
- * 3.11 enumerates seven hook points and 3.15 G names `password`, `passkey`, `oauth` and
+ * 3.11 enumerates eight hook points and 3.15 G names `password`, `passkey`, `oauth` and
  * `magic_link` as the methods a `SignInEvent` reports. Until this file the four sign-in and
  * session points fired on the OAuth callback alone, so a plugin's veto was bypassed by every
  * other way in. Each path is driven over the mounted handler, and the spy records every point

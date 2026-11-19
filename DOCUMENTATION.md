@@ -5290,6 +5290,11 @@ A token presented for a disabled account answers the same way and moves
 nothing, and it is spent all the same: it stays unusable after `user.enable`
 (E-2880).
 
+A change that commits sends `email_change_notice` to the address the account
+held until then, after the commit, and then runs `afterEmailChange` with the
+account id; a failure of either answers with that failure and leaves the change
+standing. See [The address change notice](#the-address-change-notice) (S-LINK-8).
+
 ### `auth.password.requestReset(input)`
 
 | Parameter | Type |
@@ -6076,7 +6081,7 @@ compile (E-349).
 | `rateLimit` | `Partial<RateLimitConfig>` | 30 @ 1 per 2 s per address, 5 @ 1 per 300 s per account | bucket sizes and the alert callback |
 | `email` | `EmailConfig` | — | the send callback; required in `"email"` and `"username_email"` |
 | `oauth` | `OAuthConfig` | none | the providers, `trustedProviders` and `storeTokens`; declared in `core/oauth/config.ts` and read by no route yet |
-| `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register: their routes join the table, their hooks are dispatched at the seven points — [the table says which of them have a producer](#which-points-have-a-producer) — and six ways of configuring them wrongly refuse the start |
+| `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register: their routes join the table, their hooks are dispatched at the eight points — [the table says which of them have a producer](#which-points-have-a-producer) — and six ways of configuring them wrongly refuse the start |
 | `webauthn` | `WebAuthnConfig` | none | the relying party; its absence removes the WebAuthn routes |
 | `totp` | `Partial<TotpConfig>` | tolerance 1 step | issuer name and tolerance window; the tolerance reaches the code comparison |
 | `recoveryCodes` | `RecoveryCodesConfig` | 10 codes in groups of 5; **required** in `"username"` | how many codes and in what grouping; both reach the generator |
@@ -6688,7 +6693,7 @@ may add can only be read after the chapter that says what it is added to and wha
 happens when the addition is refused. Its migrations are the same versioned
 runner, which stands further above still.
 
-The registry, the frozen context and the seven hook points are built, and so is
+The registry, the frozen context and the eight hook points are built, and so is
 everything the three declared fields promise: a plugin's migrations run, its
 error codes answer, and its rate-limit rules replace the ones its routes
 declare. What is still not built is listed at the end of this chapter.
@@ -6781,7 +6786,7 @@ migration, and removing a plugin leaves its tables where they are.
 | `dependsOn` | `readonly string[]?` | Ids this plugin must run after. Sorted topologically at start. |
 | `migrations` | `readonly PluginMigration<Id>[]?` | Run by the same versioned runner the core's use, under a ledger of the plugin's own; see below. |
 | `routes` | `readonly PluginRoute<Id>[]?` | Route *declarations*. The registry passes each to `defineRoute`, so a plugin route reaches the table through the same constructor and the same checks as a core route. Three fields of the core declaration are **absent** from it and a fourth is narrowed to one value: see below. |
-| `hooks` | `PluginHooks?` | Any of the seven points below. |
+| `hooks` | `PluginHooks?` | Any of the eight points below. |
 | `errorCodes` | `readonly \`${Id}.${string}\`[]?` | The codes this plugin's routes may answer with. Each answers `400` with the library's own message; see below. |
 | `rateLimitRules` | `Readonly<Record<\`${Id}.${string}\`, RateLimitRule>>?` | A rule per route name, which **replaces** the `rateLimit` that route declares. The key must name a route this plugin contributes. |
 | `securityStateAnchor` | `SecurityStateAnchor?` | An anchor for the security state, which learns every new seal and sets a floor under its version (3.18). Not a hook point; see [`securityStateAnchor`](#securitystateanchor). |
@@ -7245,7 +7250,7 @@ enumerates four.
 
 **Every field is now read once**, at the start, into a plain object nothing else
 can reach: the id, the dependencies, each migration's four fields, each route's
-ten, the seven hook points, the error codes and the rate-limit map. Every check
+ten, the eight hook points, the error codes and the rate-limit map. Every check
 below reads that object, and so do the route table, the migration runner and the
 hook dispatcher. There is one read and one value.
 
@@ -10156,7 +10161,7 @@ hands every check and change the ports of the configured anchors (E-3175).
 
 ### `securityStateAnchor`
 
-A member of [`VelvePlugin`](#velveplugin), and not an eighth hook point: it
+A member of [`VelvePlugin`](#velveplugin), and not a ninth hook point: it
 observes after a seal is committed and refuses through the floor it answers,
 never by throwing to veto (3.11, E-3084).
 
