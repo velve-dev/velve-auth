@@ -10500,7 +10500,9 @@ registered code, or with `500 internal_error` for an unregistered one, as at
 every point; the change stays committed and the notice has already gone. The
 notice runs first so that a refusing plugin cannot keep the previous address from
 being told, and a failed notice does not keep the plugins from being told either.
-Where both fail, the answer carries the hook's failure.
+Where both fail, the request answers `500 internal_error`, even for a hook that
+refuses with its own registered code, and the one log line names both failures,
+so a notice that was not sent is never hidden by a refusing hook (E-3717).
 
 ## The no-recovery switch
 

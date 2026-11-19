@@ -18478,3 +18478,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** A new class for notifications, which would be a twentieth class with one member and would change "neunzehn Fehlerklassen", which the counts test reads, for no gain in what a reader finds.
 **Reason.** A reader looking for what stops a takeover through the address finds it beside S-LINK-4. The test is `test/address-change-notice-flow.test.ts`, which fails in eight of its twelve cases when the call that sends the notice and runs the hook is removed.
 **Price.** LINK now holds one requirement that has nothing to do with a provider identity, and its heading says identity linking.
+
+<a id="e-3717"></a>
+
+### A refusing hook no longer hides a notice that was not sent
+`E-3717` · address-change-notice · failure handling, settled
+
+**Context.** E-3713 rejected swallowing a failed notice, because the operator's only record of it is the error map's log line for the failure the request answers with. As built, `tellOfTheCommittedChange` held the send failure, ran `afterEmailChange`, and rethrew the held failure only when the hook returned; a hook that threw as well travelled out instead, and the send failure was dropped. E-3714 wrote that down as "where both throw the hook's failure is the one answered" without seeing that this is the swallowing E-3713 rejects. The independent review found it and wrote `test/address-change-notice-review-flow.test.ts`, whose case "the send failure reaches the log when the hook fails as well" failed on the code as it stood.
+**Rejected.** (a) Answering the hook's failure and logging the send failure beside it, which needs a log the flow does not hold: `RouteServices` carries no log sink, and adding one is outside this feature's files. (b) Answering the send failure and dropping the hook's, which loses the other half the same way.
+**Reason.** Where both fail, the redemption throws one `AggregateError` that carries both failures and a message naming both, so the error map's one log line records that the notice was not sent and why the hook failed. A failure that is not a `VelveError` answers `500 internal_error`, which is what the failed send answers on its own, so the send failure decides the answer too. Where only one fails, nothing changes.
+**Price.** A hook that refuses with its own registered code while the notice also fails answers `500 internal_error` rather than its code. The log line's message is longer than the error map's other diagnostics and carries both texts as the callbacks wrote them.

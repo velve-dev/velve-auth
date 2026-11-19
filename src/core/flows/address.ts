@@ -210,11 +210,27 @@ async function tellOfTheCommittedChange(
 		() => null,
 		(failure: unknown) => ({ failure }),
 	);
-	await environment.services.pluginRuntime.hooks.afterEmailChange({ userId: change.userId });
+	try {
+		await environment.services.pluginRuntime.hooks.afterEmailChange({ userId: change.userId });
+	} catch (refusal) {
+		//a refusing hook must not hide that the notice was not sent (E-3717)
+		throw unsent === null ? refusal : bothFailures(unsent.failure, refusal);
+	}
 	//a notice that could not be sent fails the answer and leaves the committed change standing (E-3713)
 	if (unsent !== null) {
 		throw unsent.failure;
 	}
+}
+
+function messageOf(failure: unknown): string {
+	return failure instanceof Error ? failure.message : String(failure);
+}
+
+function bothFailures(unsent: unknown, refusal: unknown): AggregateError {
+	return new AggregateError(
+		[unsent, refusal],
+		`the address change notice was not sent: ${messageOf(unsent)}; afterEmailChange failed: ${messageOf(refusal)}`,
+	);
 }
 
 //whoever holds the old mailbox learns neither the new address nor a link (E-3711)
