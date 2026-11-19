@@ -18568,3 +18568,92 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Answering `invalid_pending_authentication` for the moved seal, which differs from the sign-in, whose issue misses in the same case and answers as the factor fails.
 **Reason.** The moved seal answers the factor's missed-issue reason, `invalid_factor_code`, `webauthn_credential_rejected` or `invalid_recovery_code`, exactly as a sign-in's missed issue does, and raises no alarm, since the seal verified under the lock. A disabled account answers as a missing pending state, which is what the factor check answers for it (`resolutionOf`). The sign-in completion refuses a pending row that carries a new password, so no caller of `completeSecondFactor` can turn a reset into a sign-in.
 **Price.** A user who changed something in another tab between the factor and its completion sees a wrong-code answer for a right code once, and the next code completes.
+<a id="e-3710"></a>
+
+### A confirmed address change mails the previous address, with no option to turn it off
+`E-3710` · address-change-notice · mail kind, settled
+
+**Context.** Release 3.0.0 asks that the previous address learn of a confirmed address change through the existing mailer seam, as a new mail kind the operator's template renders, and calls it a gap every user has. `EmailMessage` gains a seventh member, `{ kind: "email_change_notice"; to: string; userId: string }`, sent by `email.redeemChange` and by nothing else. The OWASP Authentication and Forgot Password cheat sheets and ASVS V2.5.6 ask that a change to the recovery address be notified, and the address is exactly that: whoever moves it receives every later reset and magic link.
+**Rejected.** (a) An option such as `email.notifyPreviousAddressOnChange`, off by default as 3.0.0's common brief prefers for new behaviour, which would leave the gap open for every installation that does not read the changelog; the requirement names the notice as closing a gap every user has, which is the stated exception to that default. (b) An option on by default, which is a switch nobody asked for whose only use is to turn a security notice off. (c) Reusing `email_change` with a flag, which would make every existing `send` that renders `email_change` mail a confirmation link without a token to the old address.
+**Reason.** The notice is the one signal the owner of an account still receives once someone else has moved its address, so it is sent on every confirmed change. An application that does not want to deliver it drops the kind in its own `send`, which is one line and is visible in the application's code; a `send` that switches over `kind` exhaustively stops compiling until it decides, which is how an operator learns the kind exists.
+**Price.** Every installation that upgrades sends one more message per address change, and a `send` that forwards unknown kinds to a generic template sends whatever that template says until the operator writes one for it.
+
+<a id="e-3711"></a>
+
+### The notice names neither the new address nor a link
+`E-3711` · address-change-notice · mail content, settled
+
+**Context.** The notice goes to the address the account no longer has. Whoever reads that mailbox is the owner in the ordinary case and someone else in two cases this notice exists for: a mailbox that was taken over, which is a common way into an account, and an address that was given up and later handed to someone else. The OWASP Authentication Cheat Sheet asks that the old address be told the address changed; it does not ask that it be told the new one.
+**Rejected.** (a) The new address in full, which tells a reader of a taken-over mailbox where the account went and gives an attacker who triggered the change nothing he does not have but gives one who did not a lead. (b) A masked new address, such as `n***@example.org`, which still discloses the domain and the first letter, and which the owner does not need because the owner chose it. (c) A token or link, such as an "this was not me" link that undoes the change: the library builds no URLs (A.7), and a link that moves an address back is a second account-recovery path with its own takeover risk, which belongs to a decision of its own rather than to a notice.
+**Reason.** The message says that the address changed and carries `to` and `userId`, the shape of `sign_up_attempt_on_existing_account`, the other message without an artefact. `userId` lets the template address the account without the library putting anything else in the message. What the owner does next — contact support, sign in, reset — is the application's to put in its template.
+**Price.** An owner who changed the address on purpose and has several accounts cannot tell from the notice alone which new address it names; the application can render the account by `userId` if that matters.
+
+<a id="e-3712"></a>
+
+### The previous address is the one the confirmation read under the account lock, and the notice goes after the commit
+`E-3712` · address-change-notice · ordering, settled
+
+**Context.** `redeemChange` checks the account before it locks it (`accountOrDisabledOfRedemption`), withdraws the account's other tokens, and then `confirmAddress` takes `lockAccountRow` inside `sealChange`, reads the security state, the address included, in one statement and moves the address. Three addresses were available to name as the previous one: the account's address from the check before the lock, the address the token was issued against (`accountEmail` in its payload), and the read under the lock. `confirmAddress` already returns that read as `toRecord.read`, so taking it needs no change outside `src/core/flows/address.ts`.
+**Rejected.** (a) The read before the lock, which a change committed between the check and the lock would make stale; the token generation of 3.18 refuses such a redemption today, but the notice should not rest on a refusal elsewhere. (b) `accountEmail` from the token's payload, which is the address at request time and is equal to the locked read only because a separate check requires it. (c) Sending inside the transaction, which would hold the account lock across the application's callback and send a notice for a change that a later failure can still roll back; A.7 and E-630 already put every `send` after the commit for the first reason.
+**Reason.** The address a change replaced is the one under the lock that serialises changes to the account, in the statement that verified the seal. The notice is sent after the commit and after `recordSealLater`, so the message reports something that has happened; a `send` that reads the account sees the new address, which `test/address-change-notice-flow.test.ts` measures over a second connection.
+**Price.** A process that dies between the commit and the send leaves a committed change that nobody was told about, the same window E-630 accepts for the other messages, and here without an artefact that expires to close it.
+
+<a id="e-3713"></a>
+
+### A notice that cannot be sent fails the answer and leaves the change committed
+`E-3713` · address-change-notice · failure handling, settled
+
+**Context.** A.7 says a throwing `send` fails the operation and takes the one-time token with it, and `sendOrUndo` spends the minted token after the commit. The notice carries no token: by the time it is sent the change, its seal, the spent token and whatever the first confirmation of the new address removed (S-LINK-4) have committed. The question was what the caller is told and what happens to the change when the callback throws.
+**Rejected.** (a) Undoing the change, which needs a second sealing transaction that moves the address back after the owner has proved the new one, can itself fail, and cannot restore a password or sessions the first confirmation removed; it would also let the application's mail outage reverse a change the user made. (b) Swallowing the failure and answering 200, which hides a security notice that did not go out from the only path that reports failures, the error map's `internal_error` with its server-side reason (3.13). (c) Retrying inside the request, which makes the answer's timing depend on the mail server and is the application's choice to make in its own `send`.
+**Reason.** The notice goes through `sendOrUndo` with no artefact, as the sign-up notice does, so a throw travels out as every throwing `send` does and is answered `500 internal_error` without the callback's text. The change stays, as a session stays when `afterSessionCreate` throws: once a transaction has committed, a failure after it decides the answer and nothing else. `afterEmailChange` still runs before the failure is rethrown (E-3714).
+**Price.** The user who clicked the link sees an error although the change succeeded, and the link answers `invalid_token` if they try again; the next read of the account shows the new address. The previous address is not told, and the library does not try again.
+
+<a id="e-3714"></a>
+
+### afterEmailChange carries only the account id, runs after the commit and cannot undo the change
+`E-3714` · address-change-notice · plugin point, settled
+
+**Context.** The requirement asks for a plugin point after the change that carries only the account id, so that the application can write its own notification, and for its cell in the producer table. 3.11 and 3.15 G enumerate the points; every `after` point that runs after a commit — `afterSessionCreate` and `afterSignIn` on a sign-in, both after a reset — answers with the plugin's code when it throws and leaves what committed standing. The point is `afterEmailChange`, its event `EmailChangedEvent { readonly userId: string }`, run on the pool after the commit and after the notice.
+**Rejected.** (a) Running it inside the redemption's transaction with the lent context, which would let a refusal roll the change back and turn a notification point into a veto over an address change the owner has proved; the `beforeSessionRevoke` of the first confirmation is already that veto where one is wanted. (b) Carrying the previous or the new address, which the requirement excludes and which would hand a plugin the address the library has just stopped trusting; the new one is a `findUserById` away. (c) Running the hook before the notice, which would let a refusing or crashing plugin keep the previous address from being told. (d) Skipping the hook when the notice failed, which would let the application's mail outage hide a committed change from its own plugins.
+**Reason.** The notice is attempted first and its failure held; the hook runs; then the held failure is rethrown. So neither of the two can keep the other from running, a throwing hook answers as it does at every point, and where both throw the hook's failure is the one answered. The dispatcher's transaction form gains the point too, because `PluginHookDispatcher` is one type, and nothing calls it.
+**Price.** A plugin cannot refuse an address change at this point; one that wants to must do so before the change is requested, which no point offers today. 3.15 G now says eight points, and texts outside this feature's files that say seven are reported rather than changed.
+
+<a id="e-3715"></a>
+
+### A change to the address the account already holds tells nobody
+`E-3715` · address-change-notice · edge case, settled
+
+**Context.** `requestChange` accepts the account's own address as `newEmail`, and redeeming that token commits: it marks the address confirmed and, on a first confirmation, runs the S-LINK-4 sweep. Nothing about the address changes, so a notice would tell the owner that something happened that did not.
+**Rejected.** Sending the notice and running the hook on every committed redemption, which is the simpler rule and puts "your address was changed" into a mailbox whose address was not.
+**Reason.** The notice and the hook are about an address that moved, and the comparison is between the address read under the lock and the normalised address the token carries, both in the stored form. The route exists only in `email` and `username_email`, where `user_identity_mode` requires an address on every account, so a missing previous address is not reachable; the code still sends nothing for one, because the type allows it.
+**Price.** An application that wants to log every confirmed redemption, including one that confirms the existing address, has no point for it here.
+
+<a id="e-3716"></a>
+
+### The notice is S-LINK-8, and the counts move to 134 and 138
+`E-3716` · address-change-notice · specification, settled
+
+**Context.** The behaviour needed a requirement and a test case. The classes of section 5 are fixed by failure mode, and the notice defends against an account takeover that moves the address; the closest class is LINK, account takeover through identity linking, whose S-LINK-4 already governs the first confirmation of an address. S-LINK-8 and T-LINK-8 are added in both languages, A.7 gains the seventh kind, B.5 the notice and the hook, 3.11 and G the eighth point. The stated counts follow, as E-3367 requires: 134 requirements, 138 test cases, 119 blocking every commit.
+**Rejected.** A new class for notifications, which would be a twentieth class with one member and would change "neunzehn Fehlerklassen", which the counts test reads, for no gain in what a reader finds.
+**Reason.** A reader looking for what stops a takeover through the address finds it beside S-LINK-4. The test is `test/address-change-notice-flow.test.ts`, which fails in eight of its twelve cases when the call that sends the notice and runs the hook is removed.
+**Price.** LINK now holds one requirement that has nothing to do with a provider identity, and its heading says identity linking.
+
+<a id="e-3717"></a>
+
+### A refusing hook no longer hides a notice that was not sent
+`E-3717` · address-change-notice · failure handling, settled
+
+**Context.** E-3713 rejected swallowing a failed notice, because the operator's only record of it is the error map's log line for the failure the request answers with. As built, `tellOfTheCommittedChange` held the send failure, ran `afterEmailChange`, and rethrew the held failure only when the hook returned; a hook that threw as well travelled out instead, and the send failure was dropped. E-3714 wrote that down as "where both throw the hook's failure is the one answered" without seeing that this is the swallowing E-3713 rejects. The independent review found it and wrote `test/address-change-notice-review-flow.test.ts`, whose case "the send failure reaches the log when the hook fails as well" failed on the code as it stood.
+**Rejected.** (a) Answering the hook's failure and logging the send failure beside it, which needs a log the flow does not hold: `RouteServices` carries no log sink, and adding one is outside this feature's files. (b) Answering the send failure and dropping the hook's, which loses the other half the same way.
+**Reason.** Where both fail, the redemption throws one `AggregateError` that carries both failures and a message naming both, so the error map's one log line records that the notice was not sent and why the hook failed. A failure that is not a `VelveError` answers `500 internal_error`, which is what the failed send answers on its own, so the send failure decides the answer too. Where only one fails, nothing changes.
+**Price.** A hook that refuses with its own registered code while the notice also fails answers `500 internal_error` rather than its code. The log line's message is longer than the error map's other diagnostics and carries both texts as the callbacks wrote them.
+
+<a id="e-3718"></a>
+
+### The log line of a double failure names a refusing hook by its code
+`E-3718` · address-change-notice · failure handling, settled
+
+**Context.** E-3717 made a failed notice and a failing `afterEmailChange` leave as one `AggregateError` whose message names both, built from each failure's `message`. A hook that refuses with a registered plugin code throws a `VelveError`, whose `message` is the generic text the caller is shown, "The request was refused.", so the log line named the failed send and then a refusal no operator could trace to a plugin. The re-review found it and wrote the case "the log line of both failing keeps the code a refusing hook threw" in `test/address-change-notice-review-flow.test.ts`, which failed on the code as E-3717 left it.
+**Rejected.** Logging the plugin's code through a field of its own beside the error map's `cause`, which needs a log sink the flow does not hold (E-3717 (a)).
+**Reason.** For a `VelveError` the aggregate's message takes its `code` instead of its `message`; every other failure keeps its message as before. The code is what `registerPluginErrorCodes` keys a plugin's refusal by and starts with the plugin's id, so the line names the plugin. The message stays in the aggregate, which the error map answers as `500 internal_error` without its text, so nothing new reaches the caller.
+**Price.** A plugin that throws a `VelveError` with a core code is logged by that core code, which names no plugin; and the text E-3717's Reason calls "the message naming both" now names a refusal by its code rather than its words.

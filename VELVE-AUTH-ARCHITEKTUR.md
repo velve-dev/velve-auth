@@ -43,7 +43,7 @@ Velve Auth ist eine Anmeldebibliothek für TypeScript und PostgreSQL, die im Pro
 
 **Die Laufzeit.** Reines TypeScript, kein eigenes Rust/WASM-Modul, sechs Abhängigkeiten ohne native Bindungen. Gemessen auf 2 vCPU, also Größenordnung statt Absolutwert: Argon2id bei OWASP-Parametern kostet 263 ms in JavaScript gegen 76 ms in WASM — aber WASM scheitert in Cloudflare Workers an `Wasm code generation disallowed by embedder` und ist auf Caprock unerprobt (SCHÄTZUNG), und ein eigenes Rust-Modul wäre gegenüber fertigem WASM nur 1,6-mal schneller, um den Preis einer zweiten Werkzeugkette und eines unprüfbaren Binärblobs. Der entscheidende Befund: `@noble/hashes`, `hash-wasm` und eine Rust-WASI-Variante erzeugen **bytegleiche** Argon2id-Hashes. Die Rechenmaschine ist damit austauschbar, ohne einen einzigen gespeicherten Hash anzufassen.
 
-**Die Absicherung.** 136 Sicherheitsanforderungen in neunzehn Fehlerklassen, jede mit mindestens einem Testfall und einer vorab festgelegten Zahl als Schwelle; 140 Testfälle, von denen 121 jeden Commit blockieren. Fünfzehn der 33 Better-Auth-Advisories sind unmittelbar auf Velve Auth übertragbar und werden von benannten Anforderungen ausgeschlossen; achtzehn sind nicht anwendbar, weil die betroffene Funktion nicht existiert.
+**Die Absicherung.** 137 Sicherheitsanforderungen in neunzehn Fehlerklassen, jede mit mindestens einem Testfall und einer vorab festgelegten Zahl als Schwelle; 141 Testfälle, von denen 122 jeden Commit blockieren. Fünfzehn der 33 Better-Auth-Advisories sind unmittelbar auf Velve Auth übertragbar und werden von benannten Anforderungen ausgeschlossen; achtzehn sind nicht anwendbar, weil die betroffene Funktion nicht existiert.
 
 **Ehrlich benannte Grenzen.** In der Konfiguration `username` gibt es kein Zurücksetzen per E-Mail — die Bibliothek verweigert dort den Start, wenn keine Wiederherstellungscodes konfiguriert sind. Benutzernamen sind per Definition aufzählbar, sobald eine Verfügbarkeitsprüfung angeboten wird; das steht im Datenblatt statt als stille Lücke im Code. Der verschlüsselte Kennwortspeicher bedeutet: Schlüsselverlust ist Kennwortverlust. Importierte bcrypt-Hashes prüfen nur die ersten 72 Byte, bis der Rehash sie ersetzt hat. Ein Schreiber auf der Datenbank, der auch den Wurzelschlüssel hat, hat alles, und ohne den Anker aus Abschnitt 3.18 kann er ein Konto auf einen alten, in sich stimmigen Stand zurücksetzen. Und ob Node auf Caprock startet und der gewählte PostgreSQL-Treiber dort funktioniert, ist die einzige nennenswerte ungeprüfte Annahme des ganzen Entwurfs.
 
@@ -55,8 +55,8 @@ Velve Auth ist eine Anmeldebibliothek für TypeScript und PostgreSQL, die im Pro
 2. Sprache und Laufzeit — die Bewertung, die Messungen, die Empfehlung
 3. Zielarchitektur — Paketstruktur, Schema, Sitzungen, Prüfpfad, Identität, zweiter Faktor, Tokens, Schlüssel, Ratenbegrenzung, Drittanbieter, Plugins, öffentliche Schnittstelle, Fehlerbehandlung, entschiedene Lücken, Integrität des Sicherheitszustands
 4. Migrationsmodul — fünf Quellen, je Quellschema, Zuordnung, Hash-Übernahme, Verluste, Folgearbeit
-5. Sicherheitsanforderungen — 136 Anforderungen in neunzehn Fehlerklassen, mit Abdeckungstabelle der 33 Advisories
-6. Prüfplan — 140 Testfälle mit vorab festgelegten Schwellen
+5. Sicherheitsanforderungen — 137 Anforderungen in neunzehn Fehlerklassen, mit Abdeckungstabelle der 33 Advisories
+6. Prüfplan — 141 Testfälle mit vorab festgelegten Schwellen
 7. Entscheidungsprotokoll — E-01 bis E-46, Ausgangsbestand für die Fallstudie
 
 Der Bauauftrag liegt getrennt als `CLAUDE-CODE-AUFTRAG.md`.
@@ -432,7 +432,7 @@ Fundstellen sind relativ zu `/home/claude/better-auth/` und stammen aus den Vorb
 
 | Funktion | Better Auth | Velve Auth | Begründung |
 |---|---|---|---|
-| G1 Server-Plugin-Interface | 16 Felder, u. a. `init`, `middlewares`, `onRequest`, `onResponse`, `adapter` (`core/src/types/plugin.ts:32-163`) | Anders lösen | Kleinere Schnittstelle: `id`, `dependsOn`, `routes`, `hooks` (die sieben aufgezählten Punkte), `tables`, `migrations`, `rateLimit`, `errorCodes`. Kein `init`, kein `middlewares`, kein `onRequest`/`onResponse`, kein `adapter` — ein Plugin ist ein Zuhörer mit Vetorecht, kein Miteigentümer des Kerns (Abschnitt 3.11). |
+| G1 Server-Plugin-Interface | 16 Felder, u. a. `init`, `middlewares`, `onRequest`, `onResponse`, `adapter` (`core/src/types/plugin.ts:32-163`) | Anders lösen | Kleinere Schnittstelle: `id`, `dependsOn`, `routes`, `hooks` (die acht aufgezählten Punkte), `tables`, `migrations`, `rateLimit`, `errorCodes`. Kein `init`, kein `middlewares`, kein `onRequest`/`onResponse`, kein `adapter` — ein Plugin ist ein Zuhörer mit Vetorecht, kein Miteigentümer des Kerns (Abschnitt 3.11). |
 | G2 Client-Plugin-Interface | `getActions`, `getAtoms`, `pathMethods`, `atomListeners`, `fetchPlugins` (`plugin-client.ts:94`) | Anders lösen | Client-Methoden entstehen aus der Routendeklaration des Plugins, so wie die Kernmethoden aus der des Kerns. Ein Plugin liefert keine eigene Client-Laufzeit. |
 | G3 Plugin-Endpunkte | Werden in `auth.api.*` gemerged, überschreiben Kern-Endpunkte bei gleichem Key (`api/index.ts:177-266`) | Anders lösen | Plugin-Routen liegen im reservierten Namensraum `/x/<plugin-id>/…`; Kernrouten sind nicht überschreibbar (Abschnitt 3.11). Bei Better Auth gewinnt das zuletzt registrierte Plugin — die Reihenfolgefalle, an der `custom-session` hängt. |
 | G4 Endpunkt-Kollisionserkennung | Erkennt Pfad-Kollisionen, **loggt nur** (`api/index.ts:58-171`) | Übertreffen | Ein Namenskonflikt ist ein Startfehler, keine Warnung (Abschnitt 3.11). Eine Kollision, die nur geloggt wird, ist im Betrieb nicht von einem funktionierenden System zu unterscheiden. |
@@ -443,8 +443,8 @@ Fundstellen sind relativ zu `/home/claude/better-auth/` und stammen aus den Vorb
 | G9 `plugin.init` | Einziger Weg, globalen Kontext und Optionen zu verändern (`context/helpers.ts:23-95`) | Weglassen | Niemand. Der Kernkontext ist eingefroren (`Object.freeze`); ein Plugin bekommt keinen Weg, ihn zu verändern (Abschnitt 3.11). `init` ist bei Better Auth die Wurzel der stripe↔organization-Kopplung und der haveibeenpwned-Kaperung. |
 | G10 Kontext-Injektion aus `init` | `{context: {...}}` wird per `Object.assign` gemischt (`types/plugins.ts:40-55`) | Weglassen | Entfällt mit G9. `Object.assign` in den Kontext ist der Weg, über den ein Plugin unbemerkt Kernfunktionen ersetzt (G24). |
 | G11 Optionen-Merge aus `init` | `defu(options, restOpts)` (`context/helpers.ts:52`) | Weglassen | Entfällt mit G9. Ein Plugin darf Optionen anderer Plugins weder lesen noch schreiben (Abschnitt 3.11). |
-| G12 `hooks.before` (global) | Nutzer-Hook auf beliebige Endpunkte (`api/dispatch.ts:271-278`) | Anders lösen | Die sieben aufgezählten Punkte gelten für Anwendung und Plugins gleichermaßen; es gibt keinen Hook auf einen beliebigen Endpunkt, weil ein solcher Hook die Zusicherungen der Route unterläuft. |
-| G13 `hooks.after` (global) | Analog für die Antwortseite (`dispatch.ts:279-286`) | Anders lösen | Wie G12; die `after`-Punkte (`afterSignIn`, `afterSessionCreate`, `afterUserCreate`) beobachten, sie ersetzen nichts. |
+| G12 `hooks.before` (global) | Nutzer-Hook auf beliebige Endpunkte (`api/dispatch.ts:271-278`) | Anders lösen | Die acht aufgezählten Punkte gelten für Anwendung und Plugins gleichermaßen; es gibt keinen Hook auf einen beliebigen Endpunkt, weil ein solcher Hook die Zusicherungen der Route unterläuft. |
+| G13 `hooks.after` (global) | Analog für die Antwortseite (`dispatch.ts:279-286`) | Anders lösen | Wie G12; die `after`-Punkte (`afterSignIn`, `afterSessionCreate`, `afterUserCreate`, `afterEmailChange`) beobachten, sie ersetzen nichts. |
 | G14 Plugin-`hooks.before` | Matcher-basierte Hooks je Endpunkt (`dispatch.ts:137-219`) | Anders lösen | Wie G12, mit Vetorecht: ein Hook darf einen Fehler werfen und die Operation abbrechen. |
 | G15 Plugin-`hooks.after` | Können `APIError` abfangen und die Antwort ersetzen (`dispatch.ts:221-265`) | Weglassen | Niemand. Ein Hook darf die Antwort nicht ersetzen (Abschnitt 3.11). Genau diese Fähigkeit nutzt das i18n-Paket, um Fehlermeldungen zu überschreiben — und mit ihr kann jedes Plugin jede Fehlerantwort umschreiben. |
 | G16 Kontext-Patch aus `before` | Rückgabe `{context:{…}}` patcht und die Kette läuft weiter (`dispatch.ts:194-216`) | Weglassen | Entfällt mit dem eingefrorenen Kontext (G9). |
@@ -903,7 +903,7 @@ Fehlen belegt ist — Quelltext, Advisory oder Issue.
 | Echte PostgreSQL-Typen und -Constraints | Keine partiellen Indizes, keine Ausdrucksindizes, keine PG-Enums, kein `inet`, keine CHECK-Constraints, keine Trigger; `string[]` landet als JSON-String in `jsonb` (Inventur N4-45/46/47) | `uuid`, `timestamptz`, `bytea`, `inet`, `text[]`, `jsonb`, partielle Unique-Indizes, CHECK-Constraints für die Normalisierung und die Identitätsregel, ein Trigger gegen `UPDATE session SET user_id`. |
 | Eindeutigkeit von `(provider, subject)` in der Datenbank | Kein Unique-Constraint auf `account(providerId, accountId)`; die Prüfung steht in JavaScript und ist anfällig für Wettläufe (`db/internal-adapter.ts:1192-1215`, Inventur N4-43) | `CONSTRAINT identity_provider_subject UNIQUE (provider, subject)`. Die E-Mail ist nie ein Verknüpfungsschlüssel. |
 | Nicht abschaltbare Verknüpfungsbedingungen | Das Auto-Link-Gate las das lokale `emailVerified` nie (CVE-2026-53516, CVSS 8.3); die Magic-Link-/OTP-Variante ist GHSA-qq9h-g4jm-xgf3 | Automatisch verknüpft wird nur, wenn der Anbieter die E-Mail als verifiziert meldet **und** das lokale Konto verifiziert ist **und** der Anbieter in `trustedProviders` steht. Alle drei, ohne Ausnahme (Abschnitt 3.10). |
-| Aufgezählte Plugin-Erweiterungspunkte mit Startfehler bei Kollision | Kollisionen von Endpunkten und Tabellen werden nur geloggt (`api/index.ts:153-170`); es gibt kein Sandboxing, keine deklarierten Abhängigkeiten und keine topologische Sortierung (Inventur N5-54/55/56) | Sieben aufgezählte Hook-Punkte, Namensraum `/x/<plugin-id>/…`, Tabellenpräfix `<plugin-id>_`, `dependsOn` mit topologischer Sortierung, eingefrorener Kontext — und ein Namenskonflikt ist ein Startfehler. |
+| Aufgezählte Plugin-Erweiterungspunkte mit Startfehler bei Kollision | Kollisionen von Endpunkten und Tabellen werden nur geloggt (`api/index.ts:153-170`); es gibt kein Sandboxing, keine deklarierten Abhängigkeiten und keine topologische Sortierung (Inventur N5-54/55/56) | Acht aufgezählte Hook-Punkte, Namensraum `/x/<plugin-id>/…`, Tabellenpräfix `<plugin-id>_`, `dependsOn` mit topologischer Sortierung, eingefrorener Kontext — und ein Namenskonflikt ist ein Startfehler. |
 | Zweckgetrennte Schlüssel mit Rotation | Dasselbe Secret signiert Cookies, signiert E-Mail-JWTs und HMACt den Cookie-Cache; HKDF nur im JWE-Pfad; für Signaturschlüssel gibt es keine Rotation (Inventur N3-26/27) | Ein Wurzelschlüssel, daraus per HKDF-SHA256 `cookie-sig`, `token-pepper`, `totp-enc`, `oauth-token-enc`, `pkce-enc`, `password-enc`, `state-mac`, `token-mac`; jeder Wert trägt seine Version, ein Ring erlaubt Rotation ohne Ausfall — und weil Sitzungen Datenbankzeilen sind, überlebt jede Rotation sämtliche Sitzungen (Abschnitt 3.8). |
 | Wiederherstellungscodes als HMAC statt verschlüsselt | Backup-Codes werden per Vorgabe verschlüsselt gespeichert, damit `viewBackupCodes` sie anzeigen kann (`backup-codes/index.ts:44-55,552-590`) | `HMAC-SHA256(pepper, code)` mit `(user_id, code_hmac)` als Primärschlüssel: Nachschlagen ist ein Index-Treffer, Konsum ist `DELETE … RETURNING`, und Anzeigen ist unmöglich. |
 | TOTP-Replay-Schutz über den Primärschlüssel | Kein Schutz gegen die Wiederverwendung desselben Zeitschritts im 2FA-Plugin dokumentiert | `velve.totp_used_step` mit Primärschlüssel `(user_id, time_step)`: ein `INSERT`, der bei Konflikt scheitert, **ist** die Prüfung. |
@@ -1689,7 +1689,7 @@ nicht braucht, gar nicht (`storeTokens: false` ist der Standard).
   laufen im selben versionierten Läufer.
 - An deklarierten Punkten mithören: `beforeSignIn`, `afterSignIn`,
   `beforeSessionCreate`, `afterSessionCreate`, `beforeUserCreate`,
-  `afterUserCreate`, `beforeSessionRevoke`. Ein Hook darf **ablehnen** (Fehler
+  `afterUserCreate`, `beforeSessionRevoke`, `afterEmailChange`. Ein Hook darf **ablehnen** (Fehler
   werfen) oder **beobachten**. Er darf die Antwort nicht ersetzen.
 - Eigene Fehlercodes und Ratenbegrenzungsregeln beitragen.
 - Abhängigkeiten deklarieren (`dependsOn`), die topologisch sortiert werden.
@@ -1979,6 +1979,7 @@ type EmailMessage =
   | { kind: "magic_link";         to: string; userId: string; token: string; expiresAt: Date }
   | { kind: "sign_up_attempt_on_existing_account"; to: string; userId: string }
   | { kind: "request_for_unknown_address"; to: string; requested: "password_reset" | "magic_link" }
+  | { kind: "email_change_notice"; to: string; userId: string }
 ```
 
 Vier Arten entsprechen den vier `purpose`-Werten aus `velve.one_time_token`. Die fünfte ist die
@@ -1988,7 +1989,12 @@ Sie trägt absichtlich **kein** Token — sie führt zur Anmeldung, nicht zu ein
 niemand angefordert hat. Die sechste folgt aus L-1: Ein Reset oder Magic Link für eine
 unbekannte Adresse ruft `send` genauso auf wie für eine bekannte, damit beide Zweige dieselbe
 Arbeit verrichten; ob daraus eine „hier existiert kein Konto"-Nachricht wird oder nichts,
-entscheidet die Anwendung im Callback.
+entscheidet die Anwendung im Callback. Die siebte geht nach jedem bestätigten Adresswechsel an
+die Adresse, die das Konto bis dahin trug, und sagt nur, dass sich die Adresse geändert hat
+(S-LINK-8): Sie trägt kein Token, keinen Link und nicht die neue Adresse, denn wer das alte
+Postfach liest, ist nicht unbedingt der Inhaber des Kontos. Sie wird erst verschickt, wenn der
+Wechsel festgeschrieben ist, und es gibt keine Option, die sie abschaltet; eine Anwendung, die sie
+nicht zustellen will, verwirft die Art in ihrem `send`.
 
 Die Bibliothek baut keine URLs; ein `redirectTo`, das aus einem Request stammt und gegen eine
 Erlaubnisliste geprüft werden müsste, existiert deshalb gar nicht. Wirft `send`, schlägt die
@@ -2290,7 +2296,11 @@ eine Adresse als Parameter wäre eine offene Aufzählungsschnittstelle. `request
 dann `void` zurück, wenn `newEmail` einem anderen Konto gehört (intern
 `email_taken_on_change`); die Eindeutigkeitsprüfung wiederholt sich beim Einlösen, weil
 dazwischen eine Stunde liegt. `redeemChange` setzt `email_verified_at` auf `now()` — der Nutzer
-hat die Adresse durch das Einlösen bewiesen.
+hat die Adresse durch das Einlösen bewiesen. Nach dem Festschreiben schickt `redeemChange`
+`email_change_notice` an die Adresse, die die Bestätigung unter der Kontosperre gelesen hat, und
+ruft danach `afterEmailChange` mit `{ userId }` auf. Wirft `send` oder der Hook, wird die Anfrage
+mit diesem Fehler beantwortet; der Wechsel bleibt bestehen, und ein Hook, der wirft, hält die
+Nachricht nicht auf (S-LINK-8).
 
 `username.isAvailable` ist der Ort, an dem der Aufzählungsschutz endet, und der Typ sagt das.
 Die Alternative — weglassen und die Auskunft nur als Fehler bei `change` und `signUp` geben —
@@ -2961,6 +2971,7 @@ interface PluginHooks {
   beforeUserCreate?:    (event: UserCreateEvent,      context: FrozenContext) => Promise<void>
   afterUserCreate?:     (event: UserCreatedEvent,     context: FrozenContext) => Promise<void>
   beforeSessionRevoke?: (event: SessionRevokeEvent,   context: FrozenContext) => Promise<void>
+  afterEmailChange?:    (event: EmailChangedEvent,    context: FrozenContext) => Promise<void>
 }
 
 interface SignInEvent {
@@ -2982,6 +2993,7 @@ interface SessionRevokeEvent  { readonly sessionId: string; readonly userId: str
                                 readonly reason: RevokeReason }
 type RevokeReason = "sign_out" | "revoked_by_user" | "password_changed"
   | "password_reset" | "identity_linked" | "email_verified"
+interface EmailChangedEvent   { readonly userId: string }   // nie eine Adresse
 
 interface FrozenContext {
   readonly clock: Clock; readonly identityMode: IdentityMode; readonly schema: string
@@ -3005,14 +3017,17 @@ Laufzeitprüfung beim Start bleibt für Plugins aus JavaScript, und ein Namensko
 ein Startfehler, keine Warnung. `dependsOn` wird topologisch sortiert, ein Zyklus ist ein
 Startfehler.
 
-Sieben Hook-Punkte, genau die aus 3.11. Die Rückgabe ist überall
+Acht Hook-Punkte, genau die aus 3.11. Die Rückgabe ist überall
 `Promise<void>` — das ist der Typ, der „Zuhörer mit Vetorecht" ausdrückt: Ein Hook kann
 **ablehnen**, indem er wirft, und **beobachten**, indem er nichts tut; ersetzen kann er die
 Antwort nicht, weil er keine zurückgeben kann. Ein Rückgabetyp `Promise<Event | void>` hätte
 genau die Tür geöffnet, die 3.11 schließt. Alle Ereignisfelder sind `readonly`, und
 kein Ereignis enthält ein Sitzungstoken, ein Klartextkennwort oder einen Hash. Der `digest` des
 Ankers ist kein Hash eines Geheimnisses, sondern der HMAC des Siegels unter `state-mac`; ohne den
-Wurzelschlüssel lässt sich aus ihm nichts berechnen. `securityStateAnchor` ist kein achter
+Wurzelschlüssel lässt sich aus ihm nichts berechnen. `afterEmailChange` läuft erst, wenn der
+Adresswechsel festgeschrieben ist: Ein Hook, der dort wirft, bestimmt die Antwort, macht den Wechsel
+aber nicht rückgängig, und sein Ereignis nennt das Konto und keine Adresse — weder die alte noch
+die neue. `securityStateAnchor` ist kein neunter
 Hook-Punkt: `recordSeal` läuft nach dem Festschreiben und kann nichts ablehnen, und
 `minimumVersion` lehnt über die Untergrenze ab, die es liefert; wirft es oder liefert es etwas anderes als `null` oder eine gültige Untergrenze `{ version, digest }`, ist das kein Veto wie bei einem Hook, sondern ein gebrochener Zustand: Die Anfrage wird mit dem Alarm `anchor_unavailable` abgelehnt (3.18).
 
@@ -4472,6 +4487,7 @@ Der Recherchebericht hält fest: „**jede einzelne** wäre durch die Actor-Pfli
 - **S-LINK-5:** Meldet ein Anbieter keine E-Mail-Adresse, bleibt `velve.user.email` in der Konfiguration `username` NULL; in `username_email` verlangt der CHECK-Constraint aus 3.2 an jedem Konto eine Adresse, und die Anmeldung über diesen Anbieter legt dort kein Konto an. Die Bibliothek erzeugt in keiner Konfiguration eine Platzhalteradresse. *(Abschnitt 3.10, „Kein Konto ohne E-Mail-Zwang")*
 - **S-LINK-6:** Der Zustand `provider_email_verified` wird pro Identität gespeichert und bei jeder Anmeldung aus den Anbieterclaims aktualisiert; der Wert einer Identität überträgt sich nicht auf eine andere Identität desselben Nutzers. *(Abschnitt 3.2, Schema: `provider_email_verified boolean NOT NULL DEFAULT false` auf `velve.identity`)*
 - **S-LINK-7:** Die Verknüpfung einer weiteren Identität mit einem bestehenden Konto ist ein Wechsel der Vertrauensstufe und erzeugt daher eine neue Sitzungszeile mit neuem Token. *(Abschnitt 3.5: „Neuvergabe bei jedem Ereignis, das die Vertrauensstufe ändert: … Verknüpfung einer neuen Identität")*
+- **S-LINK-8:** Wird ein Adresswechsel bestätigt, geht nach dem Festschreiben genau eine Nachricht `email_change_notice` an die Adresse, die das Konto unter der Kontosperre der Bestätigung trug; sie trägt nur Art, Empfänger und Konto-ID, kein Token, keinen Link und nicht die neue Adresse. Danach erfährt `afterEmailChange` das Konto als `{ userId }`, ohne Adresse. Eine Einlösung, die nichts festschreibt — ein unbekannter, verbrauchter oder gleichzeitig eingelöster Token, eine inzwischen vergebene Zieladresse, ein gesperrtes Konto —, verschickt keine Nachricht und ruft den Hook nicht auf; ein Wechsel auf die Adresse, die das Konto schon trägt, ebenso wenig. Weder ein werfendes `send` noch ein werfender Hook macht den festgeschriebenen Wechsel rückgängig, und ein werfender Hook hält die Nachricht nicht auf. *(Abschnitt 3.15 A.7, siebte Nachrichtenart; B.5; G, `afterEmailChange`)*
 
 ---
 
@@ -4687,9 +4703,9 @@ Bei der Ausarbeitung dieses Abschnitts und des Prüfplans wurden dreizehn Lücke
 
 ## 6. Prüfplan
 
-Zu jeder der 136 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID trägt dieselbe Klasse und dieselbe Nummer wie die Anforderung: `T-OWNER-3` prüft `S-OWNER-3`. Hinzu kommen vier ergänzende Testfälle, die keiner einzelnen Anforderung zugeordnet sind, sondern eine Klasse breiter absichern (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — zusammen **140 Testfälle**.
+Zu jeder der 137 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID trägt dieselbe Klasse und dieselbe Nummer wie die Anforderung: `T-OWNER-3` prüft `S-OWNER-3`. Hinzu kommen vier ergänzende Testfälle, die keiner einzelnen Anforderung zugeordnet sind, sondern eine Klasse breiter absichern (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — zusammen **141 Testfälle**.
 
-**Spalten.** *Art* ist eine von sechs: `Unit`, `Integration`, `Property` (fast-check), `Statistisch`, `Nebenläufigkeit`, `Statisch` (Lint-Regel, AST-Analyse, Typprüfung); Kombinationen sind mit `+` angegeben. *Schwelle* ist eine Zahl oder ein hartes Kriterium — kein Test in diesem Plan besteht mit „keine Fehler". *Läuft in* ist eine von drei Stufen: `CI bei jedem Commit` (121 Testfälle, dazu der statische Teil von T-RACE-2 und der Teil von T-INTEG-5 außer dem Zeitteil), `CI nächtlich` (15, dazu der Nebenläufigkeitsteil von T-RACE-2 und der Zeitteil von T-INTEG-5), `vor jedem Release` (2).
+**Spalten.** *Art* ist eine von sechs: `Unit`, `Integration`, `Property` (fast-check), `Statistisch`, `Nebenläufigkeit`, `Statisch` (Lint-Regel, AST-Analyse, Typprüfung); Kombinationen sind mit `+` angegeben. *Schwelle* ist eine Zahl oder ein hartes Kriterium — kein Test in diesem Plan besteht mit „keine Fehler". *Läuft in* ist eine von drei Stufen: `CI bei jedem Commit` (122 Testfälle, dazu der statische Teil von T-RACE-2 und der Teil von T-INTEG-5 außer dem Zeitteil), `CI nächtlich` (15, dazu der Nebenläufigkeitsteil von T-RACE-2 und der Zeitteil von T-INTEG-5), `vor jedem Release` (2).
 
 **Grundsatz der Stufenzuordnung.** Alles Deterministische blockiert jeden Commit. Alles Statistische und alles, was länger als 60 Sekunden läuft, läuft nächtlich auf einem dedizierten Läufer und meldet als Ticket, nicht als roter Build. Der Grund steht in Abschnitt 6.20.
 
@@ -4872,6 +4888,7 @@ wird nicht genommen.
 | T-LINK-5 | S-LINK-5 | Integration + Statisch | Anbieterattrappe liefert keine E-Mail, in den Konfigurationen `username` und `username_email`. AST-Scan: keine Zeichenkettenverkettung, die eine E-Mail-Adresse aus einer Kennung erzeugt (`@`-Literal in einer Zuweisung an `email`). | `user.email IS NULL` in `username`; in `username_email` **0 Zeilen** in `velve.user`, `velve.identity` und `velve.session`; **0 AST-Treffer** | CI bei jedem Commit |
 | T-LINK-6 | S-LINK-6 | Integration | Nutzer mit zwei Identitäten; Anbieter 1 meldet `email_verified: true`, Anbieter 2 `false`. | `provider_email_verified` ist **je Zeile korrekt**; eine Änderung an Zeile 1 lässt Zeile 2 unverändert | CI bei jedem Commit |
 | T-LINK-7 | S-LINK-7 | Integration | In bestehender Sitzung eine zweite Identität verknüpfen, Token vorher und nachher vergleichen. | `T2 ≠ T1`; alte Zeile **0 Treffer** in `velve.session` | CI bei jedem Commit |
+| T-LINK-8 | S-LINK-8 | Integration + Nebenläufigkeit | Adresswechsel anfordern und einlösen; ein `send`, das beim Versand die Adresse über eine zweite Verbindung liest; ein Plugin auf `afterEmailChange`. Gegenproben: erfundener Token, zweite Einlösung, inzwischen vergebene Zieladresse, gesperrtes Konto, zwei gleichzeitige Einlösungen desselben Tokens, Wechsel auf die eigene Adresse. Fehlerfälle: `send` wirft bei der Nachricht, der Hook wirft. | Erfolg: **genau 1** `email_change_notice`, gleich `{ kind, to: alte Adresse, userId }`, beim Versand liest die zweite Verbindung schon die neue Adresse; der Hook erhält **genau** `{ userId }`. Gegenproben: **0** Nachrichten und **0** Hookaufrufe, bei zwei gleichzeitigen Einlösungen **1** und **1**. Fehlerfälle: Antwort 500, die neue Adresse bleibt, die Nachricht ist verschickt bzw. der Hook aufgerufen | CI bei jedem Commit |
 
 ---
 
@@ -5085,7 +5102,7 @@ Für ein Ein-Personen-Team lohnt sich das **nicht auf dem gesamten Bestand**: ei
 - **Ziel: Mutations-Score ≥ 85 % auf diesem Ausschnitt**, gemessen **vor jedem Release**, nicht bei jedem Commit.
 - **Der Wert für ein Ein-Personen-Team ist nicht die Zahl, sondern die Liste der überlebenden Mutanten.** Sie ist eine Arbeitsliste fehlender Zusicherungen und ersetzt den Code-Review durch eine zweite Person an genau der Stelle, an der ein solcher Review am meisten wert wäre.
 
-**Abdeckung ist kein Sicherheitsmaß.** Die 140 Testfälle dieses Plans sind das Sicherheitsmaß; die Abdeckungszahl ist nur die Warnleuchte, die anzeigt, dass ein neuer Zweig ohne Testfall hinzugekommen ist. Kein Testfall dieses Plans darf mit dem Argument „die Abdeckung stimmt ja" entfallen.
+**Abdeckung ist kein Sicherheitsmaß.** Die 141 Testfälle dieses Plans sind das Sicherheitsmaß; die Abdeckungszahl ist nur die Warnleuchte, die anzeigt, dass ein neuer Zweig ohne Testfall hinzugekommen ist. Kein Testfall dieses Plans darf mit dem Argument „die Abdeckung stimmt ja" entfallen.
 
 ---
 

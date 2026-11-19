@@ -4,6 +4,7 @@ export type {
 	SecurityStateSealedEvent,
 } from "../security-state/anchor.js";
 export type {
+	EmailChangedEvent,
 	FrozenContext,
 	FrozenRepositories,
 	PluginActor,

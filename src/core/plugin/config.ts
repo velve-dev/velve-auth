@@ -47,6 +47,11 @@ export interface UserCreatedEvent extends UserCreateEvent {
 	readonly userId: string;
 }
 
+/** an address change that has committed, which names the account and never an address */
+export interface EmailChangedEvent {
+	readonly userId: string;
+}
+
 export interface SessionRevokeEvent {
 	readonly sessionId: string;
 	readonly userId: string;
@@ -84,7 +89,7 @@ export interface FrozenContext {
 	): void;
 }
 
-/** the seven hook points, where a hook refuses by throwing and cannot replace the response */
+/** the eight hook points, where a hook refuses by throwing and cannot replace the response */
 export interface PluginHooks {
 	beforeSignIn?: (event: SignInEvent, context: FrozenContext) => Promise<void>;
 	afterSignIn?: (event: SignInCompletedEvent, context: FrozenContext) => Promise<void>;
@@ -93,6 +98,7 @@ export interface PluginHooks {
 	beforeUserCreate?: (event: UserCreateEvent, context: FrozenContext) => Promise<void>;
 	afterUserCreate?: (event: UserCreatedEvent, context: FrozenContext) => Promise<void>;
 	beforeSessionRevoke?: (event: SessionRevokeEvent, context: FrozenContext) => Promise<void>;
+	afterEmailChange?: (event: EmailChangedEvent, context: FrozenContext) => Promise<void>;
 }
 
 export interface PluginMigration<Id extends string> {

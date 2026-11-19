@@ -70,7 +70,7 @@ export interface RouteServices {
 	readonly origins: readonly string[];
 	/** turns a pending row into its session in one transaction, built once */
 	readonly completeSecondFactor: SecondFactorCompletion;
-	/** the plugins, ordered and frozen, with their routes, contexts and seven hook points */
+	/** the plugins, ordered and frozen, with their routes, contexts and eight hook points */
 	readonly pluginRuntime: PluginRuntime;
 	/** the fetch used for outbound provider calls, `globalThis.fetch` when absent */
 	readonly fetch?: typeof globalThis.fetch;
