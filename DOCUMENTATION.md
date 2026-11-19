@@ -6678,7 +6678,7 @@ directly, for a caller that is not a browser.
 ## Plugins
 
 Architecture 3.11 and 3.15 G: the registry, the
-topological sort over `dependsOn`, the frozen context, the seven enumerated hook
+topological sort over `dependsOn`, the frozen context, the eight enumerated hook
 points and the veto a hook holds, and what a plugin may contribute — routes under
 `/x/<plugin-id>/…`, tables prefixed `<plugin-id>_`, error codes, rate-limit rules
 and its own dependency declaration, which is how 3.11's first list reads. Also
@@ -6867,7 +6867,7 @@ short of `Object.prototype`. A plugin written as a **class** carries its methods
 on a prototype, which is the most ordinary way to write one — and it was accepted
 while `Object.keys` was what looked. `constructor` is the one name skipped,
 because every prototype carries it and nothing here reads it. The same reading is
-applied to `hooks`, so a hooks object written as a class is held to the seven
+applied to `hooks`, so a hooks object written as a class is held to the eight
 points as well.
 
 A field the interface **does** declare and this version does not read was a
@@ -7956,7 +7956,7 @@ the route's name.
 
 ### Not built here
 
-- **A hook point with no producer** does not run, and [the table above](#which-points-have-a-producer) is where that is said — one cell per point, so a feature that gives one its first producer flips a cell and never a count. All seven have a producer now. What the session points do not yet reach — the two password resets and the re-issue on a credential change — is stated in [the sign-in, session and user points](#the-sign-in-session-and-user-points).
+- **A hook point with no producer** does not run, and [the table above](#which-points-have-a-producer) is where that is said — one cell per point, so a feature that gives one its first producer flips a cell and never a count. All eight have a producer now. What the session points do not yet reach — the two password resets and the re-issue on a credential change — is stated in [the sign-in, session and user points](#the-sign-in-session-and-user-points).
 - **A plugin cannot roll a migration back.** There is no `down`, and removing a
   plugin from the configuration leaves its tables and its ledger rows standing.
   Dropping them is the application's to do, by hand — or the plugin's, in a
