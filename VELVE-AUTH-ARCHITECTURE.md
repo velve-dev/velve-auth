@@ -45,7 +45,7 @@ Velve Auth is a sign-in library for TypeScript and PostgreSQL that runs inside t
 
 **The runtime.** Pure TypeScript, no Rust/WASM module of its own, six dependencies without native bindings. Measured on 2 vCPU, so an order of magnitude rather than an absolute value: Argon2id at OWASP parameters costs 263 ms in JavaScript against 76 ms in WASM — but WASM fails in Cloudflare Workers on `Wasm code generation disallowed by embedder` and is untested on Caprock (ESTIMATE), and a Rust module of one's own would be only 1.6 times faster than off-the-shelf WASM, at the price of a second toolchain and an unauditable binary blob. The decisive finding: `@noble/hashes`, `hash-wasm` and a Rust WASI variant produce **byte-identical** Argon2id hashes. The compute engine is thereby exchangeable without touching a single stored hash.
 
-**The safeguarding.** 133 security requirements in nineteen error classes, each with at least one test case and a number fixed in advance as its threshold; 137 test cases, of which 118 block every commit. Fifteen of the 33 Better Auth advisories transfer directly to Velve Auth and are excluded by named requirements; eighteen are not applicable because the affected feature does not exist.
+**The safeguarding.** 134 security requirements in nineteen error classes, each with at least one test case and a number fixed in advance as its threshold; 138 test cases, of which 119 block every commit. Fifteen of the 33 Better Auth advisories transfer directly to Velve Auth and are excluded by named requirements; eighteen are not applicable because the affected feature does not exist.
 
 **Honestly named limits.** In the `username` configuration there is no reset by email — the library refuses to start there if no recovery codes are configured. Usernames are by definition enumerable as soon as an availability check is offered; that stands in the data sheet instead of being a silent gap in the code. The encrypted password storage means: key loss is password loss. Imported bcrypt hashes check only the first 72 bytes until the rehash has replaced them. A writer on the database who also has the root key has everything, and without the anchor from section 3.18 they can reset an account to an old, internally consistent state. And whether Node starts on Caprock and the chosen PostgreSQL driver works there is the only notable unverified assumption of the whole design.
 
@@ -57,8 +57,8 @@ Velve Auth is a sign-in library for TypeScript and PostgreSQL that runs inside t
 2. Language and runtime — the assessment, the measurements, the recommendation
 3. Target architecture — package structure, schema, sessions, verification path, identity, second factor, tokens, keys, rate limiting, third-party providers, plugins, public interface, error handling, decided gaps, integrity of the security state
 4. Migration module — five sources, per source schema, mapping, hash adoption, losses, follow-up work
-5. Security requirements — 133 requirements in nineteen error classes, with a coverage table of the 33 advisories
-6. Test plan — 137 test cases with thresholds fixed in advance
+5. Security requirements — 134 requirements in nineteen error classes, with a coverage table of the 33 advisories
+6. Test plan — 138 test cases with thresholds fixed in advance
 7. Decision log — E-01 to E-46, the initial stock for the case study
 
 The build brief lies separately as `CLAUDE-CODE-AUFTRAG.md`.
@@ -1516,6 +1516,28 @@ Deadlines: e-mail confirmation 24 h, password reset 1 h, e-mail change 1 h,
 magic link 10 min. A newly requested token of the same purpose deletes the
 previous ones of the same user.
 
+**Resolving without consuming.** `oneTimeToken.resolve` (3.15 B.10) reads a token without
+consuming it, with a single reading statement over the list of every purpose:
+
+```sql
+SELECT purpose, user_id, payload::text AS payload_text, token_mac, token_mac_key_version
+FROM velve.one_time_token
+WHERE token_sha256 = $1 AND purpose = ANY($2::text[]) AND expires_at > now();
+```
+
+The resolution checks the row's MAC under the purpose it carries (S-INTEG-9), and after that
+what every redemption checks on the account before its token takes effect: that the account
+exists, its seal holds, the bound address is still the sealed one and the bound generation still
+the one of its purpose (3.18, point 3), and the account is not disabled. If the row passes all
+of it, the resolution names the account and the purpose; otherwise it answers `null` — expired,
+used up, replaced, never existed, put in or altered by a writer and disabled are indistinguishable
+from the outside here too. It writes no row, takes no lock, extends no deadline and rebinds no
+MAC; a refused row it reports as a redemption does, with the occasion `token_redemption`. The
+redemption afterwards still consumes the token with the statement above and reads no result of
+the resolution. A ground for refusal that only the redemption of a particular purpose knows — a
+new address taken in the meantime on an address change — the resolution does not anticipate
+(S-TOKEN-7).
+
 ### 3.8 Key management
 
 One root key, and from it, by **HKDF-SHA256**, purpose-separated keys:
@@ -2016,6 +2038,7 @@ interface AuthSurface<M extends IdentityMode> {
   pending:  PendingNamespace
   email:    OnlyWhen<ModeHasEmail<M>,    EmailNamespace>
   username: OnlyWhen<ModeHasUsername<M>, UsernameNamespace>
+  oneTimeToken: OnlyWhen<ModeHasEmail<M>, OneTimeTokenNamespace>   // without an HTTP route, B.10
 }
 
 interface AuthInternals {
@@ -2051,7 +2074,7 @@ interface SealedSecurityState {                                   // what the re
 
 `routes` is not an implementation detail but the data structure from which part D builds the
 HTTP handler and part E the client. It is present at run time, because otherwise the client
-would have to guess. `AuthSurface` has 55 methods in mode `username_email`, 52 in `email`, 46 in
+would have to guess. `AuthSurface` has 56 methods in mode `username_email`, 53 in `email`, 46 in
 `username`. `maintenance.sweep` deletes expired rows from the seven tables with
 `*_sweep_idx` (L-11); `@velve/auth/schema` delivers the same as SQL for `pg_cron`.
 `maintenance.sealSecurityState` and `maintenance.resealSecurityState` are the maintenance step
@@ -2360,6 +2383,7 @@ the error column.
 | `session.resolve`, `resolveFromHeaders`, `pending.resolve`, `pending.resolveFromHeaders` | — | — | **no** | — (return `null`; `session.*` throws `account_disabled`, L-4) |
 | `session.list`, `revoke`, `revokeAllOther`, `revokeAll` | session | **yes** | IP | `session_required`, `freshness_required` |
 | `user.findById`, `findByEmail`, `findByUsername`, `disable`, `enable`, `delete`, `maintenance.sweep` | server | — | **no** | — |
+| `oneTimeToken.resolve` | server | — | **no** | — (returns `null`, B.10) |
 | `password.set` | session | **yes** | IP+account | `session_required`, `freshness_required`, `password_unacceptable`, `factor_already_enrolled` |
 | `password.change` | session | **yes** | IP+account | `session_required`, `freshness_required`, `invalid_credentials`, `password_unacceptable` |
 | `password.requestReset`, `email.requestVerification` | —/session | — | IP+account | `session_required` (`requestVerification` only) |
@@ -2386,6 +2410,27 @@ the error column.
 `session.resolve` and `pending.resolve` are not rate limited, nor are
 `session.resolveFromHeaders` and `pending.resolveFromHeaders`: they run on every request of the
 application, a counter on them would be a self-blockade.
+
+##### B.10 `oneTimeToken` (1, without an HTTP route)
+
+```ts
+interface OneTimeTokenNamespace {
+  resolve(input: { token: string }): Promise<{ userId: string; purpose: OneTimeTokenPurpose } | null>
+}
+type OneTimeTokenPurpose = "email_verify" | "password_reset" | "email_change" | "magic_link"
+```
+
+The application calls `resolve` in its own process to route a delivered link to the right place
+before it redeems it — a password reset to the page that asks for the new password, a magic link
+to the sign-in. The answer names the token's account and purpose after the checks of 3.7 and is
+`null` otherwise; the token stays as valid afterwards as it was. There is no route and no client
+call: what the application tells a visitor about a link it decides itself, and a route would hand
+the identifier of an account to everyone holding a link. The identifier in the result is no proof
+of ownership; no method accepts it as an actor (S-OWNER-7), and when the link takes effect, the
+row removed on consumption alone determines the account (S-TOKEN-4). `resolve` is not rate
+limited: a token carries 256 bits (S-RAND-4), so an unlimited resolution helps nobody guess one,
+and the redemption that follows it stays limited per IP address. The method exists in the modes
+`email` and `username_email`; mode `username` sends no link.
 
 ---
 
@@ -4266,6 +4311,7 @@ The design is **not** changed here. Where the elaboration exposed a gap in the t
 - **S-TOKEN-4:** When a one-time token is applied to an account — email confirmation, email change, password reset —, the target account is exclusively `one_time_token.user_id`; no input field and no session sent along determines the target account. When an identity is linked, the target account is exclusively `oauth_flow.link_to_user_id`, which was set from the session at the start. *(Section 3.7, column `user_id`; section 3.15 B.7: "`velve.oauth_flow` already knows through `link_to_user_id` whether it links or signs in")*
 - **S-TOKEN-5:** Deleting a user removes through `ON DELETE CASCADE` all rows in the fourteen user-bound tables `session`, `password_credential`, `identity`, `one_time_token`, `pending_authentication`, `totp_credential`, `totp_used_step`, `recovery_code`, `webauthn_credential`, `webauthn_challenge`, `oauth_flow` (`link_to_user_id`), `import_mapping`, `password_reset_required` and `security_state`; after the deletion none of these tables contains a row with the user id. *(Sections 3.2 and 3.17, schema: `REFERENCES velve.user(id) ON DELETE CASCADE` at every user-bound table)*
 - **S-TOKEN-6:** Every table in the schema `velve` with a column that references `velve.user(id)` — including those created by plugins with the prefix `<plugin-id>_` — carries there a foreign key constraint with `ON DELETE CASCADE`; the migration runner rejects a migration that creates such a table without this constraint. *(Section 3.11, "Own tables in the schema `velve` with prefix `<plugin-id>_`; migrations run in the same versioned runner")*
+- **S-TOKEN-7:** `oneTimeToken.resolve` names the account and the purpose of a one-time token only if its row passes the checks a redemption makes before it takes effect — MAC under the stored purpose (S-INTEG-9), deadline not passed, account present, seal valid, bound address and bound generation still the account's, account not disabled — and answers every other token, a never-existing one and one that is not a string included, with the same `null`. It reads with `purpose = ANY($2::text[])` over the list of every purpose, writes no row, takes no row lock and no account lock and opens no transaction; it is no part of a consumption, no redemption reads its result, and S-RACE-2 holds for the consumption unchanged. It has no HTTP route and no client call and exists only in the modes with an address. *(Section 3.7, paragraph "Resolving without consuming"; section 3.15 B.10)*
 
 ---
 
@@ -4592,9 +4638,9 @@ While this section and the test plan were being elaborated, thirteen gaps in the
 
 ## 6. Test plan
 
-To each of the 133 requirements from section 5 belongs a test case. The test ID carries the same class and the same number as the requirement: `T-OWNER-3` verifies `S-OWNER-3`. In addition there are four supplementary test cases that are not assigned to a single requirement but secure a class more broadly (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — in total **137 test cases** together.
+To each of the 134 requirements from section 5 belongs a test case. The test ID carries the same class and the same number as the requirement: `T-OWNER-3` verifies `S-OWNER-3`. In addition there are four supplementary test cases that are not assigned to a single requirement but secure a class more broadly (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — in total **138 test cases** together.
 
-**Columns.** *Kind* is one of six: `Unit`, `Integration`, `Property` (fast-check), `Statistical`, `Concurrency`, `Static` (lint rule, AST analysis, type check); combinations are given with `+`. *Threshold* is a number or a hard criterion — no test in this plan passes with "no errors". *Runs in* is one of three tiers: `CI on every commit` (118 test cases, plus the static part of T-RACE-2 and the part of T-INTEG-5 other than its timing part), `CI nightly` (15, plus the concurrency part of T-RACE-2 and the timing part of T-INTEG-5), `before every release` (2).
+**Columns.** *Kind* is one of six: `Unit`, `Integration`, `Property` (fast-check), `Statistical`, `Concurrency`, `Static` (lint rule, AST analysis, type check); combinations are given with `+`. *Threshold* is a number or a hard criterion — no test in this plan passes with "no errors". *Runs in* is one of three tiers: `CI on every commit` (119 test cases, plus the static part of T-RACE-2 and the part of T-INTEG-5 other than its timing part), `CI nightly` (15, plus the concurrency part of T-RACE-2 and the timing part of T-INTEG-5), `before every release` (2).
 
 **Principle of the tier assignment.** Everything deterministic blocks every commit. Everything statistical and everything that runs longer than 60 seconds runs nightly on a dedicated runner and reports as a ticket, not as a red build. The reason is in section 6.20.
 
@@ -4697,6 +4743,7 @@ soften the first, so it is declined.
 | T-TOKEN-4 | S-TOKEN-4 | Integration | (i) Create an email-change token for user A and redeem it with user B's session cookie. (ii) Start the linking from A's session, call the callback with A's pointer cookie and B's session cookie. In addition an AST scan: no handler reads a user identifier from the input of a redemption path. | **2/2: the effect hits A** (`user.email` resp. `identity.user_id`), **0 row changes on B**; **0 AST hits** | CI on every commit |
 | T-TOKEN-5 | S-TOKEN-5 | Integration, reflective | Create a test user with one row in each of the 14 user-bound tables, run `DELETE FROM velve.user`, count all tables. The list of tables comes from `information_schema`, not from a constant. | `count(*)` = **0 in 14/14 tables** | CI on every commit |
 | T-TOKEN-6 | S-TOKEN-6 | Integration, reflective | After running all migrations (core and test plugin), query `information_schema`: every table in the schema `velve` with a `user_id` column must carry an FK constraint with `ON DELETE CASCADE`. In addition apply a deliberately faulty plugin migration. | **0 tables without cascade**; the faulty migration is rejected by the runner with an error | CI on every commit |
+| T-TOKEN-7 | S-TOKEN-7 | Integration + Concurrency | Resolve one token of each of the four purposes, one of them five times in a row and then redeem it; resolve an unknown token, six values not shaped as a token, an expired, a redeemed, a replaced token, one inserted by SQL, one rewritten to another purpose and one to another account, one with an altered payload, one written back after its redemption and one sent while the address was moved, one token each of a disabled account, a deleted account and an account with a broken seal, and the cover row of an unknown address; record the statements of two resolutions through a recording driver; resolve while another transaction holds the account lock; 20 resolutions at the same time as one redemption. | **4/4** purposes answered with account and purpose, then **1/1** redemption successful, `one_time_token` and `security_state` **unchanged**; **every** other case **`null`**, with **1 alarm** each for the inserted, altered and written-back row, the moved address and the broken seal; **0** writing statements, **0** transactions, **0** lock clauses; answer under a held account lock in **< 3 s**; the simultaneous redemption succeeds, **0** resolutions name another account | CI on every commit |
 
 ---
 
@@ -4985,7 +5032,7 @@ For a one-person team this is **not** worth it **on the whole estate**: a Stryke
 - **Target: mutation score ≥ 85 % on this section**, measured **before every release**, not on every commit.
 - **The value for a one-person team is not the number but the list of surviving mutants.** It is a work list of missing assertions and replaces the code review by a second person at exactly the place where such a review would be worth the most.
 
-**Coverage is not a security measure.** The 137 test cases of this plan are the security measure; the coverage number is only the warning light that shows that a new branch has been added without a test case. No test case of this plan may be dropped with the argument "the coverage is fine, after all".
+**Coverage is not a security measure.** The 138 test cases of this plan are the security measure; the coverage number is only the warning light that shows that a new branch has been added without a test case. No test case of this plan may be dropped with the argument "the coverage is fine, after all".
 
 ---
 
