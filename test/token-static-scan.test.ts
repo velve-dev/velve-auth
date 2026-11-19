@@ -146,16 +146,22 @@ describe("one_time_token is reached from one file (S-TOKEN-1)", () => {
 		expect(sweep).toContain('["one_time_token", "expires_at"]');
 	});
 
-	it("writes four statements, three of them against the table", () => {
-		expect(statements, listing(statements)).toHaveLength(4);
-		expect(tokenStatements, listing(tokenStatements)).toHaveLength(3);
+	//the fifth is the resolve's read, which removes nothing (S-TOKEN-7, E-3692)
+	it("writes five statements, four of them against the table", () => {
+		expect(statements, listing(statements)).toHaveLength(5);
+		expect(tokenStatements, listing(tokenStatements)).toHaveLength(4);
 		expect(ownerStatements, listing(ownerStatements)).toHaveLength(1);
 	});
 
 	it("filters on the purpose in every predicate it writes against the table", () => {
 		const predicates = tokenStatements.flatMap(predicatesIn);
-		expect(predicates).toHaveLength(3);
-		expect(predicates.filter((predicate) => !predicate.includes("purpose = $2"))).toStrictEqual([]);
+		expect(predicates).toHaveLength(4);
+		expect(
+			predicates.filter(
+				(predicate) =>
+					!predicate.includes("purpose = $2") && !predicate.includes("purpose = ANY($2::text[])"),
+			),
+		).toStrictEqual([]);
 	});
 
 	it("names the purpose in the row it inserts", () => {
@@ -224,8 +230,20 @@ describe("the redemption still filters on everything once it is on one line (E-2
 });
 
 describe("nothing reads the row before removing it (S-RACE-2)", () => {
-	it("reads nothing from the table, so no read can precede a write to it", () => {
-		expect(tokenStatements.filter((statement) => /\bSELECT\b/i.test(statement))).toStrictEqual([]);
+	//the resolve reads the table and removes nothing, so no read precedes a write in one function (S-TOKEN-7, E-3692)
+	it("reads the table only in the resolve, which writes nothing to it", () => {
+		const reads = tokenStatements.filter((statement) => /\bSELECT\b/i.test(statement));
+		expect(reads.map(asWritten)).toStrictEqual([
+			"SELECT purpose, user_id, payload::text AS payload_text, token_mac, token_mac_key_version " +
+				"FROM velve.one_time_token WHERE token_sha256 = $1 AND purpose = ANY($2::text[]) AND expires_at > now()",
+		]);
+		const readBody = repositorySource.slice(
+			repositorySource.indexOf("async readOneTimeToken"),
+			repositorySource.indexOf("async consumeOneTimeToken"),
+		);
+		expect(readBody.match(/\.query</g)).toHaveLength(1);
+		expect(readBody).toContain("readStatement");
+		expect(readBody).not.toMatch(/consumeStatement|withdrawStatement|replaceStatement/);
 	});
 
 	// The one read in the file is a lock on a different table (S-TOKEN-3, E-259) with the owner's
