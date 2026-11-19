@@ -24,6 +24,7 @@ export type {
 } from "./core/auth/config.js";
 export type {
 	AuthInternals,
+	OneTimeTokenNamespace,
 	PendingNamespace,
 	SessionNamespace,
 	UserNamespace,
@@ -124,6 +125,8 @@ export type * from "./core/plugin/index.js";
 export type { SecurityStateAlarm } from "./core/security-state/alarm.js";
 export type { LimitsConfig } from "./core/security-state/limits.js";
 export type { SessionToken } from "./core/session/token.js";
+export type { OneTimeTokenPurpose } from "./core/token/purpose.js";
+export type { ResolvedOneTimeToken } from "./core/token/resolution.js";
 
 //this is the one place in the package where a clock is read (E-231)
 const SYSTEM_CLOCK: Clock = { now: () => new Date() };

@@ -60,7 +60,7 @@ function payloadUnder(
 	return tokenGeneration === null ? payload : { ...payload, [TOKEN_GENERATION]: tokenGeneration };
 }
 
-function tokenGenerationIn(payload: OneTimeTokenPayload | null): number | null {
+export function tokenGenerationIn(payload: OneTimeTokenPayload | null): number | null {
 	const generation = payload?.[TOKEN_GENERATION];
 	return typeof generation === "number" && Number.isSafeInteger(generation) ? generation : null;
 }

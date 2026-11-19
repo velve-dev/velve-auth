@@ -43,7 +43,7 @@ Velve Auth ist eine Anmeldebibliothek für TypeScript und PostgreSQL, die im Pro
 
 **Die Laufzeit.** Reines TypeScript, kein eigenes Rust/WASM-Modul, sechs Abhängigkeiten ohne native Bindungen. Gemessen auf 2 vCPU, also Größenordnung statt Absolutwert: Argon2id bei OWASP-Parametern kostet 263 ms in JavaScript gegen 76 ms in WASM — aber WASM scheitert in Cloudflare Workers an `Wasm code generation disallowed by embedder` und ist auf Caprock unerprobt (SCHÄTZUNG), und ein eigenes Rust-Modul wäre gegenüber fertigem WASM nur 1,6-mal schneller, um den Preis einer zweiten Werkzeugkette und eines unprüfbaren Binärblobs. Der entscheidende Befund: `@noble/hashes`, `hash-wasm` und eine Rust-WASI-Variante erzeugen **bytegleiche** Argon2id-Hashes. Die Rechenmaschine ist damit austauschbar, ohne einen einzigen gespeicherten Hash anzufassen.
 
-**Die Absicherung.** 134 Sicherheitsanforderungen in neunzehn Fehlerklassen, jede mit mindestens einem Testfall und einer vorab festgelegten Zahl als Schwelle; 138 Testfälle, von denen 119 jeden Commit blockieren. Fünfzehn der 33 Better-Auth-Advisories sind unmittelbar auf Velve Auth übertragbar und werden von benannten Anforderungen ausgeschlossen; achtzehn sind nicht anwendbar, weil die betroffene Funktion nicht existiert.
+**Die Absicherung.** 135 Sicherheitsanforderungen in neunzehn Fehlerklassen, jede mit mindestens einem Testfall und einer vorab festgelegten Zahl als Schwelle; 139 Testfälle, von denen 120 jeden Commit blockieren. Fünfzehn der 33 Better-Auth-Advisories sind unmittelbar auf Velve Auth übertragbar und werden von benannten Anforderungen ausgeschlossen; achtzehn sind nicht anwendbar, weil die betroffene Funktion nicht existiert.
 
 **Ehrlich benannte Grenzen.** In der Konfiguration `username` gibt es kein Zurücksetzen per E-Mail — die Bibliothek verweigert dort den Start, wenn keine Wiederherstellungscodes konfiguriert sind. Benutzernamen sind per Definition aufzählbar, sobald eine Verfügbarkeitsprüfung angeboten wird; das steht im Datenblatt statt als stille Lücke im Code. Der verschlüsselte Kennwortspeicher bedeutet: Schlüsselverlust ist Kennwortverlust. Importierte bcrypt-Hashes prüfen nur die ersten 72 Byte, bis der Rehash sie ersetzt hat. Ein Schreiber auf der Datenbank, der auch den Wurzelschlüssel hat, hat alles, und ohne den Anker aus Abschnitt 3.18 kann er ein Konto auf einen alten, in sich stimmigen Stand zurücksetzen. Und ob Node auf Caprock startet und der gewählte PostgreSQL-Treiber dort funktioniert, ist die einzige nennenswerte ungeprüfte Annahme des ganzen Entwurfs.
 
@@ -55,8 +55,8 @@ Velve Auth ist eine Anmeldebibliothek für TypeScript und PostgreSQL, die im Pro
 2. Sprache und Laufzeit — die Bewertung, die Messungen, die Empfehlung
 3. Zielarchitektur — Paketstruktur, Schema, Sitzungen, Prüfpfad, Identität, zweiter Faktor, Tokens, Schlüssel, Ratenbegrenzung, Drittanbieter, Plugins, öffentliche Schnittstelle, Fehlerbehandlung, entschiedene Lücken, Integrität des Sicherheitszustands
 4. Migrationsmodul — fünf Quellen, je Quellschema, Zuordnung, Hash-Übernahme, Verluste, Folgearbeit
-5. Sicherheitsanforderungen — 134 Anforderungen in neunzehn Fehlerklassen, mit Abdeckungstabelle der 33 Advisories
-6. Prüfplan — 138 Testfälle mit vorab festgelegten Schwellen
+5. Sicherheitsanforderungen — 135 Anforderungen in neunzehn Fehlerklassen, mit Abdeckungstabelle der 33 Advisories
+6. Prüfplan — 139 Testfälle mit vorab festgelegten Schwellen
 7. Entscheidungsprotokoll — E-01 bis E-46, Ausgangsbestand für die Fallstudie
 
 Der Bauauftrag liegt getrennt als `CLAUDE-CODE-AUFTRAG.md`.
@@ -1517,6 +1517,28 @@ Fristen: E-Mail-Bestätigung 24 h, Kennwort-Reset 1 h, E-Mail-Wechsel 1 h,
 Magic Link 10 min. Ein neu angeforderter Token gleichen Zwecks löscht die
 vorherigen desselben Nutzers.
 
+**Auflösen ohne Verbrauch.** `oneTimeToken.resolve` (3.15 B.10) liest einen Token, ohne ihn zu
+verbrauchen, mit einer einzigen lesenden Anweisung über die Liste aller Zwecke:
+
+```sql
+SELECT purpose, user_id, payload::text AS payload_text, token_mac, token_mac_key_version
+FROM velve.one_time_token
+WHERE token_sha256 = $1 AND purpose = ANY($2::text[]) AND expires_at > now();
+```
+
+Die Auflösung prüft den MAC der Zeile unter dem Zweck, den sie trägt (S-INTEG-9), und danach,
+was jede Einlösung am Konto prüft, bevor ihr Token wirkt: dass das Konto besteht, sein Siegel
+stimmt, die gebundene Adresse noch die versiegelte und die gebundene Generation noch die seines
+Zwecks ist (3.18, Punkt 3) und das Konto nicht gesperrt ist. Besteht die Zeile alles, nennt die
+Auflösung Konto und Zweck; sonst antwortet sie `null` — abgelaufen, verbraucht, ersetzt, nie
+existiert, von einem Schreiber eingesetzt oder verändert und gesperrt sind auch hier nach außen
+ununterscheidbar. Sie schreibt keine Zeile, nimmt keine Sperre, verlängert keine Frist, bindet
+keinen MAC neu und meldet ein Siegel keinem Anker, der zurückliegt; eine abgelehnte Zeile meldet sie wie eine Einlösung mit dem Anlass
+`token_redemption`. Die Einlösung danach verbraucht den Token weiter mit der Anweisung oben und
+liest kein Ergebnis der Auflösung. Einen Ablehnungsgrund, den erst die Einlösung eines
+bestimmten Zwecks kennt — eine inzwischen vergebene neue Adresse beim Adresswechsel —, nimmt
+die Auflösung nicht vorweg (S-TOKEN-7).
+
 ### 3.8 Schlüsselverwaltung
 
 Ein Wurzelschlüssel, daraus per **HKDF-SHA256** zweckgetrennte Schlüssel:
@@ -2025,6 +2047,7 @@ interface AuthSurface<M extends IdentityMode> {
   pending:  PendingNamespace
   email:    OnlyWhen<ModeHasEmail<M>,    EmailNamespace>
   username: OnlyWhen<ModeHasUsername<M>, UsernameNamespace>
+  oneTimeToken: OnlyWhen<ModeHasEmail<M>, OneTimeTokenNamespace>   // ohne HTTP-Route, B.10
 }
 
 interface AuthInternals {
@@ -2060,7 +2083,7 @@ interface SealedSecurityState {                                   // was die Neu
 
 `routes` ist kein Implementierungsdetail, sondern die Datenstruktur, aus der Teil D den
 HTTP-Handler und Teil E den Client baut. Sie liegt zur Laufzeit vor, weil der Client sonst
-raten müsste. `AuthSurface` hat 55 Methoden im Modus `username_email`, 52 in `email`, 46 in
+raten müsste. `AuthSurface` hat 56 Methoden im Modus `username_email`, 53 in `email`, 46 in
 `username`. `maintenance.sweep` löscht abgelaufene Zeilen aus den sieben Tabellen mit
 `*_sweep_idx` (L-11); `@velve/auth/schema` liefert dasselbe als SQL für `pg_cron`.
 `maintenance.sealSecurityState` und `maintenance.resealSecurityState` sind die Wartung und das
@@ -2372,6 +2395,7 @@ jeder Methode mit Aufrufer `session` (L-4); alle drei sind in der Fehlerspalte w
 | `session.resolve`, `resolveFromHeaders`, `pending.resolve`, `pending.resolveFromHeaders` | — | — | **nein** | — (geben `null`; `session.*` wirft `account_disabled`, L-4) |
 | `session.list`, `revoke`, `revokeAllOther`, `revokeAll` | session | **ja** | IP | `session_required`, `freshness_required` |
 | `user.findById`, `findByEmail`, `findByUsername`, `disable`, `enable`, `delete`, `maintenance.sweep` | server | — | **nein** | — |
+| `oneTimeToken.resolve` | server | — | **nein** | — (gibt `null`, B.10) |
 | `password.set` | session | **ja** | IP+Konto | `session_required`, `freshness_required`, `password_unacceptable`, `factor_already_enrolled` |
 | `password.change` | session | **ja** | IP+Konto | `session_required`, `freshness_required`, `invalid_credentials`, `password_unacceptable` |
 | `password.requestReset`, `email.requestVerification` | —/session | — | IP+Konto | `session_required` (nur `requestVerification`) |
@@ -2398,6 +2422,28 @@ jeder Methode mit Aufrufer `session` (L-4); alle drei sind in der Fehlerspalte w
 `session.resolve` und `pending.resolve` sind nicht ratenbegrenzt, ebenso wenig
 `session.resolveFromHeaders` und `pending.resolveFromHeaders`: Sie laufen bei jeder Anfrage der
 Anwendung, ein Zähler darauf wäre eine Selbstblockade.
+
+##### B.10 `oneTimeToken` (1, ohne HTTP-Route)
+
+```ts
+interface OneTimeTokenNamespace {
+  resolve(input: { token: string }): Promise<{ userId: string; purpose: OneTimeTokenPurpose } | null>
+}
+type OneTimeTokenPurpose = "email_verify" | "password_reset" | "email_change" | "magic_link"
+```
+
+Die Anwendung ruft `resolve` im eigenen Prozess auf, um einen zugestellten Link an die richtige
+Stelle zu leiten, bevor sie ihn einlöst — einen Kennwort-Reset auf die Seite, die das neue
+Kennwort erfragt, einen Magic Link auf die Anmeldung. Die Antwort nennt Konto und Zweck des
+Tokens nach den Prüfungen aus 3.7 und ist sonst `null`; der Token bleibt danach so gültig, wie
+er war. Es gibt keine Route und keinen Client-Aufruf: Was die Anwendung einem Besucher über einen
+Link sagt, entscheidet sie selbst, und eine Route gäbe jedem Besitzer eines Links die Kennung
+eines Kontos heraus. Die Kennung im Ergebnis ist kein Eigentumsnachweis; keine Methode nimmt sie
+als Akteur an (S-OWNER-7), und wirkt der Link, bestimmt allein die beim Verbrauch entfernte Zeile
+das Konto (S-TOKEN-4). `resolve` ist nicht ratenbegrenzt: Ein Token trägt 256 Bit (S-RAND-4),
+sodass eine unbegrenzte Auflösung keinem hilft, einen zu erraten, und die Einlösung, die ihr
+folgt, bleibt je IP-Adresse begrenzt. Die Methode gibt es in den Modi `email` und
+`username_email`; Modus `username` verschickt keinen Link.
 
 ---
 
@@ -4283,6 +4329,7 @@ Der Entwurf wird hier **nicht** geändert. Wo die Ausarbeitung eine Lücke in de
 - **S-TOKEN-4:** Wird ein Einmal-Token auf ein Konto angewandt — E-Mail-Bestätigung, E-Mail-Wechsel, Kennwort-Reset —, ist das Zielkonto ausschließlich `one_time_token.user_id`; kein Eingabefeld und keine mitgesendete Sitzung bestimmt das Zielkonto. Bei der Verknüpfung einer Identität ist das Zielkonto ausschließlich `oauth_flow.link_to_user_id`, das beim Start aus der Sitzung gesetzt wurde. *(Abschnitt 3.7, Spalte `user_id`; Abschnitt 3.15 B.7: „`velve.oauth_flow` weiß über `link_to_user_id` bereits, ob verknüpft oder angemeldet wird")*
 - **S-TOKEN-5:** Das Löschen eines Nutzers entfernt über `ON DELETE CASCADE` alle Zeilen in den vierzehn nutzergebundenen Tabellen `session`, `password_credential`, `identity`, `one_time_token`, `pending_authentication`, `totp_credential`, `totp_used_step`, `recovery_code`, `webauthn_credential`, `webauthn_challenge`, `oauth_flow` (`link_to_user_id`), `import_mapping`, `password_reset_required` und `security_state`; nach dem Löschen enthält keine dieser Tabellen eine Zeile mit der Nutzerkennung. *(Abschnitt 3.2 und 3.17, Schema: `REFERENCES velve.user(id) ON DELETE CASCADE` an jeder nutzergebundenen Tabelle)*
 - **S-TOKEN-6:** Jede Tabelle im Schema `velve` mit einer Spalte, die auf `velve.user(id)` verweist — auch die von Plugins mit dem Präfix `<plugin-id>_` angelegten — trägt dort eine Fremdschlüsselbedingung mit `ON DELETE CASCADE`; der Migrationsläufer weist eine Migration ab, die eine solche Tabelle ohne diese Bedingung anlegt. *(Abschnitt 3.11, „Eigene Tabellen im Schema `velve` mit Präfix `<plugin-id>_`; Migrationen laufen im selben versionierten Läufer")*
+- **S-TOKEN-7:** `oneTimeToken.resolve` nennt Konto und Zweck eines Einmal-Tokens nur, wenn seine Zeile die Prüfungen besteht, die eine Einlösung vor ihrer Wirkung vornimmt — MAC unter dem gespeicherten Zweck (S-INTEG-9), Frist nicht abgelaufen, Konto vorhanden, Siegel gültig, gebundene Adresse und gebundene Generation noch die des Kontos, Konto nicht gesperrt —, und beantwortet jeden anderen Token, auch einen nie existierenden und einen, der keine Zeichenkette ist, mit demselben `null`. Sie liest mit `purpose = ANY($2::text[])` über die Liste aller Zwecke, schreibt keine Zeile, nimmt keine Zeilen- und keine Kontosperre, öffnet keine Transaktion und meldet ein geprüftes Siegel keinem Anker eines Plugins; sie ist kein Teil eines Konsums, keine Einlösung liest ihr Ergebnis, und S-RACE-2 gilt für den Konsum unverändert. Sie hat keine HTTP-Route und keinen Client-Aufruf und besteht nur in den Modi mit Adresse. *(Abschnitt 3.7, Absatz „Auflösen ohne Verbrauch"; Abschnitt 3.15 B.10)*
 
 ---
 
@@ -4610,9 +4657,9 @@ Bei der Ausarbeitung dieses Abschnitts und des Prüfplans wurden dreizehn Lücke
 
 ## 6. Prüfplan
 
-Zu jeder der 134 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID trägt dieselbe Klasse und dieselbe Nummer wie die Anforderung: `T-OWNER-3` prüft `S-OWNER-3`. Hinzu kommen vier ergänzende Testfälle, die keiner einzelnen Anforderung zugeordnet sind, sondern eine Klasse breiter absichern (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — zusammen **138 Testfälle**.
+Zu jeder der 135 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID trägt dieselbe Klasse und dieselbe Nummer wie die Anforderung: `T-OWNER-3` prüft `S-OWNER-3`. Hinzu kommen vier ergänzende Testfälle, die keiner einzelnen Anforderung zugeordnet sind, sondern eine Klasse breiter absichern (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — zusammen **139 Testfälle**.
 
-**Spalten.** *Art* ist eine von sechs: `Unit`, `Integration`, `Property` (fast-check), `Statistisch`, `Nebenläufigkeit`, `Statisch` (Lint-Regel, AST-Analyse, Typprüfung); Kombinationen sind mit `+` angegeben. *Schwelle* ist eine Zahl oder ein hartes Kriterium — kein Test in diesem Plan besteht mit „keine Fehler". *Läuft in* ist eine von drei Stufen: `CI bei jedem Commit` (119 Testfälle, dazu der statische Teil von T-RACE-2 und der Teil von T-INTEG-5 außer dem Zeitteil), `CI nächtlich` (15, dazu der Nebenläufigkeitsteil von T-RACE-2 und der Zeitteil von T-INTEG-5), `vor jedem Release` (2).
+**Spalten.** *Art* ist eine von sechs: `Unit`, `Integration`, `Property` (fast-check), `Statistisch`, `Nebenläufigkeit`, `Statisch` (Lint-Regel, AST-Analyse, Typprüfung); Kombinationen sind mit `+` angegeben. *Schwelle* ist eine Zahl oder ein hartes Kriterium — kein Test in diesem Plan besteht mit „keine Fehler". *Läuft in* ist eine von drei Stufen: `CI bei jedem Commit` (120 Testfälle, dazu der statische Teil von T-RACE-2 und der Teil von T-INTEG-5 außer dem Zeitteil), `CI nächtlich` (15, dazu der Nebenläufigkeitsteil von T-RACE-2 und der Zeitteil von T-INTEG-5), `vor jedem Release` (2).
 
 **Grundsatz der Stufenzuordnung.** Alles Deterministische blockiert jeden Commit. Alles Statistische und alles, was länger als 60 Sekunden läuft, läuft nächtlich auf einem dedizierten Läufer und meldet als Ticket, nicht als roter Build. Der Grund steht in Abschnitt 6.20.
 
@@ -4717,6 +4764,7 @@ wird nicht genommen.
 | T-TOKEN-4 | S-TOKEN-4 | Integration | (i) E-Mail-Wechsel-Token für Nutzer A erzeugen und mit dem Sitzungscookie von Nutzer B einlösen. (ii) Verknüpfung aus der Sitzung von A starten, Callback mit A's Zeiger-Cookie und B's Sitzungscookie aufrufen. Zusätzlich AST-Scan: kein Handler liest eine Nutzerkennung aus der Eingabe eines Einlösepfads. | **2/2: die Wirkung trifft A** (`user.email` bzw. `identity.user_id`), **0 Zeilenänderungen an B**; **0 AST-Treffer** | CI bei jedem Commit |
 | T-TOKEN-5 | S-TOKEN-5 | Integration, reflektierend | Testnutzer mit einer Zeile in jeder der 14 nutzergebundenen Tabellen anlegen, `DELETE FROM velve.user` ausführen, alle Tabellen zählen. Die Liste der Tabellen stammt aus `information_schema`, nicht aus einer Konstante. | `count(*)` = **0 in 14/14 Tabellen** | CI bei jedem Commit |
 | T-TOKEN-6 | S-TOKEN-6 | Integration, reflektierend | Nach dem Ausführen aller Migrationen (Kern und Testplugin) `information_schema` abfragen: jede Tabelle im Schema `velve` mit `user_id`-Spalte muss eine FK-Bedingung mit `ON DELETE CASCADE` tragen. Zusätzlich eine absichtlich fehlerhafte Plugin-Migration einspielen. | **0 Tabellen ohne Cascade**; die fehlerhafte Migration wird vom Läufer mit einem Fehler abgewiesen | CI bei jedem Commit |
+| T-TOKEN-7 | S-TOKEN-7 | Integration + Nebenläufigkeit | Je einen Token der vier Zwecke auflösen, einen davon fünfmal nacheinander und dann einlösen; einen unbekannten, sechs nicht als Token geformte Werte, einen abgelaufenen, einen eingelösten, einen ersetzten, einen per SQL eingefügten, einen auf einen anderen Zweck und einen auf ein anderes Konto umgeschriebenen, einen mit geänderter Nutzlast, einen nach seiner Einlösung zurückgespielten und einen bei verschobener Adresse verschickten Token, je einen Token eines gesperrten, eines gelöschten und eines Kontos mit gebrochenem Siegel und die Deckzeile einer unbekannten Adresse auflösen; die Anweisungen zweier Auflösungen über einen aufzeichnenden Treiber mitschreiben; auflösen, während eine andere Transaktion die Kontosperre hält; 20 Auflösungen zeitgleich mit einer Einlösung. | **4/4** Zwecke mit Konto und Zweck beantwortet, danach **1/1** Einlösung erfolgreich, `one_time_token` und `security_state` **unverändert**; **jeder** übrige Fall **`null`**, mit je **1 Alarm** bei eingefügter, veränderter und zurückgespielter Zeile, verschobener Adresse und gebrochenem Siegel; **0** schreibende Anweisungen, **0** Transaktionen, **0** Sperrklauseln; Antwort bei gehaltener Kontosperre in **< 3 s**; die zeitgleiche Einlösung gelingt, **0** Auflösungen nennen ein anderes Konto | CI bei jedem Commit |
 
 ---
 
@@ -5006,7 +5054,7 @@ Für ein Ein-Personen-Team lohnt sich das **nicht auf dem gesamten Bestand**: ei
 - **Ziel: Mutations-Score ≥ 85 % auf diesem Ausschnitt**, gemessen **vor jedem Release**, nicht bei jedem Commit.
 - **Der Wert für ein Ein-Personen-Team ist nicht die Zahl, sondern die Liste der überlebenden Mutanten.** Sie ist eine Arbeitsliste fehlender Zusicherungen und ersetzt den Code-Review durch eine zweite Person an genau der Stelle, an der ein solcher Review am meisten wert wäre.
 
-**Abdeckung ist kein Sicherheitsmaß.** Die 138 Testfälle dieses Plans sind das Sicherheitsmaß; die Abdeckungszahl ist nur die Warnleuchte, die anzeigt, dass ein neuer Zweig ohne Testfall hinzugekommen ist. Kein Testfall dieses Plans darf mit dem Argument „die Abdeckung stimmt ja" entfallen.
+**Abdeckung ist kein Sicherheitsmaß.** Die 139 Testfälle dieses Plans sind das Sicherheitsmaß; die Abdeckungszahl ist nur die Warnleuchte, die anzeigt, dass ein neuer Zweig ohne Testfall hinzugekommen ist. Kein Testfall dieses Plans darf mit dem Argument „die Abdeckung stimmt ja" entfallen.
 
 ---
 

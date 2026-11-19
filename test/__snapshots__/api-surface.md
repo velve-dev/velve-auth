@@ -590,13 +590,14 @@ import { HttpEnvironment } from "../http/environment.mjs";
 import { VelveErrorCode } from "../http/error-map.mjs";
 import { AnyRoute, ServerCallFields } from "../http/route.mjs";
 import { PendingToken } from "../factor/pending/token.mjs";
-import { ModeHasUsername } from "./config.mjs";
+import { ModeHasEmail, ModeHasUsername } from "./config.mjs";
 import { ResolvedSessionView, UsernameAvailabilityAnswer } from "./routes.mjs";
 import { OAuthSurface } from "../oauth/routes.mjs";
 import { FactorSurface } from "../factor/routes.mjs";
 import { EmailFlowSurface } from "../flows/routes.mjs";
 import { PasswordSurface } from "../password/routes.mjs";
 import { PluginSurface } from "../plugin/routes.mjs";
+import { ResolvedOneTimeToken } from "../token/resolution.mjs";
 import { SweepReport } from "./maintenance.mjs";
 import { ChosenWeakening } from "./security-options.mjs";
 import { SecurityStateMaintenance } from "./security-state-maintenance.mjs";
@@ -672,6 +673,12 @@ interface UsernameNamespace {
     readonly user: User;
   }>;
 }
+/** what the application calls in its own process to learn whom and what a mailed link is for before redeeming it */
+interface OneTimeTokenNamespace {
+  resolve(input: {
+    token: string;
+  }): Promise<ResolvedOneTimeToken | null>;
+}
 interface AuthInternals {
   readonly errorCodes: readonly VelveErrorCode[];
   readonly identityMode: IdentityMode;
@@ -696,10 +703,13 @@ type VelveAuth<M extends IdentityMode> = AuthInternals & SeamSurface<M> & {
   readonly user: UserNamespaceOf<M>;
 } & (ModeHasUsername<M> extends true ? {
   readonly username: UsernameNamespace;
+} : Record<never, never>) & (ModeHasEmail<M> extends true ? {
+  readonly oneTimeToken: OneTimeTokenNamespace;
 } : Record<never, never>);
 //#endregion
 export {
 	AuthInternals,
+	OneTimeTokenNamespace,
 	PendingNamespace,
 	SessionNamespace,
 	UserNamespace,
@@ -2365,6 +2375,32 @@ export {
 	SessionToken,
 };
 
+## core/token/purpose.d.mts
+
+//#region src/core/token/purpose.d.ts
+declare const ONE_TIME_TOKEN_PURPOSES: readonly ["email_verify", "password_reset", "email_change", "magic_link"];
+type OneTimeTokenPurpose = (typeof ONE_TIME_TOKEN_PURPOSES)[number];
+//#endregion
+export {
+	OneTimeTokenPurpose,
+};
+
+## core/token/resolution.d.mts
+
+import { OneTimeTokenPurpose } from "./purpose.mjs";
+
+//#region src/core/token/resolution.d.ts
+
+/** the account and the purpose a one-time token names, read without spending the token */
+interface ResolvedOneTimeToken {
+  readonly purpose: OneTimeTokenPurpose;
+  readonly userId: string;
+}
+//#endregion
+export {
+	ResolvedOneTimeToken,
+};
+
 ## http.d.mts
 
 import { WebHandlerOptions, toWebHandler } from "./core/http/web-handler.mjs";
@@ -2390,6 +2426,7 @@ import { PendingToken } from "./core/factor/pending/token.mjs";
 import { SessionToken } from "./core/session/token.mjs";
 import { Identity, OAuthCallbackResult, OAuthRedirect, SignInResult, SignUpResult } from "./core/auth/results.mjs";
 import { KeyProvider } from "./core/keys/provider.mjs";
+import { OneTimeTokenPurpose } from "./core/token/purpose.mjs";
 import { UsernameRules } from "./core/identity/configuration.mjs";
 import { rootKeyProvider } from "./core/keys/root-key-provider.mjs";
 import { GenericProviderConfig, KnownProvider, OAuthConfig, OAuthPrompt, OAuthResponseMode, ProviderCredentials } from "./core/oauth/config.mjs";
@@ -2404,10 +2441,11 @@ import { ChangedUser, EmailNamespace, MagicLinkNamespace, MailedPasswordNamespac
 import { OAuthCallbackOutcome } from "./core/oauth/service.mjs";
 import { AuthenticatorResponse, RecoveryNamespace, SignInPasskeyNamespace, TotpNamespace, WebAuthnNamespace } from "./core/factor/routes.mjs";
 import { EmailFlowSurface } from "./core/flows/routes.mjs";
+import { ResolvedOneTimeToken } from "./core/token/resolution.mjs";
 import { SweepReport } from "./core/auth/maintenance.mjs";
 import { ChosenWeakening, SECURITY_OPTIONS, SecurityOption } from "./core/auth/security-options.mjs";
 import { RowsUnderSecurityStateKeyVersion, SealedSecurityState, SecurityStateMaintenanceError, SecurityStateReport } from "./core/auth/security-state-maintenance.mjs";
-import { AuthInternals, PendingNamespace, SessionNamespace, UserNamespace, UsernameNamespace, VelveAuth } from "./core/auth/instance.mjs";
+import { AuthInternals, OneTimeTokenNamespace, PendingNamespace, SessionNamespace, UserNamespace, UsernameNamespace, VelveAuth } from "./core/auth/instance.mjs";
 import { RouteConflict, THE_CORE, VelveStartupError } from "./core/auth/startup.mjs";
 import { TRUST_LEVEL_EVENTS, TRUST_LEVEL_EVENT_REVOKES_OTHER_SESSIONS, TrustLevelEvent } from "./core/auth/trust-level.mjs";
 import { OwnedRowRepository, OwnedRowRepositoryOptions, UnknownColumnError, createOwnedRowRepository } from "./core/db/repositories/owned-row-repository.mjs";
@@ -2459,6 +2497,8 @@ export {
 	OAuthPrompt,
 	type OAuthRedirect,
 	OAuthResponseMode,
+	type OneTimeTokenNamespace,
+	type OneTimeTokenPurpose,
 	type OnlyWhen,
 	type OriginRequirement,
 	type OwnedRowRepository,
@@ -2481,6 +2521,7 @@ export {
 	type RecoveryNamespace,
 	RecoveryPasswordNamespace,
 	type RedeemedOneTimeToken,
+	type ResolvedOneTimeToken,
 	type ResolvedSession,
 	type ResolvedSessionView,
 	RevokeReason,
