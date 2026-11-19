@@ -45,7 +45,7 @@ Velve Auth is a sign-in library for TypeScript and PostgreSQL that runs inside t
 
 **The runtime.** Pure TypeScript, no Rust/WASM module of its own, six dependencies without native bindings. Measured on 2 vCPU, so an order of magnitude rather than an absolute value: Argon2id at OWASP parameters costs 263 ms in JavaScript against 76 ms in WASM — but WASM fails in Cloudflare Workers on `Wasm code generation disallowed by embedder` and is untested on Caprock (ESTIMATE), and a Rust module of one's own would be only 1.6 times faster than off-the-shelf WASM, at the price of a second toolchain and an unauditable binary blob. The decisive finding: `@noble/hashes`, `hash-wasm` and a Rust WASI variant produce **byte-identical** Argon2id hashes. The compute engine is thereby exchangeable without touching a single stored hash.
 
-**The safeguarding.** 133 security requirements in nineteen error classes, each with at least one test case and a number fixed in advance as its threshold; 137 test cases, of which 118 block every commit. Fifteen of the 33 Better Auth advisories transfer directly to Velve Auth and are excluded by named requirements; eighteen are not applicable because the affected feature does not exist.
+**The safeguarding.** 134 security requirements in nineteen error classes, each with at least one test case and a number fixed in advance as its threshold; 138 test cases, of which 119 block every commit. Fifteen of the 33 Better Auth advisories transfer directly to Velve Auth and are excluded by named requirements; eighteen are not applicable because the affected feature does not exist.
 
 **Honestly named limits.** In the `username` configuration there is no reset by email — the library refuses to start there if no recovery codes are configured. Usernames are by definition enumerable as soon as an availability check is offered; that stands in the data sheet instead of being a silent gap in the code. The encrypted password storage means: key loss is password loss. Imported bcrypt hashes check only the first 72 bytes until the rehash has replaced them. A writer on the database who also has the root key has everything, and without the anchor from section 3.18 they can reset an account to an old, internally consistent state. And whether Node starts on Caprock and the chosen PostgreSQL driver works there is the only notable unverified assumption of the whole design.
 
@@ -57,8 +57,8 @@ Velve Auth is a sign-in library for TypeScript and PostgreSQL that runs inside t
 2. Language and runtime — the assessment, the measurements, the recommendation
 3. Target architecture — package structure, schema, sessions, verification path, identity, second factor, tokens, keys, rate limiting, third-party providers, plugins, public interface, error handling, decided gaps, integrity of the security state
 4. Migration module — five sources, per source schema, mapping, hash adoption, losses, follow-up work
-5. Security requirements — 133 requirements in nineteen error classes, with a coverage table of the 33 advisories
-6. Test plan — 137 test cases with thresholds fixed in advance
+5. Security requirements — 134 requirements in nineteen error classes, with a coverage table of the 33 advisories
+6. Test plan — 138 test cases with thresholds fixed in advance
 7. Decision log — E-01 to E-46, the initial stock for the case study
 
 The build brief lies separately as `CLAUDE-CODE-AUFTRAG.md`.
@@ -1626,7 +1626,7 @@ need them, not at all (`storeTokens: false` is the default).
   run in the same versioned runner.
 - Listen in at declared points: `beforeSignIn`, `afterSignIn`,
   `beforeSessionCreate`, `afterSessionCreate`, `beforeUserCreate`,
-  `afterUserCreate`, `beforeSessionRevoke`. A hook may **reject** (throw an
+  `afterUserCreate`, `beforeSessionRevoke`, `afterEmailChange`. A hook may **reject** (throw an
   error) or **observe**. It may not replace the response.
 - Contribute error codes and rate limiting rules of its own.
 - Declare dependencies (`dependsOn`), which are sorted topologically.
@@ -1915,6 +1915,7 @@ type EmailMessage =
   | { kind: "magic_link";         to: string; userId: string; token: string; expiresAt: Date }
   | { kind: "sign_up_attempt_on_existing_account"; to: string; userId: string }
   | { kind: "request_for_unknown_address"; to: string; requested: "password_reset" | "magic_link" }
+  | { kind: "email_change_notice"; to: string; userId: string }
 ```
 
 Four kinds correspond to the four `purpose` values from `velve.one_time_token`. The fifth is the
@@ -1924,7 +1925,12 @@ It deliberately carries **no** token — it leads to a sign-in, not to a confirm
 nobody asked for. The sixth follows from L-1: a reset or magic link for an
 unknown address calls `send` just as it does for a known one, so that both branches do the same
 work; whether that becomes a "no account exists here" message or nothing is
-decided by the application in the callback.
+decided by the application in the callback. The seventh goes, after every confirmed address change,
+to the address the account held until then, and says only that the address has changed
+(S-LINK-8): it carries no token, no link and not the new address, because whoever reads the old
+mailbox is not necessarily the owner of the account. It is sent only once the change has
+committed, and there is no option that turns it off; an application that does not want to
+deliver it drops the kind in its `send`.
 
 The library builds no URLs; a `redirectTo` that comes from a request and would have to be
 checked against an allowlist therefore does not exist at all. If `send` throws, the
@@ -2220,7 +2226,11 @@ an address as a parameter would be an open enumeration interface. `requestChange
 `void` even when `newEmail` belongs to another account (internally
 `email_taken_on_change`); the uniqueness check is repeated on redemption, because
 an hour lies in between. `redeemChange` sets `email_verified_at` to `now()` — the user
-has proved the address by the redemption.
+has proved the address by the redemption. After the commit `redeemChange` sends
+`email_change_notice` to the address the confirmation read under the account lock, and then
+calls `afterEmailChange` with `{ userId }`. If `send` or the hook throws, the request is
+answered with that error; the change stands, and a hook that throws does not hold the message
+back (S-LINK-8).
 
 `username.isAvailable` is the place at which enumeration resistance ends, and the type says so.
 The alternative — leaving it out and giving the information only as an error on `change` and `signUp` —
@@ -2868,6 +2878,7 @@ interface PluginHooks {
   beforeUserCreate?:    (event: UserCreateEvent,      context: FrozenContext) => Promise<void>
   afterUserCreate?:     (event: UserCreatedEvent,     context: FrozenContext) => Promise<void>
   beforeSessionRevoke?: (event: SessionRevokeEvent,   context: FrozenContext) => Promise<void>
+  afterEmailChange?:    (event: EmailChangedEvent,    context: FrozenContext) => Promise<void>
 }
 
 interface SignInEvent {
@@ -2889,6 +2900,7 @@ interface SessionRevokeEvent  { readonly sessionId: string; readonly userId: str
                                 readonly reason: RevokeReason }
 type RevokeReason = "sign_out" | "revoked_by_user" | "password_changed"
   | "password_reset" | "identity_linked" | "email_verified"
+interface EmailChangedEvent   { readonly userId: string }   // never an address
 
 interface FrozenContext {
   readonly clock: Clock; readonly identityMode: IdentityMode; readonly schema: string
@@ -2912,14 +2924,16 @@ runtime check at startup remains for plugins written in JavaScript, and a name c
 a start error, not a warning. `dependsOn` is sorted topologically, a cycle is a
 start error.
 
-Seven hook points, exactly the ones from 3.11. The return is everywhere
+Eight hook points, exactly the ones from 3.11. The return is everywhere
 `Promise<void>` — that is the type which expresses "listener with a veto": a hook can
 **reject** by throwing, and **observe** by doing nothing; it cannot replace the
 response, because it cannot return one. A return type `Promise<Event | void>` would have
 opened exactly the door 3.11 closes. All event fields are `readonly`, and
 no event contains a session token, a plaintext password or a hash. The anchor's `digest` is not
 the hash of a secret but the seal's HMAC under `state-mac`; without the root key nothing can be
-computed from it. `securityStateAnchor` is not an eighth hook point: `recordSeal` runs after the
+computed from it. `afterEmailChange` runs only once the address change has committed: a hook
+that throws there decides the answer but does not undo the change, and its event names the
+account and no address — neither the old one nor the new one. `securityStateAnchor` is not a ninth hook point: `recordSeal` runs after the
 commit and can refuse nothing, and `minimumVersion` refuses through the
 lower bound it delivers; if it throws or delivers anything other than `null` or a valid lower bound `{ version, digest }`, that is not a veto as with a hook but a broken state: the
 request is refused with the alarm `anchor_unavailable` (3.18).
@@ -4377,6 +4391,7 @@ The research report records: "**every single one** would have been prevented by 
 - **S-LINK-5:** If a provider reports no email address, `velve.user.email` remains NULL in the configuration `username`; in `username_email` the CHECK constraint from 3.2 requires an address on every account, and the sign-in through that provider creates no account there. The library generates a placeholder address in no configuration. *(Section 3.10, "No account without an email obligation")*
 - **S-LINK-6:** The state `provider_email_verified` is stored per identity and updated at every sign-in from the provider claims; the value of one identity does not carry over to another identity of the same user. *(Section 3.2, schema: `provider_email_verified boolean NOT NULL DEFAULT false` on `velve.identity`)*
 - **S-LINK-7:** Linking a further identity with an existing account is a change of trust level and therefore creates a new session row with a new token. *(Section 3.5: "Re-issue at every event that changes the trust level: … linking of a new identity")*
+- **S-LINK-8:** When an address change is confirmed, exactly one message `email_change_notice` goes, after the commit, to the address the account held under the account lock of the confirmation; it carries only kind, recipient and account id, no token, no link and not the new address. After that `afterEmailChange` learns the account as `{ userId }`, without an address. A redemption that commits nothing — an unknown, spent or concurrently redeemed token, a target address taken in the meantime, a disabled account — sends no message and does not call the hook; nor does a change to the address the account already holds. Neither a throwing `send` nor a throwing hook undoes the committed change, and a throwing hook does not hold the message back. *(Section 3.15 A.7, seventh message kind; B.5; G, `afterEmailChange`)*
 
 ---
 
@@ -4592,9 +4607,9 @@ While this section and the test plan were being elaborated, thirteen gaps in the
 
 ## 6. Test plan
 
-To each of the 133 requirements from section 5 belongs a test case. The test ID carries the same class and the same number as the requirement: `T-OWNER-3` verifies `S-OWNER-3`. In addition there are four supplementary test cases that are not assigned to a single requirement but secure a class more broadly (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — in total **137 test cases** together.
+To each of the 134 requirements from section 5 belongs a test case. The test ID carries the same class and the same number as the requirement: `T-OWNER-3` verifies `S-OWNER-3`. In addition there are four supplementary test cases that are not assigned to a single requirement but secure a class more broadly (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — in total **138 test cases** together.
 
-**Columns.** *Kind* is one of six: `Unit`, `Integration`, `Property` (fast-check), `Statistical`, `Concurrency`, `Static` (lint rule, AST analysis, type check); combinations are given with `+`. *Threshold* is a number or a hard criterion — no test in this plan passes with "no errors". *Runs in* is one of three tiers: `CI on every commit` (118 test cases, plus the static part of T-RACE-2 and the part of T-INTEG-5 other than its timing part), `CI nightly` (15, plus the concurrency part of T-RACE-2 and the timing part of T-INTEG-5), `before every release` (2).
+**Columns.** *Kind* is one of six: `Unit`, `Integration`, `Property` (fast-check), `Statistical`, `Concurrency`, `Static` (lint rule, AST analysis, type check); combinations are given with `+`. *Threshold* is a number or a hard criterion — no test in this plan passes with "no errors". *Runs in* is one of three tiers: `CI on every commit` (119 test cases, plus the static part of T-RACE-2 and the part of T-INTEG-5 other than its timing part), `CI nightly` (15, plus the concurrency part of T-RACE-2 and the timing part of T-INTEG-5), `before every release` (2).
 
 **Principle of the tier assignment.** Everything deterministic blocks every commit. Everything statistical and everything that runs longer than 60 seconds runs nightly on a dedicated runner and reports as a ticket, not as a red build. The reason is in section 6.20.
 
@@ -4772,6 +4787,7 @@ soften the first, so it is declined.
 | T-LINK-5 | S-LINK-5 | Integration + Static | Provider double returns no email, in the configurations `username` and `username_email`. AST scan: no string concatenation that produces an email address from an identifier (`@` literal in an assignment to `email`). | `user.email IS NULL` in `username`; in `username_email` **0 rows** in `velve.user`, `velve.identity` and `velve.session`; **0 AST hits** | CI on every commit |
 | T-LINK-6 | S-LINK-6 | Integration | User with two identities; provider 1 reports `email_verified: true`, provider 2 `false`. | `provider_email_verified` is **correct per row**; a change to row 1 leaves row 2 unchanged | CI on every commit |
 | T-LINK-7 | S-LINK-7 | Integration | Link a second identity in an existing session, compare the token before and afterwards. | `T2 ≠ T1`; the old row **0 hits** in `velve.session` | CI on every commit |
+| T-LINK-8 | S-LINK-8 | Integration + Concurrency | Request and redeem an address change; a `send` that reads the address over a second connection while sending; a plugin on `afterEmailChange`. Counter-checks: invented token, second redemption, target address taken in the meantime, disabled account, two simultaneous redemptions of the same token, change to the account's own address. Failure cases: `send` throws on the message, the hook throws. | Success: **exactly 1** `email_change_notice`, equal to `{ kind, to: old address, userId }`, while sending the second connection already reads the new address; the hook receives **exactly** `{ userId }`. Counter-checks: **0** messages and **0** hook calls, with two simultaneous redemptions **1** and **1**. Failure cases: answer 500, the new address stays, the message is sent or the hook called respectively | CI on every commit |
 
 ---
 
@@ -4985,7 +5001,7 @@ For a one-person team this is **not** worth it **on the whole estate**: a Stryke
 - **Target: mutation score ≥ 85 % on this section**, measured **before every release**, not on every commit.
 - **The value for a one-person team is not the number but the list of surviving mutants.** It is a work list of missing assertions and replaces the code review by a second person at exactly the place where such a review would be worth the most.
 
-**Coverage is not a security measure.** The 137 test cases of this plan are the security measure; the coverage number is only the warning light that shows that a new branch has been added without a test case. No test case of this plan may be dropped with the argument "the coverage is fine, after all".
+**Coverage is not a security measure.** The 138 test cases of this plan are the security measure; the coverage number is only the warning light that shows that a new branch has been added without a test case. No test case of this plan may be dropped with the argument "the coverage is fine, after all".
 
 ---
 

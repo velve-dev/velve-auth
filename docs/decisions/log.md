@@ -18408,3 +18408,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Copying the breaking-change section of 2.0.0 into the 2.0.1 notes so the case passes unchanged, which would tell an operator upgrading from 2.0.0 that a patch breaks what it does not.
 **Reason.** The breaks belong to 2.0.0 and stay true there; what each release must have is notes of its own.
 **Price.** A later major has to name its own notes in the case again, as E-3023 did for 2.0.0.
+
+<a id="e-3716"></a>
+
+### The notice is S-LINK-8, and the counts move to 134 and 138
+`E-3716` · address-change-notice · specification, settled
+
+**Context.** The behaviour needed a requirement and a test case. The classes of section 5 are fixed by failure mode, and the notice defends against an account takeover that moves the address; the closest class is LINK, account takeover through identity linking, whose S-LINK-4 already governs the first confirmation of an address. S-LINK-8 and T-LINK-8 are added in both languages, A.7 gains the seventh kind, B.5 the notice and the hook, 3.11 and G the eighth point. The stated counts follow, as E-3367 requires: 134 requirements, 138 test cases, 119 blocking every commit.
+**Rejected.** A new class for notifications, which would be a twentieth class with one member and would change "neunzehn Fehlerklassen", which the counts test reads, for no gain in what a reader finds.
+**Reason.** A reader looking for what stops a takeover through the address finds it beside S-LINK-4. The test is `test/address-change-notice-flow.test.ts`, which fails in eight of its twelve cases when the call that sends the notice and runs the hook is removed.
+**Price.** LINK now holds one requirement that has nothing to do with a provider identity, and its heading says identity linking.
