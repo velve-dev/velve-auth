@@ -18408,3 +18408,73 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Copying the breaking-change section of 2.0.0 into the 2.0.1 notes so the case passes unchanged, which would tell an operator upgrading from 2.0.0 that a patch breaks what it does not.
 **Reason.** The breaks belong to 2.0.0 and stay true there; what each release must have is notes of its own.
 **Price.** A later major has to name its own notes in the case again, as E-3023 did for 2.0.0.
+
+<a id="e-3690"></a>
+
+### A one-time token is resolved by a server method of its own namespace, in the modes that mail a link
+`E-3690` · token-resolution · public surface, settled
+
+**Context.** The maintainer asked for a server-only method that, after checking a one-time token's MAC and deadline, answers which account and purpose the token names without spending it, so the consuming application can route a mailed link before redeeming it. The method is `auth.oneTimeToken.resolve({ token })`, answering `{ userId, purpose }` or `null`. It is built in `src/core/token/resolution.ts` and placed on the instance by `src/core/auth/instance.ts`; it has no route, so neither the HTTP handler nor the client can reach it. It exists in modes `email` and `username_email` and not in mode `username`, which mails no link. `oneTimeToken` is a twentieth name in `SURFACE_NAMESPACES`, and 3.15 B now lists it in `AuthSurface` and as B.10, with one row in B.9.
+**Rejected.** An HTTP route, which would hand the identifier of an account to everyone holding a link and take from the application the decision what a visitor learns about it. A method under `email`, whose methods are derived from the routes `src/core/flows/routes.ts` declares, a file outside this feature, and which the instance refuses to extend by a stated name (E-1192). The method in every mode, which in mode `username` could only ever answer `null`; E-3022 removed `findByEmail` from that mode for the same reason. Taking the purpose as input, which the requirement asks for as output. Answering the whole `User`, which is more than the question and is one `user.findById` away.
+**Reason.** A namespace of its own is the one place the stated surface can add a method without touching a route-derived namespace, and `resolve` follows the name of the two other resolutions that read a token and spend nothing, `session.resolve` and `pending.resolve`. A server method with no route is the shape B.3 already gives to everything the application calls after its own decision.
+**Price.** A plugin with the id `oneTimeToken`, or a route whose first segment is `oneTimeToken`, is now refused at start with `plugin_route_conflict`, a break that belongs in the 3.0.0 notes. `AuthSurface` counts 56 methods in `username_email` and 53 in `email`.
+
+<a id="e-3691"></a>
+
+### A resolve answers null wherever a redemption would answer invalid_token before the token takes effect
+`E-3691` · token-resolution · behaviour, settled
+
+**Context.** The requirement names the MAC and the deadline. A redemption checks more before its token takes effect (`accountOrDisabledOfRedemption` in `src/core/flows/environment.ts`): that the account exists, its seal holds (S-INTEG-4), the address bound in the payload is still the sealed one (E-3264), the bound token generation is still the account's (E-3522), and that the account is not disabled, which it answers with `invalid_token` like an invented token. A resolve that answered an account where the redemption then answers `invalid_token` would tell the holder of a link something the redemption hides: that the account is disabled, or that its state is broken. So the resolve makes every one of those checks and answers each failure with the same `null` as an unknown, expired, spent or replaced token, a row a database writer inserted, moved or rewrote, a link written back after its redemption, and the cover row of an unknown address.
+**Rejected.** Checking only the MAC and the deadline, as the requirement's wording alone would allow, for the oracle above. Anticipating a refusal only the redemption of one purpose knows, the new address of an address change taken by another account in the meantime (`email_taken_on_change`, S-ENUM-5): the link is mailed to that new address, so only the holder of that mailbox can ask, and a sign-up on that address already mails that mailbox (S-ENUM-4); repeating the check would copy the flow's logic into the token module for no knowledge withheld.
+**Reason.** Section 3.7 makes an expired, a used, a never existing and a written-in token indistinguishable, and OWASP's Forgot Password Cheat Sheet asks for one consistent answer whatever the account behind a request is; the resolve is a second door to the same token, so it gives the redemption's answer and never a finer one. Each check has a case in `test/token-resolution-resolve.test.ts`, and each of five planted faults — the disabled check, the address check, the generation check, the MAC check and the seal check removed one at a time — fails exactly the case for it, one case each and three for the MAC.
+**Price.** A resolve can name the account of an address-change link whose redemption then refuses for a taken address. Every resolve of a valid token costs a security-state read and two MAC verifications, the same as the redemption's own checks.
+
+<a id="e-3692"></a>
+
+### The resolve reads the row with one statement over every purpose and writes nothing
+`E-3692` · token-resolution · storage access, settled
+
+**Context.** S-TOKEN-1 asks every statement on `velve.one_time_token` to filter on `purpose`, and S-RACE-2 asks that no read of a row precede its consumption. The resolve reads `SELECT purpose, user_id, payload::text AS payload_text, token_mac, token_mac_key_version FROM velve.one_time_token WHERE token_sha256 = $1 AND purpose = ANY($2::text[]) AND expires_at > now()`, with `ONE_TIME_TOKEN_PURPOSES` as the list, through `readOneTimeToken` in `src/core/db/repositories/token.ts`, whose signature requires the hash and the purposes together. The account check is `checkAccount`, which reads the security state without a lock. Note added after the review, the sentence before it standing as written: the account check is no longer `checkAccount` but a verification of its own that records no seal with an anchor, and E-3696 records why. The resolve opens no transaction, takes no row lock and no account lock, and writes no row; a recording driver in the test sees only reading statements.
+**Rejected.** One statement per purpose with `purpose = $2`, four lookups of a primary key that can match at most once. Reading the row with the consumption's `DELETE … RETURNING` in a transaction that is rolled back, which writes, takes the row lock and makes a racing redemption wait. Asking the caller for the purpose, which the requirement makes the answer.
+**Reason.** The list is the purpose list itself, so a purpose a later feature adds is resolved without this code changing, and the purpose a row answers with is the one its MAC binds, so a row moved to another purpose fails as it does on redemption. The read is no part of a consumption: no redemption reads its result, the consumption still removes the row with the one statement of 3.7, and T-RACE-2's rule, no read followed by a write on the same table in the same function, holds. S-TOKEN-7 states this, so S-RACE-2 is unchanged.
+**Price.** `test/token-static-scan.test.ts`, outside this feature's files, asserts that the repository writes four statements, that every predicate on the table contains `purpose = $2`, and that nothing reads the table; three of its cases fail on this branch and are reported for its owner rather than edited here. Note added after the review, the sentence before it standing as written: the file set was then extended to that file and to `test/owner-actor-census.test.ts`, the patch reported here was applied in bab372b, and the three cases pass. A verified seal that an anchor is behind on is recorded with the anchor again, as on every verified check (E-3380); that is the one effect of a resolve beyond reading, and it is not a write to the database. Note added after the review, the sentence before it standing as written: the review held the anchor to be a store the library writes, so the resolve no longer records a seal with one (E-3696).
+
+<a id="e-3693"></a>
+
+### A row a resolve refuses is reported with the redemption's occasion
+`E-3693` · token-resolution · alarm, settled
+
+**Context.** A redemption reports a refused token row, a moved address and a written-back link to the security-state alarm with the occasion `token_redemption`, and `checkAccount` raises a broken seal with the occasion it is given. A resolve meets the same rows, and a link that is only resolved and never redeemed would otherwise leave a forged row unreported.
+**Rejected.** No alarm, which silences a database writer for an application that resolves a link and then does not redeem it. A new occasion `token_resolution`, whose list `SecurityStateAlarmOccasion` lives in `src/core/security-state/alarm.ts` and is mapped in `src/core/security-state/runtime.ts`, both outside this feature's files, and whose addition changes a public type an application may switch over.
+**Reason.** The resolve presents the same token for the same flow as the redemption that follows it, and the alarm's deduplication per account, occasion and reason keeps one finding from becoming two deliveries within its window.
+**Price.** The alarm does not tell an operator whether a resolve or a redemption found the row.
+
+<a id="e-3694"></a>
+
+### The resolve has no rate limit
+`E-3694` · token-resolution · rate limiting, settled
+
+**Context.** The resolve runs no HTTP pipeline, so it has no bucket unless it is given one, and a server method has no caller address to key one on. The maintainer asked that it not become an unlimited oracle.
+**Rejected.** A bucket per token hash, which only an attacker who already holds the token fills. A global bucket, which lets one visitor's resolves block every other link of the application.
+**Reason.** A token is 256 random bits (S-RAND-4); NIST SP 800-63B, revision 3, sections 5.1.2.2 and 5.1.3.2, require throttling of a look-up or out-of-band secret only below 64 bits of entropy, so an unlimited resolve helps nobody guess a token, and for a token the caller holds it repeats the one answer a redemption would give. B.9 already exempts the four other resolutions. The redemption that follows stays limited per IP address.
+**Price.** An application that exposes the resolve on a route of its own without a limit lets a visitor make it read the database as often as it is asked: one primary-key lookup for an unknown token, and for a valid one a state read and two MAC checks. Throttling that route is the application's own decision.
+
+<a id="e-3695"></a>
+
+### The address and generation comparisons are restated for the resolve rather than shared with the redemption
+`E-3695` · token-resolution · code structure, revisit
+
+**Context.** `refuseUnlessTheAddressIsStillTheAccounts` and `refuseATokenWrittenBack` in `src/core/flows/artefact.ts` make the two comparisons the resolve needs. The first takes a `OneTimeTokenRedemption`, whose branded `userId` only a removal produces, and both throw `ConcealedError`.
+**Rejected.** Constructing a `OneTimeTokenRedemption` for a row nothing removed, which would forge the proof of ownership S-OWNER-7 keeps to a removal. Catching the thrown error, which still needs the first one's type. Changing `artefact.ts` to take the payload and the account, a file outside this feature.
+**Reason.** The two comparisons are restated in `src/core/token/resolution.ts` over the read `checkAccount` verified, with the same keys, the same constant-time comparison of `token_last` and the same alarms, and the resolve tests hold both: a planted fault in either fails its case. Note added after the review, the sentence before it standing as written: the read the comparisons run over is now the one `verifiedReadOf` verifies, no longer `checkAccount`'s, and E-3696 records why.
+**Price.** Two copies of each rule, and the key `accountEmail` is spelled in two files. A later change to `artefact.ts` could move both functions onto one predicate taking the payload and the read, which this feature reports rather than makes.
+
+<a id="e-3696"></a>
+
+### The resolve verifies the seal against the anchors without recording it with one
+`E-3696` · token-resolution · behaviour fix, settled
+
+**Context.** E-3692 let the resolve check the account with `checkAccount`, and accepted that a verified seal an anchor is behind on is recorded with that anchor again, as every verified check does (E-3380). The review held the anchor to be a store the library writes to, so a resolve that records with it writes, which the requirement forbids: `test/token-resolution-review-anchor.test.ts` mounts an anchor whose floor is absent for every account and found one `recordSeal` call per resolve. `checkedRead`, which decides whether to record, is not exported from `src/core/security-state/runtime.ts`, a file outside this feature.
+**Rejected.** Keeping `checkAccount` and calling the record harmless, which is the reading the review refused. Adding a flag to `checkAccount` that suppresses the record, in a file outside this feature. Not consulting the anchors at all, which would let a seal a writer rolled back below an anchor's floor resolve to an account that the redemption then refuses with `version_below_anchor`, the oracle E-3691 rules out.
+**Reason.** `verifiedReadOf` in `src/core/token/resolution.ts` consults the anchors for their floors, which only reads, reads the state, verifies the seal with `checkSecurityState` and compares it with the floors with `compareWithAnchors`, and treats a broken seal and a version below, a digest unlike or an unavailable anchor as `checkedRead` does: one alarm with the occasion `token_redemption` and the answer `null`. It never calls `recordSealWithAnchors`. The review's case failed before the change and passes after it, and the five planted faults of E-3691 still fail their cases. `test/token-resolution-anchor-floor.test.ts` holds the floors still asked: an anchor whose floor is above the account's seal makes the resolve answer `null` with one alarm `version_below_anchor`, and the case fails when the anchors' answer is replaced by none.
+**Price.** The rule that turns a seal verdict and an anchor verdict into a broken state is spelled twice, in `brokenVerdictOf` in `runtime.ts` and in `brokenReasonOf` in `resolution.ts`, like the two comparisons E-3695 restates. An anchor that is behind stays behind until a check other than a resolve records with it.
