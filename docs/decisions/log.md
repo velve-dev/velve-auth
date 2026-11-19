@@ -18409,6 +18409,16 @@ One consequence of restating in place that the rule does not mention, and that s
 **Reason.** The breaks belong to 2.0.0 and stay true there; what each release must have is notes of its own.
 **Price.** A later major has to name its own notes in the case again, as E-3023 did for 2.0.0.
 
+<a id="e-3714"></a>
+
+### afterEmailChange carries only the account id, runs after the commit and cannot undo the change
+`E-3714` · address-change-notice · plugin point, settled
+
+**Context.** The requirement asks for a plugin point after the change that carries only the account id, so that the application can write its own notification, and for its cell in the producer table. 3.11 and 3.15 G enumerate the points; every `after` point that runs after a commit — `afterSessionCreate` and `afterSignIn` on a sign-in, both after a reset — answers with the plugin's code when it throws and leaves what committed standing. The point is `afterEmailChange`, its event `EmailChangedEvent { readonly userId: string }`, run on the pool after the commit and after the notice.
+**Rejected.** (a) Running it inside the redemption's transaction with the lent context, which would let a refusal roll the change back and turn a notification point into a veto over an address change the owner has proved; the `beforeSessionRevoke` of the first confirmation is already that veto where one is wanted. (b) Carrying the previous or the new address, which the requirement excludes and which would hand a plugin the address the library has just stopped trusting; the new one is a `findUserById` away. (c) Running the hook before the notice, which would let a refusing or crashing plugin keep the previous address from being told. (d) Skipping the hook when the notice failed, which would let the application's mail outage hide a committed change from its own plugins.
+**Reason.** The notice is attempted first and its failure held; the hook runs; then the held failure is rethrown. So neither of the two can keep the other from running, a throwing hook answers as it does at every point, and where both throw the hook's failure is the one answered. The dispatcher's transaction form gains the point too, because `PluginHookDispatcher` is one type, and nothing calls it.
+**Price.** A plugin cannot refuse an address change at this point; one that wants to must do so before the change is requested, which no point offers today. 3.15 G now says eight points, and texts outside this feature's files that say seven are reported rather than changed.
+
 <a id="e-3716"></a>
 
 ### The notice is S-LINK-8, and the counts move to 134 and 138

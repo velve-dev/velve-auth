@@ -30,6 +30,7 @@ const HOOK_POINTS = [
 	"beforeUserCreate",
 	"afterUserCreate",
 	"beforeSessionRevoke",
+	"afterEmailChange",
 ] as const;
 
 type HookPoint = (typeof HOOK_POINTS)[number];
@@ -49,6 +50,7 @@ const EVENT_BY_HOOK_POINT: Readonly<Record<HookPoint, Readonly<Record<string, un
 	beforeUserCreate: { email: "a@example.com", username: null },
 	afterUserCreate: { email: "a@example.com", username: null, userId: "u" },
 	beforeSessionRevoke: { sessionId: "s", userId: "u", reason: "sign_out" },
+	afterEmailChange: { userId: "u" },
 };
 
 function silentDriver(): Driver {
@@ -100,6 +102,7 @@ function listener(
 			beforeUserCreate: at("beforeUserCreate"),
 			afterUserCreate: at("afterUserCreate"),
 			beforeSessionRevoke: at("beforeSessionRevoke"),
+			afterEmailChange: at("afterEmailChange"),
 		},
 	};
 }
@@ -115,8 +118,8 @@ async function fireEveryPoint(
 	return fired;
 }
 
-describe("the dispatcher runs the seven enumerated points (3.11, 3.15 G)", () => {
-	it("offers exactly the seven points and no eighth", () => {
+describe("the dispatcher runs the eight enumerated points (3.11, 3.15 G)", () => {
+	it("offers exactly the eight points and no ninth", () => {
 		const runtime = createPluginRuntime({ plugins: [], services: servicesOver(silentDriver()) });
 
 		expect(Object.keys(runtime.hooks).sort()).toStrictEqual([...HOOK_POINTS].sort());

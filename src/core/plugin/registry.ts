@@ -15,6 +15,7 @@ import {
 import type { SecurityStateAnchorPort } from "../security-state/anchor.js";
 import { asOneReadingOfTheAnchor, securityStateAnchorPortsOf } from "./anchor-ports.js";
 import type {
+	EmailChangedEvent,
 	FrozenContext,
 	PluginHooks,
 	PluginMigration,
@@ -46,6 +47,7 @@ export interface PluginHookDispatcher {
 	afterUserCreate(event: UserCreatedEvent): Promise<void>;
 	/** a `transaction` runs every hook on that transaction's connection and not on the pool's */
 	beforeSessionRevoke(event: SessionRevokeEvent, transaction?: Driver): Promise<void>;
+	afterEmailChange(event: EmailChangedEvent): Promise<void>;
 }
 
 export interface PluginRuntime {
@@ -95,6 +97,7 @@ const HOOK_POINTS: readonly (keyof PluginHooks)[] = [
 	"beforeUserCreate",
 	"afterUserCreate",
 	"beforeSessionRevoke",
+	"afterEmailChange",
 ];
 
 //a plugin written as a class carries its methods on a prototype and must be read (E-901)
@@ -550,6 +553,7 @@ function dispatcher(
 						event,
 						() => SILENT_REVOCATION,
 					),
+		afterEmailChange: (event) => run((hooks) => hooks.afterEmailChange, event),
 	};
 
 	//a revocation from a lent context is announced on the same transaction (E-2584)
@@ -574,6 +578,8 @@ function dispatcher(
 		afterUserCreate: (event) =>
 			runOnTheTransaction(transaction, (hooks) => hooks.afterUserCreate, event, announcedOn),
 		beforeSessionRevoke: (event, lent) => onThePool.beforeSessionRevoke(event, lent ?? transaction),
+		afterEmailChange: (event) =>
+			runOnTheTransaction(transaction, (hooks) => hooks.afterEmailChange, event, announcedOn),
 	});
 
 	return { onThePool, onTheTransaction };
