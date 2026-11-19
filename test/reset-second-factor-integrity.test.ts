@@ -372,6 +372,7 @@ describe("a writer of the database without the root key (S-INTEG-9, S-INTEG-1)",
 
 		expect(await answerOf(refused)).toBe("401 invalid_pending_authentication");
 		expect(await signInStatus(account.email, ANOTHER)).toBe("401 invalid_credentials");
+		expect(alarms.map((alarm) => alarm.reason)).toContain("token_binding_mismatch");
 	});
 
 	it("is refused by the database when it sets one of the two columns alone", async () => {
