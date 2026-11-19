@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { EmailMessage } from "../src/core/auth/config.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
+import { VelveError } from "../src/core/http/error-map.js";
 import { toWebHandler } from "../src/core/http/web-handler.js";
 import type { EmailChangedEvent, VelvePlugin } from "../src/core/plugin/config.js";
 import { createVelveAuth } from "../src/index.js";
@@ -45,6 +46,7 @@ async function send(message: EmailMessage): Promise<void> {
 
 const listener: VelvePlugin = {
 	id: "review_listener",
+	errorCodes: ["review_listener.refused"],
 	hooks: {
 		afterEmailChange: async (event) => {
 			heard.push({ ...event });
@@ -316,5 +318,106 @@ describe("a notice that could not be sent is never lost without a trace (S-LINK-
 		const logged = JSON.stringify(log.lines.slice(before));
 		expect(logged).toContain("the listener is down 9c1e");
 		expect(logged).toContain("the notice mailer is down 7f3a");
+	});
+
+	it("both failing answers the same generic 500 as a failed notice alone, naming neither", async () => {
+		const alone = await signUp("alone@example.com");
+		const aloneToken = await requestChange(alone.session, "alone-new@example.com");
+		failTheNotice = new Error("mailer text alone 2b8d before@example.com");
+		const onlyTheNotice = await normalisedAnswer(await redeemOn(mounted.handler, aloneToken));
+
+		const both = await signUp("both@example.com");
+		const bothToken = await requestChange(both.session, "both-new@example.com");
+		failTheHook = new Error("hook text 4e0a");
+		const bothFailed = await normalisedAnswer(await redeemOn(mounted.handler, bothToken));
+
+		expect(bothFailed).toBe(onlyTheNotice);
+		for (const leaked of [
+			"mailer text",
+			"hook text",
+			"AggregateError",
+			"afterEmailChange",
+			"both@",
+		]) {
+			expect(bothFailed).not.toContain(leaked);
+		}
+		expect(bothFailed).toContain("internal_error");
+	});
+
+	it("a hook refusing with its registered code still answers that code when the notice went out", async () => {
+		const { session } = await signUp("coded@example.com");
+		const token = await requestChange(session, "coded-new@example.com");
+		failTheHook = new VelveError("review_listener.refused");
+
+		const answer = await redeemOn(mounted.handler, token);
+		const body = (await answer.json()) as { error: { code: string } };
+
+		expect({ status: answer.status, code: body.error.code }).toStrictEqual({
+			status: 400,
+			code: "review_listener.refused",
+		});
+		expect(notices().map((each) => each.to)).toStrictEqual(["coded@example.com"]);
+	});
+
+	it("a hook refusing with its registered code while the notice failed answers 500 and logs both", async () => {
+		const { userId, session } = await signUp("codedboth@example.com");
+		const token = await requestChange(session, "codedboth-new@example.com");
+		failTheNotice = new Error("mailer down 61c4");
+		failTheHook = new VelveError("review_listener.refused");
+		const before = log.lines.length;
+
+		const answer = await redeemOn(mounted.handler, token);
+		const body = (await answer.json()) as { error: { code: string } };
+
+		expect({ status: answer.status, code: body.error.code }).toStrictEqual({
+			status: 500,
+			code: "internal_error",
+		});
+		expect(await addressOf(userId)).toBe("codedboth-new@example.com");
+		const logged = log.lines.slice(before);
+		expect(logged).toHaveLength(1);
+		expect(JSON.stringify(logged)).toContain("mailer down 61c4");
+		expect(heard).toStrictEqual([{ userId }]);
+	});
+
+	it("the log line of both failing keeps the code a refusing hook threw", async () => {
+		const { session } = await signUp("codelost@example.com");
+		const token = await requestChange(session, "codelost-new@example.com");
+		failTheNotice = new Error("mailer down 3e95");
+		failTheHook = new VelveError("review_listener.refused");
+		const before = log.lines.length;
+
+		await redeemOn(mounted.handler, token);
+
+		const logged = JSON.stringify(log.lines.slice(before));
+		expect(logged).toContain("mailer down 3e95");
+		expect(logged).toContain("review_listener.refused");
+	});
+
+	it("the direct server call throws the plain internal error and carries neither failure", async () => {
+		const { userId, session } = await signUp("direct@example.com");
+		const token = await requestChange(session, "direct-new@example.com");
+		failTheNotice = new Error("mailer text direct 0d2f");
+		failTheHook = new Error("hook text direct 5a7b");
+		const before = log.lines.length;
+
+		const thrown = await mounted.auth.email
+			.redeemChange({ token, origin: "https://app.example.com" })
+			.then(
+				() => null,
+				(failure: unknown) => failure,
+			);
+
+		expect(thrown).toBeInstanceOf(VelveError);
+		expect((thrown as VelveError).code).toBe("internal_error");
+		expect(thrown).not.toBeInstanceOf(AggregateError);
+		expect((thrown as Error).cause).toBeUndefined();
+		const visible = `${(thrown as Error).message} ${JSON.stringify(thrown)}`;
+		expect(visible).not.toContain("mailer text");
+		expect(visible).not.toContain("hook text");
+		expect(await addressOf(userId)).toBe("direct-new@example.com");
+		const logged = JSON.stringify(log.lines.slice(before));
+		expect(logged).toContain("mailer text direct 0d2f");
+		expect(logged).toContain("hook text direct 5a7b");
 	});
 });
