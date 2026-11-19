@@ -92,7 +92,7 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 		"secret address",
 	"src/core/factor/pending/repository.ts#createPendingAuthenticationRepository.deletePendingAuthenticationByTokenHash":
 		"secret address",
-	//the resolve reads a one-time token row by its hash and removes nothing (S-TOKEN-7, E-3692)
+	//the resolve reads a one-time token row by its hash and removes nothing (E-3692)
 	"src/core/db/repositories/token.ts#createOneTimeTokenRepository.readOneTimeToken":
 		"secret address",
 

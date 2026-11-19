@@ -146,7 +146,7 @@ describe("one_time_token is reached from one file (S-TOKEN-1)", () => {
 		expect(sweep).toContain('["one_time_token", "expires_at"]');
 	});
 
-	//the fifth is the resolve's read, which removes nothing (S-TOKEN-7, E-3692)
+	//the fifth is the resolve's read, which removes nothing (E-3692)
 	it("writes five statements, four of them against the table", () => {
 		expect(statements, listing(statements)).toHaveLength(5);
 		expect(tokenStatements, listing(tokenStatements)).toHaveLength(4);
@@ -230,7 +230,7 @@ describe("the redemption still filters on everything once it is on one line (E-2
 });
 
 describe("nothing reads the row before removing it (S-RACE-2)", () => {
-	//the resolve reads the table and removes nothing, so no read precedes a write in one function (S-TOKEN-7, E-3692)
+	//the resolve reads the table and removes nothing, so no read precedes a write in one function (E-3692)
 	it("reads the table only in the resolve, which writes nothing to it", () => {
 		const reads = tokenStatements.filter((statement) => /\bSELECT\b/i.test(statement));
 		expect(reads.map(asWritten)).toStrictEqual([
