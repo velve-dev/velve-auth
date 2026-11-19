@@ -10368,7 +10368,125 @@ its seal row by SQL and let `sealSecurityState()` seal it in mode `"migrating"`.
 
 ## Resolving a one-time token
 
-> Reserved for the `token-resolution` feature of release 3.0.0 and not written yet. Only that feature writes into this chapter (`CLAUDE.md` §5), and its writer deletes this note when filling it.
+`auth.oneTimeToken.resolve` tells the application which account and which
+purpose a mailed link names, without spending the link. An application uses it
+to send a visitor who opens a link to the right page — a password reset to the
+form that asks for the new password, a magic link to the sign-in — before it
+redeems the token there (architecture 3.7 and 3.15 B.10, S-TOKEN-7). Nothing is
+configured; the method is there in modes `"email"` and `"username_email"`, and
+absent in mode `"username"`, which mails no link.
+
+```ts
+const token = url.searchParams.get("token") ?? "";
+const resolved = await auth.oneTimeToken.resolve({ token });
+if (resolved === null) {
+  return showLinkInvalid();
+}
+switch (resolved.purpose) {
+  case "password_reset": return redirect(`/reset?token=${encodeURIComponent(token)}`);
+  case "magic_link":     return redirect(`/sign-in/link?token=${encodeURIComponent(token)}`);
+  case "email_verify":   return redirect(`/verify?token=${encodeURIComponent(token)}`);
+  case "email_change":   return redirect(`/change-address?token=${encodeURIComponent(token)}`);
+}
+```
+
+### `auth.oneTimeToken.resolve(input)`
+
+```ts
+interface OneTimeTokenNamespace {
+  resolve(input: { token: string }): Promise<ResolvedOneTimeToken | null>;
+}
+
+interface ResolvedOneTimeToken {
+  readonly userId: string;
+  readonly purpose: OneTimeTokenPurpose;
+}
+
+type OneTimeTokenPurpose = "email_verify" | "password_reset" | "email_change" | "magic_link";
+```
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `token` | `string` | the token exactly as the mail carried it, the value a redemption takes as `token` |
+
+| Answer | When |
+|---|---|
+| `{ userId, purpose }` | the token's row is standing, its deadline has not passed, its token MAC verifies under the purpose it carries, the account exists and its seal holds, the address the link was mailed to is still the account's, the token generation the link binds is still the account's for its purpose, and the account is not disabled |
+| `null` | anything else |
+
+`OneTimeTokenNamespace`, `ResolvedOneTimeToken` and `OneTimeTokenPurpose` are
+exported from `@velve/auth` as types. `purpose` names one of the purposes in the
+table above; a purpose a later release adds is resolved without a change to the
+call. The method throws only for a fault that is not about the token — a
+database that cannot be reached — and then with `internal_error`, mapped and
+logged like every other failure of a method without a route (E-2832).
+
+### One answer for every token that would not work
+
+`null` is the answer for a token that was never issued, one that is not a string
+at all, one that expired, one already redeemed, one a newer request of the same
+purpose replaced, the cover row an unknown address is answered with, a row a
+database writer inserted, moved to another purpose or account or whose payload
+it changed, a link written back after its redemption, a link mailed while a
+writer had moved the account's address, a link of an account whose sealed state
+was changed outside the library, a link of an account that was deleted, and a
+link of a disabled account. They cannot be told apart, which is the rule 3.7
+states for the redemption.
+
+The rule behind the list is that the resolve answers `null` wherever a
+redemption of the same token would answer `invalid_token` before the token takes
+effect, and never says more than the redemption would. A disabled account is the
+case that needs it: the redemption answers its link with `invalid_token`, so a
+resolve that named the account would tell the holder of the link that the
+account is disabled (E-3691). Enabling the account again makes a link that was
+not redeemed in between resolve again.
+
+A refusal that only the redemption of one purpose knows is not anticipated: an
+address-change link whose new address another account has taken in the
+meantime still resolves, and its redemption answers `invalid_token`. The link is
+mailed to that new address, so only its holder can ask (E-3691).
+
+A row the resolve refuses because its MAC does not verify, its address moved or
+its generation was written back, and an account whose seal does not hold, raise
+the security-state alarm as a redemption would, with the occasion
+`token_redemption` (E-3693).
+
+### What it does not do
+
+- **It spends nothing.** The row stays as it was: no deadline is extended, no MAC
+  is rebound, no generation is moved. The link can be resolved as often as the
+  application likes and then redeemed once; the redemption still consumes it with
+  the one `DELETE … RETURNING` of 3.7 and reads nothing the resolve found.
+- **It writes nothing and locks nothing.** It sends reading statements only, opens
+  no transaction and takes neither a row lock nor the account lock, so a
+  redemption or a change of the same account never waits for it. The one effect
+  beyond reading is the one every verified check of an account has: a seal an
+  anchor is behind on is recorded with the anchor again (E-3692).
+- **It has no route and no client call.** The HTTP handler answers no path for
+  it and `createVelveClient` has no method for it. What a visitor learns about a
+  link is the application's decision; a route would give the identifier of an
+  account to everyone holding a link (E-3690).
+- **Its `userId` is no proof of ownership.** No method accepts it as an actor.
+  When the link takes effect, the account is still the one the row removed on
+  redemption names (S-TOKEN-4).
+- **It has no rate limit.** A token carries 256 random bits, so resolving
+  without limit helps nobody guess one, and the redemption that follows is
+  limited per IP address. An application that puts the resolve behind a route of
+  its own decides that route's limit (E-3694).
+
+### How it reads the row
+
+The repository method behind it is `readOneTimeToken`, on the
+`OneTimeTokenRepository` that `createOneTimeTokenRepository` returns:
+
+| Method | Statement and result |
+|---|---|
+| `readOneTimeToken({ tokenSha256, purposes })` | `SELECT purpose, user_id, payload::text AS payload_text, token_mac, token_mac_key_version FROM … WHERE token_sha256 = $1 AND purpose = ANY($2::text[]) AND expires_at > now()`; a `ReadOneTimeToken` — `{ purpose; userId; storedPayload; tokenMac; tokenMacKeyVersion }` — whose MAC the caller checks before using it, or `null`. It removes nothing and carries no `accept()`, because only a removal proves an owner |
+
+`purposes` is the purpose list itself, so the statement filters on `purpose` as
+S-TOKEN-1 asks and the purpose a row answers with is the one its MAC binds. The
+list is handed to the driver as a PostgreSQL array literal, since a driver is
+given no JavaScript array (E-3692).
 
 ## The address change notice
 
