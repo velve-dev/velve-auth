@@ -17,6 +17,7 @@ const PURPOSE_OF_COLUMN = {
 	"identity.refresh_token_enc": "oauth-token-enc",
 	"identity.id_token_enc": "oauth-token-enc",
 	"oauth_flow.pkce_verifier_enc": "pkce-enc",
+	"pending_authentication.new_password_phc": "password-enc",
 } as const satisfies Readonly<Record<string, EncryptionKeyPurpose>>;
 
 /** a column that holds an envelope, named as its table and column without the schema */

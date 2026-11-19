@@ -169,8 +169,10 @@ const MINTED_ONLY_IN: Readonly<Record<string, readonly string[]>> = {
 	StoredOneTimeToken: ["core/db/repositories/token.ts"],
 	ConsumedOAuthFlow: ["core/oauth/flow-repository.ts"],
 	ConsumedRecoveryCode: ["core/factor/recovery/repository.ts"],
+	ConsumedPendingReset: ["core/factor/pending/repository.ts"],
 	UserId: [
 		"core/db/repositories/token.ts",
+		"core/factor/pending/repository.ts",
 		"core/factor/recovery/repository.ts",
 		"core/oauth/flow-repository.ts",
 	],
@@ -179,6 +181,7 @@ const MINTED_ONLY_IN: Readonly<Record<string, readonly string[]>> = {
 const EVERY_PROOF_TYPE = [
 	"Actor",
 	"ConsumedOAuthFlow",
+	"ConsumedPendingReset",
 	"ConsumedRecoveryCode",
 	"OneTimeTokenRedemption",
 	"RedeemedOneTimeToken",
@@ -203,6 +206,7 @@ describe("T-OWNER-7: a proof of ownership is asserted only where it is produced 
 		expect([...brandsDeclaredIn(tree.get(ACTOR_MODULE) ?? "")].sort()).toStrictEqual([
 			"Actor",
 			"ConsumedOAuthFlow",
+			"ConsumedPendingReset",
 			"ConsumedRecoveryCode",
 			"RedeemedOneTimeToken",
 			"ResolvedSession",

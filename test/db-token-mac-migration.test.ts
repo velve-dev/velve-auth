@@ -13,6 +13,11 @@ import { openTestConnection, type TestConnection } from "./db-postgres-connectio
  */
 
 let connection: TestConnection;
+
+// A later migration is not this file's subject, so the plan it runs ends at the one it is about.
+function upToMigrationFour() {
+	return coreMigrations("email").filter((migration) => migration.version <= 4);
+}
 let schema: string;
 
 beforeAll(async () => {
@@ -79,7 +84,7 @@ describe("migration 4, the token MAC columns", () => {
 		const report = await runMigrations({
 			driver: connection,
 			schema,
-			migrations: coreMigrations("email"),
+			migrations: upToMigrationFour(),
 		});
 		const columns = await connection.query<{ table_name: string; column_name: string }>(
 			`SELECT table_name, column_name FROM information_schema.columns
@@ -175,7 +180,7 @@ describe("migration 4 against a 1.x sign-in in flight", () => {
 				const migrating = runMigrations({
 					driver: connection,
 					schema: flowSchema,
-					migrations: coreMigrations("email"),
+					migrations: upToMigrationFour(),
 				})
 					.then((report) => report.appliedVersions)
 					.catch((failure: unknown) => `failed: ${(failure as Error).message}`);
