@@ -5395,7 +5395,7 @@ The difference from a rollback is one window: a process that dies between the
 commit and the compensation leaves a live artefact whose message never arrived.
 It expires on its own deadline like any other.
 
-### The six message kinds
+### The seven message kinds
 
 Declared in the configuration chapter as `EmailMessage`. Which flow sends which:
 
@@ -5407,6 +5407,7 @@ Declared in the configuration chapter as `EmailMessage`. Which flow sends which:
 | `magic_link` | `signIn.magicLink.request`, known address | yes |
 | `sign_up_attempt_on_existing_account` | sign-up on a taken address | **no** |
 | `request_for_unknown_address` | reset or magic link, unknown address | **no** |
+| `email_change_notice` | `email.redeemChange`, to the previous address, after the change has committed — see [The address change notice](#the-address-change-notice) | **no** |
 
 The fifth carries no token on purpose, and that satisfies `S-ENUM-4` rather
 than deviating from it: the library builds no URL on any path, so the
@@ -7255,7 +7256,7 @@ prototype still reaches the route the way it did before — which is what the
 copied, so a plugin that mutates its own declaration after `createVelveAuth`
 returns changes nothing that runs.
 
-### The seven hook points
+### The eight hook points
 
 ```ts
 beforeSignIn(event: SignInEvent, context: FrozenContext): Promise<void>
@@ -7265,6 +7266,7 @@ afterSessionCreate(event: SessionCreatedEvent, context: FrozenContext): Promise<
 beforeUserCreate(event: UserCreateEvent, context: FrozenContext): Promise<void>
 afterUserCreate(event: UserCreatedEvent, context: FrozenContext): Promise<void>
 beforeSessionRevoke(event: SessionRevokeEvent, context: FrozenContext): Promise<void>
+afterEmailChange(event: EmailChangedEvent, context: FrozenContext): Promise<void>
 ```
 
 Every return type is `Promise<void>`, and that is the whole of what "a listener
@@ -7280,7 +7282,7 @@ answers `500 internal_error` without the plugin's text.
 
 #### Which points have a producer
 
-The dispatcher runs all seven and the paragraph above describes all seven, but a
+The dispatcher runs all eight and the paragraph above describes all eight, but a
 point only fires if an operation reaches it. **This table is the one place that
 says which do**, and a plugin registering a point that does not is told nothing
 at start.
@@ -7294,6 +7296,7 @@ at start.
 | `beforeUserCreate` | **yes** |
 | `afterUserCreate` | **yes** |
 | `beforeSessionRevoke` | **yes** |
+| `afterEmailChange` | **yes** |
 
 Which operations reach a point is stated in the chapter of the feature that
 built them; `beforeSessionRevoke`'s are named below. **The cell is a yes or
@@ -10372,7 +10375,127 @@ its seal row by SQL and let `sealSecurityState()` seal it in mode `"migrating"`.
 
 ## The address change notice
 
-> Reserved for the `address-change-notice` feature of release 3.0.0 and not written yet. Only that feature writes into this chapter (`CLAUDE.md` §5), and its writer deletes this note when filling it.
+When `email.redeemChange` confirms a change of address, the library tells the
+address the account had until then, through the same `email.send` every other
+message goes through, and then tells the plugins through a hook point of their
+own. Both happen after the change has committed, both on every confirmed change,
+and neither has an option: an account takeover usually starts by moving the
+address, and the previous address is the one place its owner still reads
+(S-LINK-8, E-3710).
+
+### The message: `email_change_notice`
+
+```ts
+{ kind: "email_change_notice"; to: string; userId: string }
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `kind` | `"email_change_notice"` | the seventh member of `EmailMessage` |
+| `to` | `string` | the address the account held when the change was confirmed, read under the account lock in the confirmation's own transaction |
+| `userId` | `string` | the account whose address changed |
+
+The message says that the address has changed and nothing else. It carries **no
+token and no link**: there is nothing to confirm and nothing to undo through it,
+and the library builds no URLs anyway. It carries **not the new address**, in full
+or masked: whoever reads the old mailbox is not necessarily the owner of the
+account, and a mailbox someone has taken over would otherwise learn where the
+account went. The owner knows what they changed it to (E-3711). The template is
+the application's: "the email address of your account was changed; if that was
+not you, contact us", with a link to the application's own support or sign-in
+page, which needs no artefact.
+
+`to` is the address the confirmation itself read, under `FOR NO KEY UPDATE` on
+the account row and in the same statement that verified the seal, so it is the
+address the change replaced and not one read earlier in the request (E-3712).
+
+### When it is sent
+
+Exactly once for each change that commits, on the HTTP route
+`POST /email/redeem-change` and on the direct call
+`auth.email.redeemChange` alike, after the transaction has committed and before
+the answer is built.
+
+| Redemption | Notice | `afterEmailChange` |
+|---|---|---|
+| a change that commits | one, to the previous address | once |
+| an invented, spent or replayed token | none | not called |
+| the losing one of two simultaneous redemptions of one token | none | not called |
+| a target address another account took after the request | none | not called |
+| a token presented for a disabled account | none | not called |
+| a change to the address the account already holds | none | not called |
+
+The redemption that finds the target taken still answers byte for byte as an
+invented token does (S-ENUM-5): neither of them sends anything, so the notice adds
+no difference between them. A change to the address the account already holds
+commits — it confirms that address — but moves nothing, so there is nothing to
+tell (E-3715). There is always a previous address: the route exists only in the
+modes `email` and `username_email`, where `user_identity_mode` requires one on
+every account.
+
+No other operation sends it. A first confirmation through
+`email.redeemVerification` or a magic link confirms the address the account
+already has, and a password reset does not touch the address.
+
+### When `send` throws on it
+
+The answer is `500 internal_error`, with nothing of the callback's message in it,
+and **the change stays committed**: the new address, its confirmation, the spent
+token and whatever the first confirmation of the new address removed (S-LINK-4).
+There is nothing to undo, because the notice carries no artefact; and undoing the
+change itself would take a second sealing transaction, after the owner has
+already proved the new address, to protect a message that only reports it. The
+hook below still runs. The link answers `invalid_token` from then on, and the
+next read of the account shows the new address (E-3713).
+
+This is the one message whose failure does not take the operation back with it,
+and it is the same rule every `after` hook point follows: once a transaction has
+committed, a failure after it decides the answer and nothing else.
+
+### Not sending it
+
+There is no option. An application that does not want to deliver the notice
+drops the kind in its own callback:
+
+```ts
+email: {
+  send: async (message) => {
+    if (message.kind === "email_change_notice") return
+    await deliver(message)
+  },
+}
+```
+
+A `send` that switches over `message.kind` exhaustively stops compiling until it
+handles the new kind, which is the intended way to learn about it (E-3710).
+
+### `afterEmailChange`
+
+```ts
+afterEmailChange?: (event: EmailChangedEvent, context: FrozenContext) => Promise<void>
+
+interface EmailChangedEvent { readonly userId: string }
+```
+
+The eighth hook point of [`PluginHooks`](#the-eight-hook-points), for an
+application that writes its own notification or its own audit entry. The event
+carries **only the account id** — neither the previous nor the new address. A
+hook that needs the new one reads the account through
+`context.repositories.findUserById`; the previous one is not offered, because it
+is the address the library has just stopped trusting (E-3714).
+`EmailChangedEvent` is exported as a type from `@velve/auth`.
+
+It runs once per committed change, after the transaction has committed and after
+the notice has been handed to `send`, on the plugin's ordinary context: the
+transaction is over, so there is no lent connection, and `findUserById` already
+sees the new address. Plugins run in dependency order, as at every point.
+
+**It cannot veto.** A hook that throws answers the request with the plugin's
+registered code, or with `500 internal_error` for an unregistered one, as at
+every point; the change stays committed and the notice has already gone. The
+notice runs first so that a refusing plugin cannot keep the previous address from
+being told, and a failed notice does not keep the plugins from being told either.
+Where both fail, the answer carries the hook's failure.
 
 ## The no-recovery switch
 
