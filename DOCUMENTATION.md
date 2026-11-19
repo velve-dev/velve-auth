@@ -6125,7 +6125,7 @@ nothing else would tell you.
 | `plugin_id_duplicated` | two plugins claim the same `id` |
 | `plugin_dependency_missing` | a `dependsOn` names a plugin that is not configured |
 | `plugin_dependency_cycle` | the `dependsOn` graph has a cycle (3.11) |
-| `plugin_route_conflict` | a plugin route collides with a core route or with another plugin's, or the plugin's `id` or a route name's first segment is one of the nineteen namespaces 3.15 B gives the instance |
+| `plugin_route_conflict` | a plugin route collides with a core route or with another plugin's, or the plugin's `id` or a route name's first segment is one of the twenty namespaces 3.15 B gives the instance |
 | `plugin_field_unknown` | a plugin carries a field the interface does not enumerate, at the top level or among `hooks` |
 | `plugin_anchor_incomplete` | a plugin's `securityStateAnchor` is not an object carrying the functions `recordSeal` and `minimumVersion` (E-3174) |
 | `plugin_route_reads_a_core_cookie` | a plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` |
@@ -6151,7 +6151,7 @@ through the optional field rather than by branching on the code first.
 
 `claimed` is what the two sides both claimed, in the form the collision was
 found in: a route name (`session.list`), a folded method and path
-(`POST /sign-out`), or one of the nineteen surface namespaces of 3.15 B
+(`POST /sign-out`), or one of the twenty surface namespaces of 3.15 B
 (`session`). `contributors` is the two of them, in a fixed order: the side that
 already held the claim first, and the side that arrived second. A plugin appears
 under its own `id`; the library appears as `THE_CORE`, which is exported beside
@@ -6804,7 +6804,7 @@ route. All but one are decided when `createVelveAuth` runs;
 | `plugin_table_prefix_conflict` | One plugin's `id` is another's table prefix — `audit` and `audit_trail` — so `audit_trail_entry` belongs to both of them (S-DEFAULT-5). |
 | `plugin_dependency_missing` | A `dependsOn` names a plugin that is not configured, so nothing can order the two. |
 | `plugin_dependency_cycle` | The `dependsOn` graph has a cycle, which has no topological order (3.11). |
-| `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route or with another plugin's, or the plugin's `id` — or the first segment of one of its route names — is one of the nineteen namespaces 3.15 B gives the instance. Those nineteen are a list, `SURFACE_NAMESPACES` in `instance.ts`, and reading the built surface instead released five of them (E-779). |
+| `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route or with another plugin's, or the plugin's `id` — or the first segment of one of its route names — is one of the twenty namespaces 3.15 B gives the instance. Those twenty are a list, `SURFACE_NAMESPACES` in `instance.ts`, and reading the built surface instead released five of them (E-779). |
 | `plugin_field_unknown` | The plugin carries a field the interface does not enumerate — at the top level or among `hooks`. |
 | `plugin_anchor_incomplete` | `securityStateAnchor` is `null`, not an object, or lacks a function `recordSeal` or `minimumVersion`. An anchor that cannot be asked would refuse every check, so it refuses the start instead (E-3174). |
 | `plugin_route_reads_a_core_cookie` | A plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` — as an own property or on a prototype. |
@@ -10464,9 +10464,10 @@ the security-state alarm as a redemption would, with the occasion
   the one `DELETE … RETURNING` of 3.7 and reads nothing the resolve found.
 - **It writes nothing and locks nothing.** It sends reading statements only, opens
   no transaction and takes neither a row lock nor the account lock, so a
-  redemption or a change of the same account never waits for it. The one effect
-  beyond reading is the one every verified check of an account has: a seal an
-  anchor is behind on is recorded with the anchor again (E-3692).
+  redemption or a change of the same account never waits for it. It asks a
+  plugin's security-state anchor for its floor and compares the seal with it, as
+  every check does, but it never records a seal with an anchor that is behind,
+  which every other verified check of an account does (E-3696).
 - **It has no route and no client call.** The HTTP handler answers no path for
   it and `createVelveClient` has no method for it. What a visitor learns about a
   link is the application's decision; a route would give the identifier of an
