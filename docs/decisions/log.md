@@ -18466,7 +18466,7 @@ One consequence of restating in place that the rule does not mention, and that s
 
 **Context.** `refuseUnlessTheAddressIsStillTheAccounts` and `refuseATokenWrittenBack` in `src/core/flows/artefact.ts` make the two comparisons the resolve needs. The first takes a `OneTimeTokenRedemption`, whose branded `userId` only a removal produces, and both throw `ConcealedError`.
 **Rejected.** Constructing a `OneTimeTokenRedemption` for a row nothing removed, which would forge the proof of ownership S-OWNER-7 keeps to a removal. Catching the thrown error, which still needs the first one's type. Changing `artefact.ts` to take the payload and the account, a file outside this feature.
-**Reason.** The two comparisons are restated in `src/core/token/resolution.ts` over the read `checkAccount` verified, with the same keys, the same constant-time comparison of `token_last` and the same alarms, and the resolve tests hold both: a planted fault in either fails its case.
+**Reason.** The two comparisons are restated in `src/core/token/resolution.ts` over the read `checkAccount` verified, with the same keys, the same constant-time comparison of `token_last` and the same alarms, and the resolve tests hold both: a planted fault in either fails its case. Note added after the review, the sentence before it standing as written: the read the comparisons run over is now the one `verifiedReadOf` verifies, no longer `checkAccount`'s, and E-3696 records why.
 **Price.** Two copies of each rule, and the key `accountEmail` is spelled in two files. A later change to `artefact.ts` could move both functions onto one predicate taking the payload and the read, which this feature reports rather than makes.
 
 <a id="e-3696"></a>
