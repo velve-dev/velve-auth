@@ -196,7 +196,7 @@ describe("a recovery with a waiting period (S-INTEG-12, S-LINK-9)", () => {
 		expect(await countOf(bench, "webauthn_credential", account.userId)).toBe(0);
 	}, 30_000);
 
-	it("asks a session that is not fresh to sign in again before it cancels", async () => {
+	it("lets a session that is no longer fresh cancel too, as the owner may not be able to sign in again", async () => {
 		const stale = await openRecoveryBench("pkrecovery_stale", {
 			session: { freshnessWindow: "1s" },
 		});
@@ -213,11 +213,48 @@ describe("a recovery with a waiting period (S-INTEG-12, S-LINK-9)", () => {
 				postTo("/passkey-recovery/cancel", {}, withSession(account.sessionToken)),
 			);
 
-			expect(await errorCodeOf(answer)).toBe("freshness_required");
-			expect(await countOf(stale, "passkey_recovery", account.userId)).toBe(1);
+			expect(answer.status).toBe(204);
+			expect(await countOf(stale, "passkey_recovery", account.userId)).toBe(0);
 		} finally {
 			await stale.close();
 		}
+	}, 30_000);
+
+	it("voids a challenge a second start issued, so no registration finishes after a cancel", async () => {
+		const account = await signUp(bench);
+		const codes = await generateCodes(bench, account);
+		bench.waitingPeriod = 3600;
+		const first = await startedRecovery(
+			bench,
+			await mailedRecoveryLink(bench, account.email),
+			codes[0] ?? "",
+		);
+		const second = await startedRecovery(
+			bench,
+			await mailedRecoveryLink(bench, account.email),
+			codes[1] ?? "",
+		);
+		const firstKey = await newAuthenticator();
+		const secondKey = await newAuthenticator();
+		const held = await finishRecovery(
+			bench,
+			first.challengeToken,
+			await firstKey.attest({ challenge: first.challengeToken }),
+		);
+		expect(held.status).toBe(200);
+
+		const cancelled = await bench.handler(
+			postTo("/passkey-recovery/cancel", {}, withSession(account.sessionToken)),
+		);
+		const late = await finishRecovery(
+			bench,
+			second.challengeToken,
+			await secondKey.attest({ challenge: second.challengeToken }),
+		);
+
+		expect(cancelled.status).toBe(204);
+		expect([late.status, await errorCodeOf(late)]).toStrictEqual([400, "passkey_recovery_failed"]);
+		expect(await countOf(bench, "passkey_recovery", account.userId)).toBe(0);
 	}, 30_000);
 });
 

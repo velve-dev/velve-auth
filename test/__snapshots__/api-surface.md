@@ -176,7 +176,7 @@ type VelveRouteTable = readonly [Route<"signOut", "/sign-out", {} & {}, void, "i
   challengeToken: string;
   label: string;
   response: Record<string, unknown>;
-} & {}, FinishPasskeyRecoveryResult, "invalid_input" | "origin_not_allowed" | "passkey_recovery_failed" | "rate_limited">, Route<"passkeyRecovery.pending", "/passkey-recovery", {} & {}, PendingPasskeyRecovery | null, "account_disabled" | "origin_not_allowed" | "rate_limited" | "session_required">, Route<"passkeyRecovery.cancel", "/passkey-recovery/cancel", {} & {}, void, "account_disabled" | "freshness_required" | "origin_not_allowed" | "rate_limited" | "session_required">];
+} & {}, FinishPasskeyRecoveryResult, "invalid_input" | "origin_not_allowed" | "passkey_recovery_failed" | "rate_limited">, Route<"passkeyRecovery.pending", "/passkey-recovery", {} & {}, PendingPasskeyRecovery | null, "account_disabled" | "origin_not_allowed" | "rate_limited" | "session_required">, Route<"passkeyRecovery.cancel", "/passkey-recovery/cancel", {} & {}, void, "account_disabled" | "origin_not_allowed" | "rate_limited" | "session_required">];
 /** what a call needs from its own route row, with no handler reachable from it */
 interface ClientRoute {
   readonly method: HttpMethod;
