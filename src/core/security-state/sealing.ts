@@ -57,6 +57,8 @@ export interface GenerationMoves {
 	readonly token?: { readonly purpose: OneTimeTokenPurpose; readonly last: Uint8Array };
 	/** the purposes whose every outstanding one-time token the change retires, with no row that moved them */
 	readonly retire?: readonly OneTimeTokenPurpose[];
+	/** set where the change retires every pending authentication of the account, with no row that moved it */
+	readonly retirePending?: true;
 }
 
 /** the version, session epoch and generations a change's new seal carries */
@@ -184,6 +186,9 @@ function movedGenerations(current: SealedGenerations, moves: GenerationMoves): S
 	const moved = generationsMovedByRows(current, moves);
 	return {
 		...moved,
+		...(moves.retirePending === true
+			? { attemptGeneration: drawGenerationOtherThan(moved.attemptGeneration), attemptLast: null }
+			: {}),
 		tokenGenerations: retiredGenerations(moved.tokenGenerations, moves.retire ?? []),
 	};
 }
@@ -218,6 +223,7 @@ function movesAnything(moves: GenerationMoves): boolean {
 		moves.session === true ||
 		moves.attempt !== undefined ||
 		moves.token !== undefined ||
+		moves.retirePending === true ||
 		(moves.retire ?? []).length > 0
 	);
 }

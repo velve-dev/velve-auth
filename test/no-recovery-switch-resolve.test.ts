@@ -79,17 +79,14 @@ describe("resolving a link of a switched-off account (S-ENUM-9, S-TOKEN-7)", () 
 		});
 	});
 
-	it("resolves the account's link again once recovery is back on, as its redemption then acts on it", async () => {
+	it("resolves a link minted while recovery was off to nothing once it is back on, as its redemption refuses it", async () => {
 		const account = await signUp();
 		await mounted.auth.user.disableRecovery({ userId: account.userId });
 		const magic = await mintedLink(account, "magic_link");
 		await mounted.auth.user.enableRecovery({ userId: account.userId });
 
-		expect(await mounted.auth.oneTimeToken.resolve({ token: magic })).toStrictEqual({
-			userId: account.userId,
-			purpose: "magic_link",
-		});
+		expect(await mounted.auth.oneTimeToken.resolve({ token: magic })).toBeNull();
 		const redeemed = await mounted.handler(postTo("/sign-in/magic-link/redeem", { token: magic }));
-		expect(redeemed.status).toBe(200);
+		expect(redeemed.status).toBe(400);
 	});
 });

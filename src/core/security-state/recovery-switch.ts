@@ -22,7 +22,11 @@ export async function setRecoveryDisabled(
 		{
 			//the switch removes ways back in and leaves who is signed in as it was (E-3735)
 			epoch: "keep",
-			moves: () => (input.disabled ? { retire: LINKS_INTO_THE_ACCOUNT } : {}),
+			//a link or held back reset from either side of the switch never outlives a change of it (E-3747)
+			moves: () =>
+				input.disabled
+					? { retire: LINKS_INTO_THE_ACCOUNT, retirePending: true }
+					: { retire: LINKS_INTO_THE_ACCOUNT },
 			write: async (tx) => {
 				await createUserRepository({ driver: tx, schema: runtime.schema }).setRecoveryDisabledAt({
 					actor,
