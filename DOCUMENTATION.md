@@ -1771,7 +1771,7 @@ indistinguishable from a wrong password there (L-4). It appears only when an
 existing session is resolved, where the caller has already proved the account is
 theirs.
 
-Ten of these codes are merged: several internal reasons produce one code, one
+Eleven of these codes are merged: several internal reasons produce one code, one
 message and one body, and the true reason goes to `log` only. Code throwing a
 concealed failure raises `ConcealedError(reason)` and never chooses the visible
 code itself.
@@ -1787,6 +1787,7 @@ code itself.
 | `oauth_flow_invalid` | `state_not_found`, `state_expired`, `pkce_mismatch`, `nonce_mismatch`, `issuer_mismatch`, `id_token_signature_invalid`, `user_disabled_on_oauth_flow`, `session_issue_missed_on_oauth_flow` |
 | `webauthn_challenge_invalid` | `challenge_not_found`, `challenge_expired`, `challenge_purpose_mismatch` |
 | `webauthn_credential_rejected` | `credential_unknown`, `signature_invalid`, `rp_id_mismatch`, `origin_mismatch`, `user_not_verified`, `user_disabled_on_webauthn_assertion`, `session_issue_missed_on_passkey_sign_in`, `session_issue_missed_on_passkey_second_factor` |
+| `passkey_recovery_failed` | `passkey_recovery_link_refused`, `passkey_recovery_code_refused`, `passkey_recovery_refused_for_account`, `passkey_recovery_registration_refused`, `passkey_recovery_refused`, `broken_state_on_passkey_recovery` |
 | `proof_of_work_required` | `proof_of_work_missing`, `proof_of_work_malformed`, `proof_of_work_forged`, `proof_of_work_unsolved`, `proof_of_work_expired`, `proof_of_work_spent` |
 
 Two concealed reasons answer with a code that is not merged with others:
@@ -11425,7 +11426,7 @@ begins a recovery.
 | `GET /passkey-recovery` | `auth.passkeyRecovery.pending()` | session | — | address | `PendingPasskeyRecovery \| null` |
 | `POST /passkey-recovery/cancel` | `auth.passkeyRecovery.cancel()` | session | — | address | `204` |
 
-Each method takes the six call fields beside its own input, like every server
+Each method takes the seven call fields beside its own input, like every server
 method built from a route (`origin` required). `PasskeyRecoveryNamespace` is the
 type of `auth.passkeyRecovery`; it exists on `VelveAuth<"email">` and
 `VelveAuth<"username_email">` and not on `VelveAuth<"username">`. The client has

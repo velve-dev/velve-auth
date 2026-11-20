@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { solveProofOfWork } from "../src/client/proof-of-work-solver.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import type { AnyRoute } from "../src/core/http/route.js";
 import { createServerMethodOfAnyRoute } from "../src/core/http/server-method.js";
+import { PROOF_OF_WORK_HEADER, writtenSolution } from "../src/core/pow/work.js";
 import { rowsServedUnder } from "./architecture-route-table.js";
 import { type MountedAuth, mountAuthInMode, TEST_ORIGIN } from "./auth-fixtures.js";
 import { dropSchema } from "./db-fixtures.js";
@@ -37,6 +39,7 @@ const READING_ROUTES = [
 	"identity.list",
 	"pending.read",
 	"passkeyRecovery.pending",
+	"proofOfWork.challenge",
 ];
 
 const EXEMPT_ROUTES = ["signIn.oauth.callback", "signIn.oauth.callbackFormPost"];
@@ -45,6 +48,7 @@ const SITE_FORMS = ["same-origin", "same-site", "cross-site", "none", null] as c
 
 const QUERY_BY_ROUTE: Readonly<Record<string, string>> = {
 	"username.isAvailable": "?username=someone",
+	"proofOfWork.challenge": "?route=signUp.withPassword",
 };
 
 let mounted: MountedAuth<"username_email">;
@@ -68,11 +72,26 @@ beforeAll(async () => {
 				//the five recovery rows are served only where webauthn.recovery is configured (E-3761)
 				recovery: { waitingPeriodInSeconds: () => 0 },
 			},
+			//the challenge row is served only where the proof of work is configured (E-3670)
+			rateLimit: {
+				proofOfWork: { difficulty: () => 0, signInFailuresBeforeProof: () => 100 },
+			},
 		},
 	);
-	const signedUp = await mounted.handler(
-		postTo("/sign-up", { email: "holder@example.com", username: "holder", password: PASSWORD }),
+	const signUp = postTo("/sign-up", {
+		email: "holder@example.com",
+		username: "holder",
+		password: PASSWORD,
+	});
+	const issued = await mounted.auth.proofOfWork.challenge({
+		route: "signUp.withPassword",
+		origin: TEST_ORIGIN,
+	});
+	signUp.headers.set(
+		PROOF_OF_WORK_HEADER,
+		writtenSolution(issued.challenge, await solveProofOfWork(issued)),
 	);
+	const signedUp = await mounted.handler(signUp);
 	expect(signedUp.status, await signedUp.clone().text()).toBe(200);
 	sessionToken = sessionTokenOf(signedUp);
 }, 120_000);
@@ -123,6 +142,18 @@ async function serialised(response: Response): Promise<string> {
 		.sort()
 		.join("\n");
 	return `${response.status}\n${headers}\n${await response.text()}`;
+}
+
+/**
+ * Two challenges are never equal: each carries 32 fresh random bytes and the MAC over them (3.9).
+ * Only those two fields are masked, so the status, the headers, the version, the difficulty and
+ * the expiry of the two answers are still compared byte for byte (E-3670).
+ */
+function withoutFreshRandomness(answer: string): string {
+	return answer.replace(
+		/("challenge":"\d+\.\d+\.\d+)\.[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}"/,
+		'$1.<value>.<mac>"',
+	);
 }
 
 async function codeOfServerCall(route: AnyRoute, origin: string | null): Promise<string> {
@@ -194,7 +225,12 @@ describe("T-CSRF-1 over every row of 3.15 D.3, on both paths", () => {
 		const exempt = mounted.auth.routes.filter((route) => route.originCheck !== "checked");
 
 		expect(mounted.auth.routes).toHaveLength(
-			rowsServedUnder({ mode: "username_email", webauthn: true, passkeyRecovery: true }).length,
+			rowsServedUnder({
+				mode: "username_email",
+				webauthn: true,
+				passkeyRecovery: true,
+				proofOfWork: true,
+			}).length,
 		);
 		expect(exempt.map((route) => route.name).sort()).toStrictEqual([...EXEMPT_ROUTES].sort());
 	});
@@ -220,11 +256,13 @@ describe("T-CSRF-1 over every row of 3.15 D.3, on both paths", () => {
 		const reading = mounted.auth.routes.filter((route) => READING_ROUTES.includes(route.name));
 		const pairs: string[][] = [];
 		for (const route of reading) {
-			const sameOrigin = await serialised(
-				await mounted.handler(requestTo(route, { "Sec-Fetch-Site": "same-origin" })),
+			const sameOrigin = withoutFreshRandomness(
+				await serialised(
+					await mounted.handler(requestTo(route, { "Sec-Fetch-Site": "same-origin" })),
+				),
 			);
-			const allowed = await serialised(
-				await mounted.handler(requestTo(route, { Origin: TEST_ORIGIN })),
+			const allowed = withoutFreshRandomness(
+				await serialised(await mounted.handler(requestTo(route, { Origin: TEST_ORIGIN }))),
 			);
 			pairs.push([route.name, sameOrigin, allowed]);
 		}
