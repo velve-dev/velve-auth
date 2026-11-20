@@ -43,7 +43,7 @@ Velve Auth ist eine Anmeldebibliothek für TypeScript und PostgreSQL, die im Pro
 
 **Die Laufzeit.** Reines TypeScript, kein eigenes Rust/WASM-Modul, sechs Abhängigkeiten ohne native Bindungen. Gemessen auf 2 vCPU, also Größenordnung statt Absolutwert: Argon2id bei OWASP-Parametern kostet 263 ms in JavaScript gegen 76 ms in WASM — aber WASM scheitert in Cloudflare Workers an `Wasm code generation disallowed by embedder` und ist auf Caprock unerprobt (SCHÄTZUNG), und ein eigenes Rust-Modul wäre gegenüber fertigem WASM nur 1,6-mal schneller, um den Preis einer zweiten Werkzeugkette und eines unprüfbaren Binärblobs. Der entscheidende Befund: `@noble/hashes`, `hash-wasm` und eine Rust-WASI-Variante erzeugen **bytegleiche** Argon2id-Hashes. Die Rechenmaschine ist damit austauschbar, ohne einen einzigen gespeicherten Hash anzufassen.
 
-**Die Absicherung.** 144 Sicherheitsanforderungen in neunzehn Fehlerklassen, jede mit mindestens einem Testfall und einer vorab festgelegten Zahl als Schwelle; 148 Testfälle, von denen 129 jeden Commit blockieren. Fünfzehn der 33 Better-Auth-Advisories sind unmittelbar auf Velve Auth übertragbar und werden von benannten Anforderungen ausgeschlossen; achtzehn sind nicht anwendbar, weil die betroffene Funktion nicht existiert.
+**Die Absicherung.** 148 Sicherheitsanforderungen in neunzehn Fehlerklassen, jede mit mindestens einem Testfall und einer vorab festgelegten Zahl als Schwelle; 152 Testfälle, von denen 133 jeden Commit blockieren. Fünfzehn der 33 Better-Auth-Advisories sind unmittelbar auf Velve Auth übertragbar und werden von benannten Anforderungen ausgeschlossen; achtzehn sind nicht anwendbar, weil die betroffene Funktion nicht existiert.
 
 **Ehrlich benannte Grenzen.** In der Konfiguration `username` gibt es kein Zurücksetzen per E-Mail — die Bibliothek verweigert dort den Start, wenn keine Wiederherstellungscodes konfiguriert sind. Benutzernamen sind per Definition aufzählbar, sobald eine Verfügbarkeitsprüfung angeboten wird; das steht im Datenblatt statt als stille Lücke im Code. Der verschlüsselte Kennwortspeicher bedeutet: Schlüsselverlust ist Kennwortverlust. Importierte bcrypt-Hashes prüfen nur die ersten 72 Byte, bis der Rehash sie ersetzt hat. Ein Schreiber auf der Datenbank, der auch den Wurzelschlüssel hat, hat alles, und ohne den Anker aus Abschnitt 3.18 kann er ein Konto auf einen alten, in sich stimmigen Stand zurücksetzen. Und ob Node auf Caprock startet und der gewählte PostgreSQL-Treiber dort funktioniert, ist die einzige nennenswerte ungeprüfte Annahme des ganzen Entwurfs.
 
@@ -55,8 +55,8 @@ Velve Auth ist eine Anmeldebibliothek für TypeScript und PostgreSQL, die im Pro
 2. Sprache und Laufzeit — die Bewertung, die Messungen, die Empfehlung
 3. Zielarchitektur — Paketstruktur, Schema, Sitzungen, Prüfpfad, Identität, zweiter Faktor, Tokens, Schlüssel, Ratenbegrenzung, Drittanbieter, Plugins, öffentliche Schnittstelle, Fehlerbehandlung, entschiedene Lücken, Integrität des Sicherheitszustands
 4. Migrationsmodul — fünf Quellen, je Quellschema, Zuordnung, Hash-Übernahme, Verluste, Folgearbeit
-5. Sicherheitsanforderungen — 144 Anforderungen in neunzehn Fehlerklassen, mit Abdeckungstabelle der 33 Advisories
-6. Prüfplan — 148 Testfälle mit vorab festgelegten Schwellen
+5. Sicherheitsanforderungen — 148 Anforderungen in neunzehn Fehlerklassen, mit Abdeckungstabelle der 33 Advisories
+6. Prüfplan — 152 Testfälle mit vorab festgelegten Schwellen
 7. Entscheidungsprotokoll — E-01 bis E-46, Ausgangsbestand für die Fallstudie
 
 Der Bauauftrag liegt getrennt als `CLAUDE-CODE-AUFTRAG.md`.
@@ -566,7 +566,7 @@ Plugins selbst sind bereits in A–M enthalten und werden hier nicht doppelt gez
 | H26 Custom Schemes | `myapp://`, `chrome-extension://`, `exp://**` per String-Zerlegung statt `new URL()` (`trusted-origins.ts:32-73`) | Anders lösen | Nicht-HTTP-Schemata werden als vollständige, exakte Origin eingetragen und als solche verglichen; keine eigene String-Zerlegung und kein `**`. Ein selbstgebauter URL-Parser neben dem eingebauten ist ein Parser-Differential (vgl. GHSA-prpr-5gj3-qqhg). |
 | H27 Redirect-URL-Validierung | Lehnt `//`, `\`, Steuerzeichen, `%2f` ab (`trusted-origins.ts:14-105`) | Anders lösen | Es werden gar keine vollständigen URLs entgegengenommen: `redirect_path` ist ein Pfad, serverseitig gehalten (Abschnitt 3.10). Was man nicht annimmt, muss man nicht validieren — fünf Advisories dieser Klasse (Nr. 1, 3, 4, 5, 25 im Sicherheitsbericht) hätten so nicht entstehen können. |
 | H28 `originCheckMiddleware` | Origin/Referer-Prüfung auf allen nicht-GET-Routen mit Cookie (`origin-check.ts:67-151`) | Übernehmen | Übernommen und verschärft: sie läuft auch bei direkten Serveraufrufen und ist nicht abschaltbar. |
-| H29 `Origin: null`-Sonderfall | Rekonstruiert die Origin bei `Sec-Fetch-Site: same-origin` (`origin-check.ts:253-269`) | Weglassen | Nicht übernommen: Ein `Origin: null` wird wie jede nicht erlaubte Origin mit `origin_not_allowed` abgelehnt, auch bei `Sec-Fetch-Site: same-origin`, und T-CSRF-3 führt `null` als abzulehnende Variante. Einen fehlenden `Origin`-Kopf lässt die Prüfung nur bei den acht lesenden `GET`-Routen zu, wenn die Anfrage über den HTTP-Handler kommt und `Sec-Fetch-Site: same-origin` trägt (S-CSRF-1). |
+| H29 `Origin: null`-Sonderfall | Rekonstruiert die Origin bei `Sec-Fetch-Site: same-origin` (`origin-check.ts:253-269`) | Weglassen | Nicht übernommen: Ein `Origin: null` wird wie jede nicht erlaubte Origin mit `origin_not_allowed` abgelehnt, auch bei `Sec-Fetch-Site: same-origin`, und T-CSRF-3 führt `null` als abzulehnende Variante. Einen fehlenden `Origin`-Kopf lässt die Prüfung nur bei den neun lesenden `GET`-Routen zu, wenn die Anfrage über den HTTP-Handler kommt und `Sec-Fetch-Site: same-origin` trägt (S-CSRF-1). |
 | H30 Callback-URL-Validierung | `callbackURL`, `redirectTo`, `errorCallbackURL`, `newUserCallbackURL` gegen `trustedOrigins` (`origin-check.ts:83-150`) | Anders lösen | Vier Parameter mit URL-Semantik werden zu einem Pfadparameter (H27). Jeder zusätzliche URL-Parameter ist eine weitere Stelle, an der die Validierung vergessen werden kann — CVE-2024-56734 war genau das. |
 | H31 `advanced.disableCSRFCheck` | Schaltet die CSRF-Prüfung ab (`create-context.ts:397`) | Weglassen | Niemand. Die Prüfung ist Teil der festen Kette vor jeder Route (Abschnitt 3.11) und kennt keinen Schalter. Wer sie abschalten will, hat in der Praxis einen fehlenden Origin in der Liste — das wird dort behoben, nicht an der Prüfung; und ein Schalter, der in der Entwicklung umgelegt wird, bleibt in der Produktion umgelegt. |
 | H32 `advanced.disableOriginCheck` | Schaltet die URL-Validierung ab, und aus Kompatibilität auch CSRF (`create-context.ts:398-403`) | Weglassen | Niemand. Eine Option, die zwei Prüfungen zugleich abschaltet, obwohl ihr Name nur eine nennt, ist der Grund, warum es sie nicht geben darf. |
@@ -1092,6 +1092,7 @@ Cross-Paket-Versionsdrift.
 @velve/auth              Kern: createVelveAuth(), alle Kernoperationen
 @velve/auth/http         toWebHandler(): (Request) => Promise<Response>
 @velve/auth/client       typisierter Client, aus derselben Routendeklaration abgeleitet
+@velve/auth/client/proof-of-work-worker   das Worker-Modul, in dem der Client einen Arbeitsnachweis löst (3.9)
 @velve/auth/pg           Treiber für node-postgres
 @velve/auth/schema       generiertes SQL, Migrationsläufer
 @velve/auth/testing      Prüf-Helfer (Uhr-Kontrolle, deterministischer Zufall)
@@ -1112,7 +1113,8 @@ core/
   token/        Einmal-Artefakte: Erzeugung, atomarer Konsum
   factor/       TOTP, WebAuthn, Wiederherstellungscodes, Zwischenzustand
   oauth/        Autorisierungscode-Fluss, PKCE, Identitätsverknüpfung
-  limit/        Token-Bucket
+  limit/        Token-Bucket, Fehlerzähler des Arbeitsnachweises
+  pow/          Arbeitsnachweis: Herausforderung, Prüfung, verbrauchte Herausforderungen
   keys/         KeyProvider, HKDF-Zweckableitung, Schlüsselring
   db/           Treiberschnittstelle, Repositories, Migrationsläufer
   http/         Routendeklaration, Origin-Prüfung, Cookies, Fehlerabbildung
@@ -1143,7 +1145,7 @@ interface Driver {
 
 Das ist die Ausgangsform. Die Änderungen aus den Entscheidungen L-2 und L-3 und
 die beiden Tabellen des Migrationsmoduls stehen in 3.17; zusammen ergeben beide
-Blöcke das Schema mit sechzehn Tabellen; die siebzehnte, `velve.security_state`, und die Spalten der Token-MACs stehen in 3.18, ebenso die achtzehnte, `velve.passkey_recovery`.
+Blöcke das Schema mit sechzehn Tabellen; die siebzehnte, `velve.security_state`, und die Spalten der Token-MACs stehen in 3.18, ebenso die achtzehnte, `velve.passkey_recovery`; die neunzehnte, `velve.proof_of_work_spent`, steht in 3.9.
 
 ```sql
 CREATE SCHEMA IF NOT EXISTS velve;
@@ -1665,6 +1667,39 @@ Negativ heißt abgelehnt. Drei Zähler gleichzeitig:
 Der Schlüssel enthält den **aufgelösten Routennamen**, nicht den rohen Pfad —
 `//sign-in` und `/sign-in` sind derselbe Zähler (GHSA-x732-6j76-qmhm).
 
+#### Der Arbeitsnachweis
+
+Ein unsichtbares Rätsel, das der Browser löst, während der Nutzer tippt. Es verlangsamt Massenversuche und hält den Mailserver des Betreibers davon ab, gegen fremde Adressen eingesetzt zu werden; der Schutz bleiben die Zähler oben. Ohne `rateLimit.proofOfWork` (A.6) ist er aus: Keine Route verlangt ihn, und `/proof-of-work/challenge` existiert nicht (S-RATE-12).
+
+1. **Die Herausforderung.** `GET /proof-of-work/challenge` mit `{ route }` gibt `{ challenge, difficulty, expiresAt }` aus. `challenge` ist `<Schlüsselversion>.<Schwierigkeit>.<Ablauf>.<Wert>.<MAC>`: 32 Bytes aus derselben Quelle wie das Sitzungstoken als base64url, die Schwierigkeit in führenden Nullbits, der Ablauf in Unix-Sekunden zehn Minuten nach der Ausgabe nach der Datenbankuhr und ein HMAC-SHA256 über eine feste Domäne, den Namen der Route und die vier Felder davor. Sein Schlüssel ist kein neues Geheimnis: Er entsteht per HKDF-Expand (RFC 5869) aus dem Zweckschlüssel `cookie-sig` der genannten Version, so dass ein eigener `KeyProvider` keinen neuen Zweck beantworten muss. Bei der Ausgabe wird nichts gespeichert; die Route ist lesend (S-CSRF-4).
+2. **Die Lösung.** Der Client sucht `n` mit `SHA-256(challenge ‖ n)` beginnend mit `difficulty` Nullbits, `challenge` als UTF-8 und `n` als acht Bytes Big-Endian mit `0 ≤ n ≤ 2^53 − 1`. Er schickt `<challenge>.<n>` im Kopf `Velve-Proof-Of-Work`; ein direkter Serveraufruf übergibt `proofOfWork: { challenge, nonce }`.
+3. **Die Prüfung.** Ein SHA-256, der MAC über den Namen der aufgerufenen Route und in einer Anweisung der Ablauf gegen `now()` der Datenbank und das Einfügen des SHA-256 der Herausforderung in `velve.proof_of_work_spent` mit `ON CONFLICT DO NOTHING`; von zwei gleichzeitigen Verwendungen gewinnt genau eine (S-RATE-10). Eine fehlende, fehlgeformte, für eine andere Route ausgegebene, veränderte, abgelaufene, ungelöste oder verbrauchte Lösung antwortet `400 proof_of_work_required`; nur das Log nennt den Grund (F.1, S-RATE-9). `maintenance.sweep` löscht eine Zeile nach ihrem Ablauf nach derselben Datenbankuhr, so dass eine gelöschte Herausforderung nicht wieder angenommen wird. Verlangt eine Route keine Lösung, wird eine mitgeschickte weder geprüft noch verbraucht.
+4. **Wo.** Bei jedem Aufruf von `signUp.withPassword`, `signUp.withoutPassword`, `password.requestReset`, `signIn.magicLink.request` und `passkeyRecovery.request`. `signIn.password` verlangt ihn, sobald der Fehlerzähler des Kontos oder der der Adresse die Schwelle erreicht; `signIn.passkey.finish` nur nach dem Zähler der Adresse, weil ein auffindbarer Passkey vor der Prüfung kein Konto nennt. Ein Fehlschlag ist jede Antwort `invalid_credentials` bzw. `webauthn_challenge_invalid` und `webauthn_credential_rejected`, auch mit mitgeschickter Lösung. Ein Zähler ist eine Zeile in `velve.rate_bucket`, geschlüsselt wie der Eimer (L-5, S-RATE-7), und vergisst je Stunde einen Fehlschlag; eine Anmeldung ohne Konto zählt wie eine mit Konto. Die Prüfung läuft vor dem Konto-Eimer, vor jedem KDF-Aufruf und vor jeder Mail; eine Ablehnung zieht kein Token aus dem Konto-Eimer (S-RATE-11).
+5. **Die Konfiguration.** `difficulty({ route })` und `signInFailuresBeforeProof({ route })` werden bei jeder Anfrage gefragt, nie bei der Konstruktion, und auf 0 bis 20 Bits bzw. 1 bis 100 Fehlschläge geklemmt; eine Antwort, die keine Zahl ist, gilt als die strengste Grenze. Ein `rateLimit.proofOfWork` ohne beide Funktionen ist der Startfehler `proof_of_work_unusable` (S-RATE-12).
+
+```ts
+interface ProofOfWorkConfig {
+  difficulty: (context: { route: ProofOfWorkRoute }) => number                  // 0 bis 20 Bits, geklemmt
+  signInFailuresBeforeProof: (context: { route: SignInRouteGuardedAfterFailures }) => number   // 1 bis 100, geklemmt
+}
+type SignInRouteGuardedAfterFailures = "signIn.password" | "signIn.passkey.finish"
+type ProofOfWorkRoute = SignInRouteGuardedAfterFailures | "signUp.withPassword" | "signUp.withoutPassword"
+  | "password.requestReset" | "signIn.magicLink.request" | "passkeyRecovery.request"
+interface ProofOfWorkChallenge { challenge: string; difficulty: number; expiresAt: Date }   // zehn Minuten gültig
+interface ProofOfWorkSolution  { challenge: string; nonce: number }                        // direkter Serveraufruf
+```
+
+Die Grenzen: Wer eigene Rechenleistung hat, zahlt je Versuch Millisekunden bis Sekunden; der Arbeitsnachweis verteuert Massenversuche, er ersetzt die Zähler nicht. Eine gelöste Herausforderung bleibt bis zu ihrem Ablauf auf Vorrat lösbar, aber jede nur einmal verwendbar. Eine Instanz vor 3.0.0 kennt die Tabelle nicht; der Arbeitsnachweis wird erst konfiguriert, wenn jede Instanz 3.0.0 betreibt.
+
+```sql
+-- Migration 9
+CREATE TABLE velve.proof_of_work_spent (
+  challenge_sha256 bytea PRIMARY KEY CHECK (octet_length(challenge_sha256) = 32),
+  expires_at       timestamptz NOT NULL
+);
+CREATE INDEX proof_of_work_spent_sweep_idx ON velve.proof_of_work_spent (expires_at);
+```
+
 ### 3.10 Drittanbieter-Anmeldung
 
 Autorisierungscode-Fluss mit **PKCE S256 verpflichtend**, `state` serverseitig
@@ -1908,7 +1943,7 @@ declare function pg(pool: import("pg").Pool): Driver                       // @v
 | `session` | `SessionConfig` | A.5 | Fristen, Cookie-Name, Cookie-Optionen, Frischefenster. |
 | `sessionMetadata` | `"truncated" \| "full" \| "none"` | `"truncated"` | Kürzung von `ip` und `user_agent` in `velve.session` (L-10). |
 | `trustedProxies` | `readonly string[]` | `[]` | CIDR-Blöcke, deren `X-Forwarded-For` gilt; sonst zählt die Verbindungsadresse. |
-| `rateLimit` | `RateLimitConfig` | A.6 | Eimergrößen, Alarm-Callback. |
+| `rateLimit` | `RateLimitConfig` | A.6 | Eimergrößen, Alarm-Callback, Arbeitsnachweis (3.9). |
 | `email` | `EmailConfig` | keiner | Sende-Callback; sein Fehlen ist in `email` und `username_email` ein Startfehler. |
 | `oauth` | `OAuthConfig` | keiner | Anbieter, vertrauenswürdige Anbieter, Token-Speicherung. |
 | `webauthn` | `WebAuthnConfig` | keiner | Relying Party; sein Fehlen entfernt alle WebAuthn-Routen. |
@@ -1976,6 +2011,7 @@ interface RateLimitConfig {
   perIpAddress: BucketRule       // Vorgabe { capacity: 30, refillPerSecond: 0.5 }
   perAccount: BucketRule         // Vorgabe { capacity: 5, refillPerSecond: 1 / 300 }
   globalPerRoute: { alertThresholdPerMinute: number; onAlert: (alert: RateAlert) => void }
+  proofOfWork?: ProofOfWorkConfig  // ohne: aus; 3.9
 }
 interface RateAlert { routeName: string; requestsInLastMinute: number; observedAt: Date }
 ```
@@ -2131,6 +2167,7 @@ interface AuthSurface<M extends IdentityMode> {
   username: OnlyWhen<ModeHasUsername<M>, UsernameNamespace>
   oneTimeToken: OnlyWhen<ModeHasEmail<M>, OneTimeTokenNamespace>   // ohne HTTP-Route, B.10
   passkeyRecovery: OnlyWhen<ModeHasEmail<M>, PasskeyRecoveryNamespace>   // nur mit webauthn.recovery, B.11
+  proofOfWork: { challenge(input: { route: ProofOfWorkRoute }): Promise<ProofOfWorkChallenge> }   // nur mit rateLimit.proofOfWork, 3.9
 }
 
 interface AuthInternals {
@@ -2167,8 +2204,8 @@ interface SealedSecurityState {                                   // was die Neu
 
 `routes` ist kein Implementierungsdetail, sondern die Datenstruktur, aus der Teil D den
 HTTP-Handler und Teil E den Client baut. Sie liegt zur Laufzeit vor, weil der Client sonst
-raten müsste. `AuthSurface` hat 63 Methoden im Modus `username_email`, 60 in `email`, 48 in
-`username`, die fünf von `passkeyRecovery` eingerechnet, die es nur mit `webauthn.recovery` gibt. `maintenance.sweep` löscht abgelaufene Zeilen aus den sieben Tabellen mit
+raten müsste. `AuthSurface` hat 64 Methoden im Modus `username_email`, 61 in `email`, 49 in
+`username`, die fünf von `passkeyRecovery` eingerechnet, die es nur mit `webauthn.recovery` gibt, und die eine von `proofOfWork`, die es nur mit `rateLimit.proofOfWork` gibt. `maintenance.sweep` löscht abgelaufene Zeilen aus den acht Tabellen mit
 `*_sweep_idx` (L-11); `@velve/auth/schema` liefert dasselbe als SQL für `pg_cron`.
 `maintenance.sealSecurityState` und `maintenance.resealSecurityState` sind die Wartung und das
 Neuversiegeln aus 3.18; wie `sweep` haben sie keine Route, und die Anwendung ruft sie nach ihrer
@@ -2845,6 +2882,7 @@ einsetzt; `caller: "session"` erzeugt genau diese eine Differenz zwischen den Si
 | POST | `/passkey-recovery/finish` | `{ challengeToken, response, label }` | `FinishPasskeyRecoveryResult` | 200, 400 | IP | ja |
 | GET | `/passkey-recovery` | — | `PendingPasskeyRecovery \| null` | 200, 401 | IP | ja |
 | POST | `/passkey-recovery/cancel` | — | — | 204, 401 | IP | ja |
+| GET | `/proof-of-work/challenge` | Query `{ route }` | `ProofOfWorkChallenge` | 200, 400 | IP | ja |
 
 Nicht aufgeführt, weil überall möglich: `429 rate_limited` bei jeder Route mit Limit (die
 drei ausgewiesenen 429 sind `too_many_factor_attempts`), `403 origin_not_allowed` bei jeder
@@ -2856,7 +2894,9 @@ Route mit Origin-Prüfung, `403 account_disabled` bei jeder Route mit Aufrufer `
 konfiguriertem `webauthn`, ohne es fehlen die neun `webauthn`- und `passkey`-Routen. Mit
 `webauthn.recovery` kommen in den beiden Modi mit Adresse die fünf Routen `/passkey-recovery*`
 hinzu, 52 in `username_email` und 50 in `email`; ohne es, ohne `webauthn` und im Modus
-`username` fehlen sie (3.18, Die Wiederherstellung auf einen neuen Passkey). Die
+`username` fehlen sie (3.18, Die Wiederherstellung auf einen neuen Passkey). Mit `rateLimit.proofOfWork`
+kommt in jedem Modus `/proof-of-work/challenge` hinzu; ohne es fehlt die Route, und keine Route
+verlangt eine Lösung (3.9). Die
 Tabelle wird beim Erzeugen der Instanz nach Modus und Konfiguration gefiltert; eine Route, die es im gewählten Modus nicht
 gibt, antwortet nicht mit 403, sondern existiert nicht und ergibt 404. `auth.user.*` und
 `auth.maintenance.*` haben keine Routen (B.3). Jede Antwort trägt `Cache-Control: no-store`
@@ -2880,8 +2920,9 @@ autorisierten ist am Deklarationstyp ablesbar.
 
 ```ts
 declare function createVelveClient<Auth extends { routes: readonly AnyRoute[] }>(
-  options: { baseURL: string; fetch?: typeof fetch }
+  options: { baseURL: string; fetch?: typeof fetch; createProofOfWorkWorker?: () => ProofOfWorkWorker }
 ): ClientSurface<Auth["routes"]>
+declare function prepareProofOfWork(client: object, input: { route: ProofOfWorkRoute }): Promise<void>
 ```
 
 ```
@@ -2930,6 +2971,17 @@ Antworten, die keine Velve-Fehlerhülle sind. Beide sind `VelveTransportError`, 
 `VelveError` — „Der Server hat nein gesagt" gegen „Der Server hat nicht geantwortet".
 `retryAfterSeconds` steht nur bei `rate_limited`.
 
+**Der Arbeitsnachweis im Client.** Antwortet eine Route `proof_of_work_required`, holt der Client
+über `/proof-of-work/challenge` eine Herausforderung für genau diese Route, löst sie und schickt den
+Aufruf ein einziges weiteres Mal mit dem Kopf `Velve-Proof-Of-Work` (3.9). `prepareProofOfWork`
+löst vorab, während der Nutzer tippt; die Lösung gilt für einen Aufruf. Es steht neben dem Client
+und nicht in ihm, so dass der Client die Routentabelle bleibt und kein Blatt ohne Zeile trägt. Gelöst wird in einem
+Modul-Worker, den `@velve/auth/client` neben sich ausliefert und mit
+`new Worker(new URL("./proof-of-work-worker.mjs", import.meta.url), { type: "module" })` startet —
+die Form, aus der Bundler den Worker mitkopieren; eine Content-Security-Policy muss ihn mit
+`worker-src 'self'` zulassen und braucht weder `blob:` noch `'unsafe-eval'`. Kann die Seite keinen
+Worker starten, löst der aufrufende Thread mit derselben Funktion. Der Worker greift auf kein Netz zu.
+
 ---
 
 #### F) Fehlertypen
@@ -2945,7 +2997,7 @@ type VelveErrorCode =
   | "factor_not_enrolled" | "factor_already_enrolled" | "last_sign_in_method"
   | "identity_already_linked" | "provider_not_configured"
   | "passkey_limit_reached" | "identity_limit_reached" | "recovery_disabled"
-  | "passkey_recovery_failed"
+  | "passkey_recovery_failed" | "proof_of_work_required"
   | "oauth_flow_invalid" | "oauth_provider_error"
   | "webauthn_challenge_invalid" | "webauthn_credential_rejected"
   | "webauthn_credential_not_discoverable"
@@ -2958,7 +3010,7 @@ class VelveError extends Error {
 }
 ```
 
-30 Codes, stabil: Ein Code verschwindet nur im Hauptversionssprung, ein neuer kommt nur mit
+31 Codes, stabil: Ein Code verschwindet nur im Hauptversionssprung, ein neuer kommt nur mit
 einer neuen Route oder einer neuen Ablehnung an einer bestehenden.
 
 | Code | Wann | Status | Sichtbar |
@@ -2986,6 +3038,7 @@ einer neuen Route oder einer neuen Ablehnung an einer bestehenden.
 | `identity_limit_reached` | Das Konto hat schon `limits.identitiesPerAccount` Identitäten | 409 | ja |
 | `recovery_disabled` | Wiederherstellungscodes erzeugen, während das Konto die Wiederherstellung abgeschaltet hat (3.18) | 409 | ja |
 | `passkey_recovery_failed` | Ein Schritt der Wiederherstellung auf einen neuen Passkey nach der Anforderung schlägt fehl (3.18) | 400 | ja, **verschmolzen** |
+| `proof_of_work_required` | Eine Route verlangt einen Arbeitsnachweis, und die Lösung fehlt oder wird nicht angenommen (3.9) | 400 | ja, **verschmolzen** |
 | `provider_not_configured` | Anbieter steht nicht in `oauth.providers` | 400 | ja |
 | `oauth_flow_invalid` | `state`, PKCE, `nonce` oder `iss` passen nicht | 400 | ja, **verschmolzen** |
 | `oauth_provider_error` | Anbieter antwortet fehlerhaft oder gar nicht | 502 | ja |
@@ -3014,6 +3067,7 @@ die inneren Codes werden ausschließlich protokolliert.
 | `invalid_input` | `session_issue_missed_on_sign_up` |
 | `factor_already_enrolled` | `session_issue_missed_on_password_set` |
 | `passkey_recovery_failed` | `passkey_recovery_link_refused`, `passkey_recovery_code_refused`, `passkey_recovery_refused_for_account`, `passkey_recovery_registration_refused`, `passkey_recovery_refused`, `broken_state_on_passkey_recovery` |
+| `proof_of_work_required` | `proof_of_work_missing`, `proof_of_work_malformed`, `proof_of_work_forged`, `proof_of_work_unsolved`, `proof_of_work_expired`, `proof_of_work_spent` |
 
 Sieben Operationen erzeugen **gar keinen** Fehler, obwohl innen etwas fehlschlug, weil ein
 Fehler die Existenz verriete: `signUp.*` bei vergebener E-Mail (200 wie bei Erfolg, plus Mail
@@ -3521,7 +3575,7 @@ CREATE TABLE velve.passkey_recovery (
 );
 ```
 
-Damit umfasst das Schema **achtzehn Tabellen**.
+Damit umfasst das Schema **achtzehn Tabellen**; mit `velve.proof_of_work_spent` aus 3.9 (Migration 9) sind es neunzehn.
 
 ---
 
@@ -4560,6 +4614,10 @@ Der Entwurf wird hier **nicht** geändert. Wo die Ausarbeitung eine Lücke in de
 - **S-RATE-6:** Der Zähler wird in einer einzigen Datenbankanweisung (`INSERT … ON CONFLICT … DO UPDATE … RETURNING tokens`) fortgeschrieben; bei *n* zeitgleichen Anfragen gegen ein Limit *L* werden höchstens *L* angenommen. *(Abschnitt 3.9, SQL-Block: „ein Round-Trip")*
 - **S-RATE-7:** Der Schlüssel des kontobezogenen Zählers ist `HMAC(token-pepper, normalisierter Bezeichner)`, nicht die Konto-ID; er wird vor der Auflösung des Nutzers gebildet, sodass existierende und nicht existierende Konten dieselbe Zeile fortschreiben und der Bezeichner nicht im Klartext in `velve.rate_bucket` steht. Ein leerer Eimer führt zur Ablehnung mit `rate_limited`, niemals zu einer künstlichen Verzögerung und niemals zu einer Sperre; der Eimer füllt sich mit der konfigurierten Rate nach, und ein Konto bleibt nach beliebig vielen Fehlversuchen Dritter für den rechtmäßigen Inhaber mit korrekten Zugangsdaten erreichbar. *(Abschnitt 3.16, L-5; Abschnitt 3.9: „ein Eimer mit langsam nachfüllender Rate statt einer Sperre … Eine Sperre ist eine Dienstverweigerung gegen einen bekannten Nutzer.")*
 - **S-RATE-8:** Der Zähler je Route und Instanz löst bei Überschreitung ausschließlich den Alarm-Callback aus und lehnt keine Anfrage ab. *(Abschnitt 3.9, dritter Aufzählungspunkt)*
+- **S-RATE-9:** Eine Herausforderung des Arbeitsnachweises wird bei der Ausgabe nicht gespeichert; sie trägt 32 zufällige Bytes, die Schwierigkeit, den Ablauf und einen HMAC-SHA256 unter einem aus `cookie-sig` abgeleiteten Schlüssel über den Namen der Route, für die sie ausgegeben wurde. Der Server prüft eine Lösung mit einem SHA-256; eine fehlende, fehlgeformte, für eine andere Route ausgegebene, veränderte, abgelaufene, ungelöste oder verbrauchte Lösung antwortet mit demselben Code `proof_of_work_required`, demselben Status und demselben Körper. *(Abschnitt 3.9, Der Arbeitsnachweis, Punkte 1 bis 3; Abschnitt 3.15 F.1)*
+- **S-RATE-10:** Jede Herausforderung wird höchstens einmal angenommen: Das Verbrauchen ist eine Anweisung, die den Ablauf gegen die Datenbankuhr prüft und den SHA-256 der Herausforderung mit `ON CONFLICT DO NOTHING` in `velve.proof_of_work_spent` einfügt; von *n* gleichzeitigen Verwendungen derselben Lösung wird genau eine angenommen. Die Zeile bleibt bis zum Ablauf und wird danach von `maintenance.sweep` gelöscht. *(Abschnitt 3.9, Der Arbeitsnachweis, Punkt 3)*
+- **S-RATE-11:** Mit `rateLimit.proofOfWork` verlangen `signUp.withPassword`, `signUp.withoutPassword`, `password.requestReset`, `signIn.magicLink.request` und `passkeyRecovery.request` bei jedem Aufruf eine gelöste Herausforderung, `signIn.password`, sobald der Fehlerzähler des Kontos oder der der Adresse die Schwelle erreicht, und `signIn.passkey.finish`, sobald der der Adresse sie erreicht. Die Prüfung läuft vor dem Konto-Eimer, vor jedem KDF-Aufruf und vor jeder Mail; die Fehlerzähler sind wie der Konto-Eimer geschlüsselt, so dass ein Bezeichner ohne Konto nach genau so vielen Fehlschlägen nach einer Lösung gefragt wird wie einer mit Konto. *(Abschnitt 3.9, Der Arbeitsnachweis, Punkt 4; Abschnitt 3.16, L-5)*
+- **S-RATE-12:** Ohne `rateLimit.proofOfWork` verlangt keine Route einen Arbeitsnachweis, und die Route `/proof-of-work/challenge` existiert nicht. Schwierigkeit und Fehlerschwelle sind Funktionen, die bei jeder Anfrage gefragt werden, nie bei der Konstruktion; die Bibliothek klemmt die Schwierigkeit auf 0 bis 20 Bits und die Schwelle auf 1 bis 100 Fehlschläge, und eine Antwort, die keine Zahl ist, gilt als die strengste Grenze. *(Abschnitt 3.9, Der Arbeitsnachweis, Punkt 5; Abschnitt 3.15 A.6)*
 
 ---
 
@@ -4591,7 +4649,7 @@ Der Entwurf wird hier **nicht** geändert. Wo die Ausarbeitung eine Lücke in de
 - **S-CSRF-1:** Jede Route außer `GET /sign-in/oauth/callback/:provider` und `POST /sign-in/oauth/callback/:provider` trägt `originCheck: "checked"` und durchläuft die Origin-Prüfung, bevor der Handler läuft; das gilt auch für den direkten Serveraufruf über die aus der Routendeklaration erzeugte Servermethode. Ausgenommen sind genau diese zwei, und beide aus demselben Grund: eine Rückleitung des Anbieters trägt keinen `Origin`-Kopf, den die Bibliothek vergleichen dürfte. Einen fehlenden `Origin`-Kopf lässt die Origin-Prüfung an genau einer Stelle zu: bei einer der acht lesenden `GET`-Routen aus S-CSRF-4, wenn die Anfrage über den HTTP-Handler kommt und `Sec-Fetch-Site: same-origin` trägt — so ruft ein Browser eine solche Route mit `fetch` von der eigenen Origin auf, und diesen Kopf kann keine Seite setzen. Jeder andere Wert, ein fehlender `Sec-Fetch-Site`-Kopf, jede andere Route und der direkte Serveraufruf bleiben bei `origin_not_allowed`; ein vorhandener `Origin`-Kopf wird weiter nach S-CSRF-2 verglichen (E-2390). *(Abschnitt 3.15 D.3: „Der OAuth-Callback ist die einzige Route ohne Origin-Prüfung, und er steht zweimal in der Tabelle"; Abschnitt 3.11: „Origin-Prüfung und Ratenbegrenzung liegen immer davor — auch bei direkten Serveraufrufen.")*
 - **S-CSRF-2:** Die Origin-Prüfung vergleicht `new URL(header).origin` per Zeichenkettengleichheit gegen einen Eintrag aus `origins`; die Bibliothek enthält keinen Präfix-, Teilstring- oder Musterabgleich auf Origins. *(Abschnitt 3.12, `origins: ["https://app.example.com"]`)*
 - **S-CSRF-3:** Ein Origin, der sich vom erlaubten nur im Schema, im Port, in einem Präfix oder in einem Suffix unterscheidet, wird mit `origin_not_allowed` abgelehnt; die Ablehnung ist für alle Fehlvarianten byteweise identisch. *(Abschnitt 3.12, `origins`; Abschnitt 3.15 F, `origin_not_allowed`)*
-- **S-CSRF-4:** Keine zustandsändernde Operation ist über `GET` erreichbar; die einzige Ausnahme ist der OAuth-Callback, der stattdessen durch `state`, PKCE und `iss` geschützt ist, und die übrigen `GET`-Routen (`/session`, `/session/list`, `/username/available`, `/factor/webauthn/list`, `/factor/recovery/remaining`, `/identity/list`, `/pending`, `/passkey-recovery`) sind lesend. *(Abschnitt 3.10, erster Absatz; Abschnitt 3.15 D.3, Routentabelle)*
+- **S-CSRF-4:** Keine zustandsändernde Operation ist über `GET` erreichbar; die einzige Ausnahme ist der OAuth-Callback, der stattdessen durch `state`, PKCE und `iss` geschützt ist, und die übrigen `GET`-Routen (`/session`, `/session/list`, `/username/available`, `/factor/webauthn/list`, `/factor/recovery/remaining`, `/identity/list`, `/pending`, `/passkey-recovery`, `/proof-of-work/challenge`) sind lesend. *(Abschnitt 3.10, erster Absatz; Abschnitt 3.15 D.3, Routentabelle)*
 - **S-CSRF-5:** Der OAuth-`state` liegt serverseitig in `velve.oauth_flow`; das Cookie hält nur den Zeiger darauf, und ein Callback mit gültigem `state`, aber fehlendem oder fremdem Zeiger-Cookie wird abgelehnt. *(Abschnitt 3.10: „`state` serverseitig in `velve.oauth_flow` (Cookie hält nur den Zeiger)")*
 - **S-CSRF-6:** Ein Plugin kann die Origin-Prüfung weder ersetzen noch umgehen noch vor ihr ausgeführt werden. *(Abschnitt 3.11, „Was ein Plugin nicht darf", Punkte 3 und 6)*
 
@@ -4842,7 +4900,7 @@ Bei der Ausarbeitung dieses Abschnitts und des Prüfplans wurden dreizehn Lücke
 | Versuchsgrenze im Zwischenzustand | L-8 |
 | Rückläufiger `sign_count` | L-9, dokumentierte Abweichung von WebAuthn Level 3 §7.2 |
 | Volle IP und User-Agent in `velve.session` | L-10 |
-| Kein benannter Aufräumlauf (sieben `*_sweep_idx`) | L-11 |
+| Kein benannter Aufräumlauf (acht `*_sweep_idx`) | L-11 |
 | Unverifiziertes Vorabkonto (GHSA-qq9h-g4jm-xgf3) | L-12 (wirkt auf S-LINK-4) |
 | Entfernen des letzten Anmeldewegs | L-13 |
 
@@ -4873,9 +4931,9 @@ Bei der Ausarbeitung dieses Abschnitts und des Prüfplans wurden dreizehn Lücke
 
 ## 6. Prüfplan
 
-Zu jeder der 144 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID trägt dieselbe Klasse und dieselbe Nummer wie die Anforderung: `T-OWNER-3` prüft `S-OWNER-3`. Hinzu kommen vier ergänzende Testfälle, die keiner einzelnen Anforderung zugeordnet sind, sondern eine Klasse breiter absichern (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — zusammen **148 Testfälle**.
+Zu jeder der 148 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID trägt dieselbe Klasse und dieselbe Nummer wie die Anforderung: `T-OWNER-3` prüft `S-OWNER-3`. Hinzu kommen vier ergänzende Testfälle, die keiner einzelnen Anforderung zugeordnet sind, sondern eine Klasse breiter absichern (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — zusammen **152 Testfälle**.
 
-**Spalten.** *Art* ist eine von sechs: `Unit`, `Integration`, `Property` (fast-check), `Statistisch`, `Nebenläufigkeit`, `Statisch` (Lint-Regel, AST-Analyse, Typprüfung); Kombinationen sind mit `+` angegeben. *Schwelle* ist eine Zahl oder ein hartes Kriterium — kein Test in diesem Plan besteht mit „keine Fehler". *Läuft in* ist eine von drei Stufen: `CI bei jedem Commit` (129 Testfälle, dazu der statische Teil von T-RACE-2 und der Teil von T-INTEG-5 außer dem Zeitteil), `CI nächtlich` (15, dazu der Nebenläufigkeitsteil von T-RACE-2 und der Zeitteil von T-INTEG-5), `vor jedem Release` (2).
+**Spalten.** *Art* ist eine von sechs: `Unit`, `Integration`, `Property` (fast-check), `Statistisch`, `Nebenläufigkeit`, `Statisch` (Lint-Regel, AST-Analyse, Typprüfung); Kombinationen sind mit `+` angegeben. *Schwelle* ist eine Zahl oder ein hartes Kriterium — kein Test in diesem Plan besteht mit „keine Fehler". *Läuft in* ist eine von drei Stufen: `CI bei jedem Commit` (133 Testfälle, dazu der statische Teil von T-RACE-2 und der Teil von T-INTEG-5 außer dem Zeitteil), `CI nächtlich` (15, dazu der Nebenläufigkeitsteil von T-RACE-2 und der Zeitteil von T-INTEG-5), `vor jedem Release` (2).
 
 **Grundsatz der Stufenzuordnung.** Alles Deterministische blockiert jeden Commit. Alles Statistische und alles, was länger als 60 Sekunden läuft, läuft nächtlich auf einem dedizierten Läufer und meldet als Ticket, nicht als roter Build. Der Grund steht in Abschnitt 6.20.
 
@@ -5000,6 +5058,10 @@ wird nicht genommen.
 | T-RATE-6 | S-RATE-6 | Nebenläufigkeit | 200 Anfragen per `Promise.all` gegen echtes Postgres bei Limit 20; 50 Wiederholungen. | **Exakt 20 Erfolge und 180 Ablehnungen in 50/50 Läufen, Toleranz 0** | CI nächtlich |
 | T-RATE-7 | S-RATE-7 | Integration + Statisch, kontrollierte Uhr | `capacity` Fehlversuche plus einen gegen ein existierendes Konto und gegen einen nicht existierenden Bezeichner; danach Uhr um die Nachfüllzeit vorstellen und mit korrektem Kennwort anmelden. `rate_bucket.bucket_key` nach dem Bezeichner durchsuchen. Typprüfung: der Optionstyp enthält keinen Schlüssel für eine Verzögerung oder Sperre. | Der **(capacity + 1)-te** Versuch liefert `rate_limited` — für beide Bezeichner nach derselben Anzahl; Anmeldung nach Nachfüllen **erfolgreich**; Medianlatenz der abgelehnten Antworten **kleiner** als die einer regulären Fehlanmeldung (kein KDF, keine Verzögerung); **0 Klartexttreffer** in `bucket_key`; **0 Optionsschlüssel** | CI bei jedem Commit |
 | T-RATE-8 | S-RATE-8 | Integration | Globalen Routenzähler mit einem niedrigen Schwellwert konfigurieren, Schwelle überschreiten. | Alarm-Callback **≥ 1-mal** aufgerufen; **0 Anfragen abgelehnt** | CI bei jedem Commit |
+| T-RATE-9 | S-RATE-9 | Unit + Property + Integration | Herausforderung ausgeben und lösen; sie gegen ihre Route, eine andere Route, jedes veränderte Feld, eine Schlüsselversion außerhalb des Rings und eine Nonce prüfen, die die Schwierigkeit verfehlt; 2000 zufällige oder an einzelnen Zeichen veränderte Eingaben mit festem Startwert, dazu Nonce über 2^53 − 1, falsche Längen und fremde Schreibweisen. Über HTTP an `/sign-up` fehlend, fehlgeformt, für eine andere Route, ungelöst und verbraucht senden. | **Genau 1** angenommene Prüfung, die eigene Route; **0** angenommene übrige Eingaben; **0 Ausnahmen**; über HTTP **5 × 400** mit **1** verschiedenen Körper, **0** neue Konten | CI bei jedem Commit |
+| T-RATE-10 | S-RATE-10 | Integration | Eine Lösung 20-mal per `Promise.all` an `/password/request-reset` senden; eine Herausforderung verwenden, deren Ablauf die Datenbankuhr überschritten hat; `maintenance.sweep` vor und nach dem Ablauf der verbrauchten Zeile. | **Genau 1 × 204 und 19 × 400**, **1 Mail**, **1 Zeile** in `velve.proof_of_work_spent`; abgelaufen **0 Zeilen**; Sweep vorher **0**, danach **1** gelöscht | CI bei jedem Commit |
+| T-RATE-11 | S-RATE-11 | Integration | Jede der fünf Routen ohne Lösung aufrufen; Kennwort-Anmeldung mit Schwelle 3 gegen ein vorhandenes und ein nicht vorhandenes Konto von je eigener Adresse, danach zehn Versuche ohne Lösung; Passkey-Anmeldung viermal fehlschlagen lassen und von einer zweiten Adresse wiederholen. | **0 Konten, 0 Mails** ohne Lösung; die **4.** Anmeldung verlangt für **beide** Bezeichner die Lösung; **0** gezogene Konto-Tokens in den zehn Versuchen; Passkey: die **4.** verlangt sie, die zweite Adresse nicht, **0** Kontozähler | CI bei jedem Commit |
+| T-RATE-12 | S-RATE-12 | Unit + Integration | Ohne `rateLimit.proofOfWork` die Herausforderung abrufen und registrieren; Schwierigkeit und Schwelle mit Werten außerhalb der Grenzen und mit Nicht-Zahlen beantworten; die Fragen je Anfrage zählen; mit einem `rateLimit.proofOfWork` ohne die beiden Funktionen starten. | **404** und **200**; Klemmung auf **0 bis 20** bzw. **1 bis 100**, Nicht-Zahl **20** bzw. **1**; **1 Frage je Anfrage**; Startfehler `proof_of_work_unusable` in **4/4** Fällen | CI bei jedem Commit |
 
 ---
 
@@ -5023,7 +5085,7 @@ wird nicht genommen.
 | T-CSRF-1 | S-CSRF-1 | Integration, generiert + Statisch | Über jede Route, die die weiteste Konfiguration einhängt (Modus `username_email`, OAuth und WebAuthn konfiguriert, also jede Zeile aus 3.15 D.3), jeder Aufruf mit einer gültigen Sitzung: (a) mit fremdem `Origin` über den HTTP-Handler und über die aus der Routendeklaration erzeugte Servermethode; (b) über die Servermethode ohne `origin`; (c) über den HTTP-Handler ohne `Origin`-Kopf, je einmal mit `Sec-Fetch-Site: same-origin`, `same-site`, `cross-site`, `none` und ohne den Kopf; (d) jede der acht lesenden `GET`-Routen aus S-CSRF-4 über den HTTP-Handler mit dem erlaubten `Origin` und ohne `Sec-Fetch-Site`. Den Inhalt jeder Tabelle außer `velve.rate_bucket` vor und nach den Aufrufen (a) bis (c) an den geprüften Routen vergleichen, ohne die in (c) zugelassenen `same-origin`-Aufrufe der acht lesenden Routen. Statisch: die Routen mit `originCheck: "exempt"` aus der Tabelle filtern. | Jede Route außer `signIn.oauth.callback` und `signIn.oauth.callbackFormPost` wird in (a) und (b) mit `origin_not_allowed` abgelehnt, und in (c) in jeder Form außer `same-origin` an einer der acht lesenden Routen; jede dieser Ablehnungen über den HTTP-Handler ist **byteweise identisch** mit jeder anderen (Status, Köpfe, Körper); über alle diese Ablehnungen **0 Zeilenänderungen** in jeder Tabelle außer `velve.rate_bucket`. Die zugelassenen `same-origin`-Aufrufe zählen nicht dazu; sie dürfen wie in T-CSRF-4 `velve.rate_bucket` sowie `last_used_at` und `idle_expires_at` der eigenen Sitzung schreiben. Die acht lesenden Routen antworten in (c) mit `same-origin` **byteweise so wie in (d)**, und das ist keine Ablehnung. Die beiden Callbacks antworten in (a) bis (c) **nie** mit `origin_not_allowed`. Statisch: **genau 2** Routen mit `exempt`, und das sind `signIn.oauth.callback` und `signIn.oauth.callbackFormPost` (E-2731, E-2732) | CI bei jedem Commit |
 | T-CSRF-2 | S-CSRF-2 | Statisch + Unit | AST-Scan: in `core/http/origin.ts` kein `startsWith`, `includes`, `endsWith`, `RegExp`. Unit: erlaubter Origin, gleicher Origin mit anderem Port, mit anderem Schema. | **0 Treffer**; **3/3 Unit-Fälle** korrekt | CI bei jedem Commit |
 | T-CSRF-3 | S-CSRF-3 | Integration, exhaustiv | Alle zustandsändernden Routen × 8 Origin-Varianten: erlaubt, fehlend, `null`, `http://` statt `https://`, `sub.erlaubt.de`, `erlaubt.de.evil.com`, `erlaubt.de:8443`, `evil.de`. | Nur die Variante *erlaubt* ist erfolgreich; **alle Ablehnungen byteweise identisch** | CI bei jedem Commit |
-| T-CSRF-4 | S-CSRF-4 | Statisch + Integration | Routentabelle filtern: jede `GET`-Route ist der OAuth-Callback oder eine der acht lesenden Routen aus S-CSRF-4. Integration: jede lesende `GET`-Route aufrufen und die Zeilenzahl aller Tabellen außer `velve.rate_bucket` vorher und nachher vergleichen (`last_used_at`/`idle_expires_at` der eigenen Sitzung ausgenommen). | **0 unklassifizierte GET-Routen**; **0 Zeilenänderungen** durch lesende Routen in jeder Tabelle außer `velve.rate_bucket` | CI bei jedem Commit |
+| T-CSRF-4 | S-CSRF-4 | Statisch + Integration | Routentabelle filtern: jede `GET`-Route ist der OAuth-Callback oder eine der neun lesenden Routen aus S-CSRF-4. Integration: jede lesende `GET`-Route aufrufen und die Zeilenzahl aller Tabellen außer `velve.rate_bucket` vorher und nachher vergleichen (`last_used_at`/`idle_expires_at` der eigenen Sitzung ausgenommen). | **0 unklassifizierte GET-Routen**; **0 Zeilenänderungen** durch lesende Routen in jeder Tabelle außer `velve.rate_bucket` | CI bei jedem Commit |
 | T-CSRF-5 | S-CSRF-5 | Integration | Vollständigen OAuth-Fluss in Kontext A starten, Callback-URL in Kontext B (anderes Zeiger-Cookie) aufrufen; zusätzlich ohne jedes Cookie. | **2/2 abgelehnt**; **0** neue Zeilen in `session` und `identity` | CI bei jedem Commit |
 | T-CSRF-6 | S-CSRF-6 | Integration + Statisch | Testplugin, das versucht, eine Middleware vor der Origin-Prüfung zu registrieren und die Prüffunktion zu ersetzen. | Registrierung führt zu einem **Startfehler**; der Kontext ist eingefroren (`Object.isFrozen` = true) | CI bei jedem Commit |
 | T-CSRF-Parser | S-CSRF-2/3 (ergänzend) | Property | fast-check erzeugt Hostnamen mit Präfix-, Suffix-, Port-, Unicode- und Punycode-Varianten der erlaubten Hosts. | **2000 Fälle, 0 Gegenbeispiele**, fester Seed | CI nächtlich |
@@ -5277,7 +5339,7 @@ Für ein Ein-Personen-Team lohnt sich das **nicht auf dem gesamten Bestand**: ei
 - **Ziel: Mutations-Score ≥ 85 % auf diesem Ausschnitt**, gemessen **vor jedem Release**, nicht bei jedem Commit.
 - **Der Wert für ein Ein-Personen-Team ist nicht die Zahl, sondern die Liste der überlebenden Mutanten.** Sie ist eine Arbeitsliste fehlender Zusicherungen und ersetzt den Code-Review durch eine zweite Person an genau der Stelle, an der ein solcher Review am meisten wert wäre.
 
-**Abdeckung ist kein Sicherheitsmaß.** Die 148 Testfälle dieses Plans sind das Sicherheitsmaß; die Abdeckungszahl ist nur die Warnleuchte, die anzeigt, dass ein neuer Zweig ohne Testfall hinzugekommen ist. Kein Testfall dieses Plans darf mit dem Argument „die Abdeckung stimmt ja" entfallen.
+**Abdeckung ist kein Sicherheitsmaß.** Die 152 Testfälle dieses Plans sind das Sicherheitsmaß; die Abdeckungszahl ist nur die Warnleuchte, die anzeigt, dass ein neuer Zweig ohne Testfall hinzugekommen ist. Kein Testfall dieses Plans darf mit dem Argument „die Abdeckung stimmt ja" entfallen.
 
 ---
 
