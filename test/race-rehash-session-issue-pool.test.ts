@@ -367,6 +367,7 @@ describe("a change of what signs the account in between a sign-in's check and it
 			await auth.maintenance.resealSecurityState({
 				userId: account.userId,
 				reason: "the account was disabled",
+				recoveryDisabled: false,
 			});
 		});
 		expect(held).toBe(VOIDED);

@@ -19,6 +19,7 @@ import {
 	type SealedGenerations,
 } from "../security-state/encoding.js";
 import {
+	checkSecurityState,
 	readSecurityState,
 	type SecurityStateRead,
 	securityStateOf,
@@ -425,34 +426,50 @@ async function lastSealHadTheOtherSwitch(
 	return verdict === "valid";
 }
 
-//a reseal never ratifies a switch a writer flipped and writes the one the operator names (S-INTEG-11)
+//a state the seal does not confirm may hide a cleared switch, which only the operator can name (S-INTEG-11)
+async function switchTheRowsMayKeep(
+	runtime: SecurityStateRuntime,
+	stored: SecurityStateRead,
+	floor: number,
+): Promise<boolean> {
+	const { verdict } = await checkSecurityState(runtime.keys, stored, runtime.sealing);
+	const confirmedBySeal =
+		verdict === "unsealed" || (verdict === "valid" && (stored.seal?.version ?? 0) >= floor);
+	if (
+		(!confirmedBySeal && !stored.recoveryDisabled) ||
+		(await lastSealHadTheOtherSwitch(runtime, stored))
+	) {
+		throw new SecurityStateMaintenanceError(
+			"security_state_recovery_switch_unconfirmed",
+			stored.userId,
+		);
+	}
+	return stored.recoveryDisabled;
+}
+
+//a reseal never ratifies a switch a writer cleared, and a switch it leaves on holds no recovery code (S-INTEG-11)
 async function withTheConfirmedSwitch(
 	runtime: SecurityStateRuntime,
 	tx: Driver,
-	stored: SecurityStateRead,
-	confirmed: boolean | undefined,
+	read: SecurityStateRead,
+	confirmation: { readonly named: boolean | undefined; readonly floor: number },
 ): Promise<SecurityStateRead> {
-	if (confirmed === undefined) {
-		if (await lastSealHadTheOtherSwitch(runtime, stored)) {
-			throw new SecurityStateMaintenanceError(
-				"security_state_recovery_switch_unconfirmed",
-				stored.userId,
-			);
-		}
-		return stored;
+	const switchOn =
+		confirmation.named ?? (await switchTheRowsMayKeep(runtime, read, confirmation.floor));
+	const actor = actorOfMaintenance(read.userId);
+	if (confirmation.named !== undefined) {
+		await createUserRepository({ driver: tx, schema: runtime.schema }).setRecoveryDisabledAt({
+			actor,
+			disabled: switchOn,
+		});
 	}
-	const actor = actorOfMaintenance(stored.userId);
-	await createUserRepository({ driver: tx, schema: runtime.schema }).setRecoveryDisabledAt({
-		actor,
-		disabled: confirmed,
-	});
-	if (!confirmed) {
-		return { ...stored, recoveryDisabled: false };
+	if (!switchOn) {
+		return { ...read, recoveryDisabled: false };
 	}
 	await createRecoveryCodeRepository({ driver: tx, schema: runtime.schema }).deleteEveryCode({
 		actor,
 	});
-	return { ...stored, recoveryDisabled: true, recoveryCodes: [] };
+	return { ...read, recoveryDisabled: true, recoveryCodes: [] };
 }
 
 //a reseal checks nothing it seals and lands above both the stored version and every floor (S-INTEG-7)
@@ -465,19 +482,22 @@ async function resealUnderAccountLock(
 	const schema = assertSchemaName(runtime.schema);
 	return inOneTransaction(runtime.driver, async (tx) => {
 		await lockAccountRow(tx, schema, userId);
-		const found = await readSecurityState(tx, schema, userId);
-		if (found === null) {
+		const stored = await readSecurityState(tx, schema, userId);
+		if (stored === null) {
 			throw new SecurityStateMaintenanceError("security_state_account_missing", userId);
 		}
-		const stored = await withTheConfirmedSwitch(runtime, tx, found, recoveryDisabled);
 		const base = Math.max(stored.seal?.version ?? 0, floor);
 		if (base >= Number.MAX_SAFE_INTEGER) {
 			throw new SecurityStateMaintenanceError("security_state_version_exhausted", userId);
 		}
-		const read =
+		const read = await withTheConfirmedSwitch(
+			runtime,
+			tx,
 			stored.seal === null
 				? await rewriteEnvelopes(runtime, tx, actorOfMaintenance(userId), stored, "absent")
-				: stored;
+				: stored,
+			{ named: recoveryDisabled, floor },
+		);
 		const version = base + 1;
 		const sessionEpoch = drawSessionEpochOtherThan(stored.seal?.sessionEpoch ?? 1);
 		const generations = generationsAfterReseal(stored.seal ?? FIRST_GENERATIONS, version);
