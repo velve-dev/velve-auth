@@ -6,6 +6,8 @@ declare const redeemedOneTimeTokenBrand: unique symbol;
 declare const consumedOAuthFlowBrand: unique symbol;
 declare const consumedRecoveryCodeBrand: unique symbol;
 declare const consumedPendingResetBrand: unique symbol;
+declare const consumedRecoveryChallengeBrand: unique symbol;
+declare const duePasskeyRecoveryBrand: unique symbol;
 
 export type Actor = string & { readonly [actorBrand]: "an owner some proof named" };
 
@@ -64,4 +66,22 @@ export function actorOfMaintenance(userId: string): Actor {
 //the recovery switch has no route and runs on the application's own authorisation decision (E-3733)
 export function actorOfRecoverySwitch(userId: string): Actor {
 	return userId as Actor;
+}
+
+//a recovery registration learns its account only from the challenge its start bound to it (E-3765)
+export type ConsumedRecoveryChallenge = { readonly userId: UserId } & {
+	readonly [consumedRecoveryChallengeBrand]: "produced by recovery challenge consumption";
+};
+
+export function actorOfConsumedRecoveryChallenge(consumed: ConsumedRecoveryChallenge): Actor {
+	return consumed.userId as string as Actor;
+}
+
+//a recovery whose waiting period has ended is activated for the account its own row names (E-3768)
+export type DuePasskeyRecovery = { readonly userId: UserId } & {
+	readonly [duePasskeyRecoveryBrand]: "produced by the lookup of a due passkey recovery";
+};
+
+export function actorOfDuePasskeyRecovery(due: DuePasskeyRecovery): Actor {
+	return due.userId as string as Actor;
 }

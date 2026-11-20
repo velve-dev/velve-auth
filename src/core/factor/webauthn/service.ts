@@ -12,7 +12,7 @@ import {
 	verifyAuthenticationResponse,
 	verifyRegistrationResponse,
 } from "@simplewebauthn/server";
-import type { Actor } from "../../db/actor.js";
+import type { Actor, ConsumedRecoveryChallenge } from "../../db/actor.js";
 import type { Driver } from "../../db/driver.js";
 import type { IssueAuthorisation } from "../../db/repositories/session.js";
 import { isRowIdentifier } from "../../db/row-identifier.js";
@@ -36,7 +36,12 @@ import {
 	WEBAUTHN_CHALLENGE_LIFETIME_SECONDS,
 	type WebAuthnChallenges,
 } from "./challenge.js";
-import { type WebAuthnConfig, type WebAuthnSettings, webAuthnSettingsOf } from "./config.js";
+import {
+	type RegistrationUserVerification,
+	type WebAuthnConfig,
+	type WebAuthnSettings,
+	webAuthnSettingsOf,
+} from "./config.js";
 import {
 	type CredentialOwner,
 	createWebAuthnCredentialRepository,
@@ -62,6 +67,24 @@ export interface WebAuthnRegistrationChallenge {
 export interface WebAuthnAuthenticationChallenge {
 	readonly publicKeyOptions: PublicKeyCredentialRequestOptionsJSON;
 	readonly challengeToken: string;
+}
+
+/** a credential a registration ceremony verified, before any row holds it */
+export interface RegisteredWebAuthnCredential {
+	readonly credentialId: Uint8Array<ArrayBuffer>;
+	readonly publicKey: Uint8Array<ArrayBuffer>;
+	readonly signCount: number;
+	readonly transports: readonly string[];
+	readonly aaguid: string | null;
+	readonly isBackupEligible: boolean;
+	readonly isCurrentlyBackedUp: boolean;
+	readonly wasUserVerifiedAtRegistration: boolean;
+}
+
+/** the account a recovery registration's challenge named and the credential the ceremony verified for it */
+export interface RecoveredWebAuthnCredential {
+	readonly owner: ConsumedRecoveryChallenge;
+	readonly credential: RegisteredWebAuthnCredential;
 }
 
 export interface VerifiedWebAuthnAssertion {
@@ -104,6 +127,18 @@ export interface WebAuthnService {
 			response: AuthenticationResponseJSON;
 		}): Promise<VerifiedWebAuthnAssertion>;
 	};
+	/** the registration that ends a recovery to a new passkey, bound to the recovery and to no session */
+	recovery: {
+		start(input: {
+			transaction: Driver;
+			actor: Actor;
+			userName: string;
+		}): Promise<WebAuthnRegistrationChallenge>;
+		finish(input: {
+			challengeToken: string;
+			response: RegistrationResponseJSON;
+		}): Promise<RecoveredWebAuthnCredential>;
+	};
 	list(input: { actor: Actor }): Promise<WebAuthnCredential[]>;
 	rename(input: {
 		actor: Actor;
@@ -121,6 +156,8 @@ export interface WebAuthnServiceOptions {
 	readonly webauthn: WebAuthnConfig;
 	/** the seal a registration reseals and every assertion checks first */
 	readonly securityState: SecurityStateRuntime;
+	/** activates a recovery whose waiting period has ended and whose new passkey a sign-in presents */
+	readonly activateDuePasskeyRecovery?: (credentialId: Uint8Array<ArrayBuffer>) => Promise<void>;
 }
 
 //the passkey an assertion is verified against must be one of the passkeys the seal covers (S-INTEG-4)
@@ -218,6 +255,18 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 		}
 	}
 
+	//a passkey still held by a recovery whose waiting period ended becomes usable at its first sign-in (E-3768)
+	async function findOrActivateCredential(
+		credentialId: Uint8Array<ArrayBuffer>,
+	): Promise<StoredWebAuthnCredential | null> {
+		const stored = await credentials.findCredentialByCredentialId({ credentialId });
+		if (stored !== null || options.activateDuePasskeyRecovery === undefined) {
+			return stored;
+		}
+		await options.activateDuePasskeyRecovery(credentialId);
+		return credentials.findCredentialByCredentialId({ credentialId });
+	}
+
 	async function issueAuthenticationChallenge(
 		subject: string | null,
 		allowCredentials: CredentialDescriptor[] | undefined,
@@ -235,6 +284,67 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 			...(allowCredentials === undefined ? {} : { allowCredentials }),
 		});
 		return { publicKeyOptions, challengeToken };
+	}
+
+	//every registration ceremony asks the authenticator through this one place (E-3766)
+	function registrationOptionsFor(input: {
+		readonly actor: Actor;
+		readonly userName: string;
+		readonly userDisplayName?: string;
+		readonly challengeBytes: Uint8Array<ArrayBuffer>;
+		readonly enrolled: readonly StoredWebAuthnCredential[];
+		readonly userVerification: RegistrationUserVerification;
+	}): Promise<PublicKeyCredentialCreationOptionsJSON> {
+		return generateRegistrationOptions({
+			rpID: settings.relyingPartyId,
+			rpName: settings.relyingPartyName,
+			userName: input.userName,
+			userID: utf8ToBytes(input.actor),
+			challenge: input.challengeBytes,
+			timeout: CEREMONY_TIMEOUT_MS,
+			attestationType: "none",
+			excludeCredentials: input.enrolled.map(descriptorOf),
+			authenticatorSelection: {
+				//this is the only enrolment ceremony so it must require a resident key (E-483)
+				residentKey: "required",
+				userVerification: input.userVerification,
+			},
+			...(input.userDisplayName === undefined ? {} : { userDisplayName: input.userDisplayName }),
+		});
+	}
+
+	//every registration ceremony is verified through this one place (E-3766)
+	async function verifiedRegistration(input: {
+		readonly challengeToken: string;
+		readonly response: RegistrationResponseJSON;
+		readonly userVerification: RegistrationUserVerification;
+	}): Promise<RegisteredWebAuthnCredential> {
+		assertOriginIsExpected(input.response.response.clientDataJSON, settings.origins);
+		const verification = await verifiedOrRejected(() =>
+			verifyRegistrationResponse({
+				response: input.response,
+				expectedChallenge: input.challengeToken,
+				expectedOrigin: [...settings.origins],
+				expectedRPID: settings.relyingPartyId,
+				requireUserPresence: true,
+				requireUserVerification: input.userVerification === "required",
+			}),
+		);
+		if (!verification.verified) {
+			throw new ConcealedError("signature_invalid");
+		}
+		const { credential, aaguid, userVerified, credentialBackedUp, credentialDeviceType } =
+			verification.registrationInfo;
+		return {
+			credentialId: credentialIdBytes(credential.id),
+			publicKey: credential.publicKey,
+			signCount: credential.counter,
+			transports: transportsSentWith(input.response),
+			aaguid: aaguidOf(aaguid),
+			isBackupEligible: credentialDeviceType === "multiDevice",
+			isCurrentlyBackedUp: credentialBackedUp,
+			wasUserVerifiedAtRegistration: userVerified,
+		};
 	}
 
 	async function enrolledDescriptorsOf(owner: CredentialOwner): Promise<CredentialDescriptor[]> {
@@ -333,20 +443,12 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 					purpose: "register",
 					userId: actor,
 				});
-				const publicKeyOptions = await generateRegistrationOptions({
-					rpID: settings.relyingPartyId,
-					rpName: settings.relyingPartyName,
+				const publicKeyOptions = await registrationOptionsFor({
+					actor,
 					userName,
-					userID: utf8ToBytes(actor),
-					challenge: challengeBytes,
-					timeout: CEREMONY_TIMEOUT_MS,
-					attestationType: "none",
-					excludeCredentials: enrolled.map(descriptorOf),
-					authenticatorSelection: {
-						//this is the only enrolment ceremony so it must require a resident key (E-483)
-						residentKey: "required",
-						userVerification: settings.registrationUserVerification,
-					},
+					challengeBytes,
+					enrolled,
+					userVerification: settings.registrationUserVerification,
 					...(userDisplayName === undefined ? {} : { userDisplayName }),
 				});
 				return { publicKeyOptions, challengeToken };
@@ -354,42 +456,18 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 
 			async finish({ actor, challengeToken, response, label }) {
 				await consumeChallengeOrReject({ challengeToken, purpose: "register", userId: actor });
-				assertOriginIsExpected(response.response.clientDataJSON, settings.origins);
-				const verification = await verifiedOrRejected(() =>
-					verifyRegistrationResponse({
-						response,
-						expectedChallenge: challengeToken,
-						expectedOrigin: [...settings.origins],
-						expectedRPID: settings.relyingPartyId,
-						requireUserPresence: true,
-						requireUserVerification: settings.registrationUserVerification === "required",
-					}),
-				);
-				if (!verification.verified) {
-					throw new ConcealedError("signature_invalid");
-				}
-
-				const { credential, aaguid, userVerified, credentialBackedUp, credentialDeviceType } =
-					verification.registrationInfo;
-				const credentialId = credentialIdBytes(credential.id);
+				const registered = await verifiedRegistration({
+					challengeToken,
+					response,
+					userVerification: settings.registrationUserVerification,
+				});
 				//a registration counts the passkeys of the read under the lock and reseals with the new one (S-INTEG-10)
 				const sealed = await sealChange(options.securityState, actor, {
 					epoch: "keep",
 					write: (tx, read) => {
 						assertBelowCredentialLimit(read, "passkey", options.securityState.limits);
 						return createWebAuthnCredentialRepository({ driver: tx, schema })
-							.insertCredential({
-								actor,
-								credentialId,
-								publicKey: credential.publicKey,
-								signCount: credential.counter,
-								transports: transportsSentWith(response),
-								aaguid: aaguidOf(aaguid),
-								isBackupEligible: credentialDeviceType === "multiDevice",
-								isCurrentlyBackedUp: credentialBackedUp,
-								wasUserVerifiedAtRegistration: userVerified,
-								label,
-							})
+							.insertCredential({ actor, ...registered, label })
 							.catch((cause: unknown) => {
 								if (cause instanceof DuplicateWebAuthnCredentialError) {
 									throw new VelveError("webauthn_credential_rejected");
@@ -401,11 +479,57 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 						const components = sealedComponentsOf(read);
 						return {
 							...components,
-							passkeys: [...components.passkeys, { credentialId, publicKey: credential.publicKey }],
+							passkeys: [
+								...components.passkeys,
+								{ credentialId: registered.credentialId, publicKey: registered.publicKey },
+							],
 						};
 					},
 				});
 				return { credential: sealed.written };
+			},
+		},
+
+		recovery: {
+			//the passkeys the account holds are excluded so the authenticator keeps one that still works (E-3766)
+			async start({ transaction, actor, userName }) {
+				const enrolled = await createWebAuthnCredentialRepository({
+					driver: transaction,
+					schema,
+				}).listDescriptorsOwnedBy({ owner: actor });
+				const { challengeToken, challengeBytes } = await createWebAuthnChallenges({
+					driver: transaction,
+					schema,
+					keys: options.keys,
+					...(options.reportTokenBindingRefusal === undefined
+						? {}
+						: { reportTokenBindingRefusal: options.reportTokenBindingRefusal }),
+				}).issue({ purpose: "recover", userId: actor });
+				const publicKeyOptions = await registrationOptionsFor({
+					actor,
+					userName,
+					challengeBytes,
+					enrolled,
+					userVerification: "required",
+				});
+				return { publicKeyOptions, challengeToken };
+			},
+
+			//a passkey that replaces every other way in is registered with user verification whatever the setting (E-3766)
+			async finish({ challengeToken, response }) {
+				const owner = await challenges.consumeNamingItsOwner({
+					purpose: "recover",
+					challengeToken,
+				});
+				if (owner === null) {
+					throw new ConcealedError("challenge_not_found");
+				}
+				const credential = await verifiedRegistration({
+					challengeToken,
+					response,
+					userVerification: "required",
+				});
+				return { owner, credential };
 			},
 		},
 
@@ -447,9 +571,8 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 					purpose: "authenticate",
 					userId: null,
 				});
-				const stored = await credentials.findCredentialByCredentialId({
-					credentialId: credentialIdBytes(response.id),
-				});
+				const credentialId = credentialIdBytes(response.id);
+				const stored = await findOrActivateCredential(credentialId);
 				if (stored === null) {
 					throw new ConcealedError("credential_unknown");
 				}
