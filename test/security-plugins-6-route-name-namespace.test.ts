@@ -50,6 +50,18 @@ describe("a plugin route stays inside its own namespace at run time (3.11, 3.15 
 		expect(startsWith(routeOf("other.thing", "/x/probe/thing")).started).toBe(false);
 	});
 
+	it("refuses a segment a promise or every object reads inside the plugin's own namespace", () => {
+		for (const segment of ["then", "catch", "finally", "toString", "valueOf", "constructor"]) {
+			expect(startsWith(routeOf(`probe.${segment}`, `/x/probe/${segment}`)).started, segment).toBe(
+				false,
+			);
+		}
+	});
+
+	it("starts a route inside its own namespace", () => {
+		expect(startsWith(routeOf("probe.ping", "/x/probe/ping")).started).toBe(true);
+	});
+
 	it("does not make the instance a thenable through a route named then", () => {
 		const outcome = startsWith(routeOf("then", "/x/probe/then"));
 
