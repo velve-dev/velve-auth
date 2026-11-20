@@ -79,10 +79,13 @@ function utcTime(date: Date): Uint8Array {
 }
 
 async function certificateForAttestAndroidCom(revocationListUrl: string): Promise<Uint8Array> {
-	const pair = (await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+	const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
 		"sign",
 		"verify",
-	])) as CryptoKeyPair;
+	]);
+	if (!("publicKey" in pair)) {
+		throw new Error("the runtime returned a single key where a P-256 pair was asked for");
+	}
 	const spki = new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey));
 	const name = der(
 		0x30,
