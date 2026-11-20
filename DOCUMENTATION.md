@@ -1583,7 +1583,7 @@ would keep it.
 
 The method throws where the client returns a result (3.15 E), and it throws
 exactly what a request would have answered: a `VelveError` carrying one of the
-25 codes, mapped and logged by the same code as the HTTP path. An application
+28 codes, mapped and logged by the same code as the HTTP path. An application
 that catches it and forwards `error.code` into its own response publishes
 nothing the HTTP answer would not have published.
 
@@ -1706,7 +1706,7 @@ the second.
 
 ### Error codes
 
-Every failure of the core carries one of 25 stable codes. The status, the
+Every failure of the core carries one of 28 stable codes. The status, the
 message and the mapping from internal reason to visible code live in
 `src/core/http/error-map.ts`, and no other module decides what a caller sees. A
 plugin adds codes of its own without widening that union; they are described
@@ -1726,7 +1726,8 @@ under [A plugin's own codes](#a-plugins-own-codes) below.
 | `invalid_recovery_code` | 401 | `password_unacceptable` | 400 |
 | `invalid_pending_authentication` | 401 | `username_taken` | 409 |
 | `too_many_factor_attempts` | 429 | `username_invalid` | 400 |
-| `internal_error` | 500 | | |
+| `internal_error` | 500 | `passkey_limit_reached` | 409 |
+| `identity_limit_reached` | 409 | `recovery_disabled` | 409 |
 
 This table is the whole of `VelveErrorCode`. It does not list a plugin's codes,
 which are not part of that union and are resolved separately.

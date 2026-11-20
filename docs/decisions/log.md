@@ -18807,3 +18807,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Only reporting the switch, as for the other components, which leaves the clearing writer exactly what the orchestrator excludes. (b) A required `recoveryDisabled`, which would break every existing caller of a method that has no other way to learn the account's intent. (c) Writing the switch back to the last seal's value without asking, which repairs a broken state silently when 3.18 has a reseal repair nothing.
 **Reason.** The reseal now verifies the stored digest against the state read with the switch the other way round. If that holds, the last seal was taken with the other switch and the writer changed the switch and nothing else the seal covers, so the reseal refuses with `security_state_recovery_switch_unconfirmed` and writes nothing. The optional `recoveryDisabled` lets the operator name the switch; the reseal then writes that value under the lock, with `true` deletes the recovery codes as turning the switch on does, and seals it, and every token generation is drawn afresh as every reseal draws them, which retires the account's links. `SealedSecurityState.recoveryDisabled` reports the switch either way. The maintenance step already carried the switch: it verifies before it rekeys and refuses a broken account. `test/no-recovery-switch-reseal.test.ts` holds the attack, both directions, the operator's two values and the maintenance step, and fails when the check is removed.
 **Price.** A writer who flips the switch and also changes another component leaves a seal that holds with neither value; the reseal then ratifies the switch as it stands, like that other component, and only the returned state or an operator who names the switch catches it. `SealedSecurityState` gains a field and `resealSecurityState` an optional parameter, both in the shipped declarations.
+
+<a id="e-3745"></a>
+
+### The documentation counts 28 codes and lists every one
+`E-3745` · no-recovery-switch · documentation, settled
+
+**Context.** E-3737 and E-3741 (c) reported that `DOCUMENTATION.md` counted 25 codes in its server-call section and in *Error codes*, whose table says it is the whole of `VelveErrorCode` and lacked `passkey_limit_reached` and `identity_limit_reached` from 2.0.0 as well as `recovery_disabled`. The orchestrator approved the fix outside this feature's chapter.
+**Rejected.** Listing only the code this feature adds, which would leave the table's claim to be the whole union false.
+**Reason.** Both counts say 28, the number of codes `VELVE_ERROR_CODES` holds, and the table gains the three missing codes with their status 409, so it is again the whole union.
+**Price.** None.
