@@ -19157,3 +19157,173 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) A new class, which changes "nineteen error classes" and every table that lists them for one item. (b) S-LINK, which is about taking over an account through linking an identity, and a registration here runs under the account's own session or recovery.
 **Reason.** DEFAULT is the class of settings whose effect must be what the configuration says: S-DEFAULT-4 and S-DEFAULT-6 already make a configuration that cannot mean what it says a start error. S-DEFAULT-8 states the switch, the check, the refusal on both paths, what is stored and spent, and the start errors; T-DEFAULT-8 is its case and blocks every commit. The totals rise to 144 requirements, 148 test cases and 129 that block every commit, and the codes to 30.
 **Price.** DEFAULT now holds a requirement that is about an option being honoured rather than about a default, which a reader of the class heading would not expect.
+
+<a id="e-3660"></a>
+
+### A challenge is stateless and bound to its route by a MAC, and only a spent one is stored
+`E-3660` · proof-of-work · design, settled
+
+**Context.** The requirement asks for a challenge route that hands out a random value, a difficulty and an expiry bound to the route, authenticated with an HMAC, with nothing stored at issue, and for a server that accepts each challenge once. Something has to remember which challenges were used, and the question was what, and when.
+**Rejected.** (a) A row per issued challenge, which the requirement rules out and which would let anyone fill a table by asking the free route. (b) Remembering spent challenges in process memory, which several instances behind a balancer do not share and a restart forgets. (c) Binding the route by naming it inside the challenge, which would add a field the verifier must then compare; the verifier knows the route it is serving, so it recomputes the MAC over its own route name and a challenge for another route fails the MAC like a forged one.
+**Reason.** The challenge is `<key version>.<difficulty>.<expiry>.<value>.<mac>`, where the value is 32 bytes from the one randomness module (S-RAND-5) and the MAC covers a fixed domain, the route name and the four fields before it. A solution is recorded only once every other check holds, by the SHA-256 of the challenge, in `velve.proof_of_work_spent` with `ON CONFLICT DO NOTHING`, so the primary key decides a race, as the token tables already do. This is the stateless-ticket-plus-replay-cache pattern of a signed nonce; the HMAC is RFC 2104 under WebCrypto, nothing of its own.
+**Price.** One write per accepted solution and one table that needs the sweep. A forged challenge costs the server one HMAC before it is refused.
+
+<a id="e-3661"></a>
+
+### The challenge key is expanded from cookie-sig and is not a ninth purpose
+`E-3661` · proof-of-work · keys, settled
+
+**Context.** The MAC needs a key "derived from the library's existing key ring (no new secret)". A ninth `KeyPurpose` derived from the root key would be a derived key, but `KeyPurpose` is a public union and `assertKeysAnswerForEveryPurpose` asks a provider for every purpose at start, so every `KeyProvider` an application wrote itself would stop starting until it learned the new name.
+**Rejected.** (a) A new purpose `pow-mac`, for the reason above. (b) Using the `cookie-sig` key directly, which signs nothing today but is named for cookies; a later use of it for a cookie would share a key with the challenges.
+**Reason.** The challenge key is HKDF-Expand (RFC 5869) with `cookie-sig` of the named version as the pseudorandom key and `velve-auth/proof-of-work/v1` as the info, one HMAC-SHA256 block, imported as a non-extractable HMAC key. `cookie-sig` is already an HMAC-SHA256 key of 32 bytes derived by HKDF from the root key, which is what Expand asks of its PRK, and `keyTakesMac` refuses a provider's key that is not. The key version rides in the challenge, so a challenge verifies by `byVersion` across a rotation for as long as the version stays in the ring.
+**Price.** The challenge key's lifetime is tied to `cookie-sig`'s; rotating `cookie-sig` and dropping the old version invalidates the challenges of the last ten minutes, which the client answers by fetching a new one.
+
+<a id="e-3662"></a>
+
+### The application's two numbers are asked per request and clamped, and an answer that is no number takes the strictest bound
+`E-3662` · proof-of-work · configuration, settled
+
+**Context.** The difficulty and the failure count after which sign-in asks for a proof are functions evaluated per request, and the library clamps both to bounds of its own. The orchestrator offered 0 to 24 bits as an example.
+**Rejected.** (a) 24 bits as the upper bound. The solver measured, in Node on four vCPU while the full test suite ran beside it, 87 ms at 12 bits, 1.2 s at 16 bits and 2.7 s at 18 bits on average over five challenges each, between 52,000 and 69,000 hashes a second; 24 bits is 16.7 million expected hashes, about four minutes at that rate, and with an answer that is no number taking the strictest bound a typo in the application would have cost every user minutes. (b) Reading the functions once at construction, which the requirement forbids. (c) Answering a function that throws by turning the proof off, which would let an application's broken settings store switch a protection off silently.
+**Reason.** Difficulty is clamped to 0 to 20 bits, a fraction rounded up; the threshold to 1 to 100 failures, a fraction rounded down; `NaN` or a value that is no number takes 20 and 1, the strictest, as `waitingPeriodWithinBounds` already does for the recovery (E-3764). 20 bits is about one million hashes, some sixteen seconds at the measured rate, which is the most a form should make anyone wait. A function that throws fails that request as `internal_error`, and a `rateLimit.proofOfWork` that is not an object carrying both functions is the start error `proof_of_work_unusable`, so it is found at the start rather than on the first sign-up.
+**Price.** An operator who wants more than 20 bits cannot have it. The measurement ran under load on one machine and is an order of magnitude, not a browser's figure.
+
+<a id="e-3663"></a>
+
+### Both sides hash the challenge as handed out followed by an eight-byte nonce, built in one module
+`E-3663` · proof-of-work · format, frozen
+
+**Context.** The requirement writes `SHA-256(value ‖ n)`. Which bytes "value" and "n" are has to be one answer the server and the browser cannot disagree on.
+**Rejected.** (a) Hashing only the 32 random bytes, which would make the client decode the challenge it otherwise treats as opaque. (b) The nonce as decimal text, whose length varies with the number and whose leading zeros would need a rule.
+**Reason.** The input is the challenge string's UTF-8 followed by the nonce as eight bytes big-endian, built by `proofOfWorkInput` in `src/core/pow/work.ts`, which imports nothing and is the one module both the verifier and the client's solver use. The challenge string contains the random value, so this is `value ‖ n` with the value's own encoding, and it binds the difficulty and the expiry into the work as well. The nonce ranges from 0 to 2^53 − 1, the integers JavaScript counts exactly; the parser refuses anything else before a hash is taken.
+**Price.** The format is frozen with the first release that carries it: changing it strands every client that solves the old way.
+
+<a id="e-3664"></a>
+
+### The expiry is handed out and decided by the database clock
+`E-3664` · proof-of-work · time source, settled
+
+**Context.** Nothing is stored at issue, so the expiry has to be computed when the challenge is handed out; the spent row's deletion is decided by `maintenance.sweep`, which compares against `now()` of the database. If the clock that accepts a challenge and the clock that deletes its row disagree, a challenge the sweep has already removed could look unexpired and be accepted a second time.
+**Rejected.** (a) Checking the expiry against the injected clock in the process, which opens exactly that window. (b) Computing the expiry from the injected clock at issue, which was the first version: `test/keys-static-scan.test.ts` forbids `new Date(` anywhere in `src/core` (E-328), and the challenge route has to hand out a `Date`. That scan, and not a design argument, is what moved the issue onto the database.
+**Reason.** The issue reads `to_timestamp(floor(extract(epoch FROM now())) + 600)` from the database, one statement on a route that otherwise touches no table, and hands that `Date` out in whole seconds. The decision is taken in the spending statement: a CTE compares `to_timestamp(expiry) > now()` and inserts only then. Both ends and the sweep therefore read one clock, as E-238 put the session's freshness on the database clock. The lifetime is ten minutes, long enough to prepare a solution when a form opens and submit it after the user has typed. The instance's `clock` keeps deciding the failure counters, as it decides the rate buckets.
+**Price.** A challenge costs one round trip to the database to hand out. A test cannot age a challenge by moving the injected clock; the expiry case builds a challenge with a past expiry under the instance's keys instead. A prepared solution older than ten minutes is refused and fetched again.
+
+<a id="e-3665"></a>
+
+### The solution travels in a header and in a server-call field, and never in a route's body
+`E-3665` · proof-of-work · interface, settled
+
+**Context.** A guarded route needs the solution next to its input, over HTTP and on the direct server call 3.11 puts behind the same pipeline.
+**Rejected.** A body field `proofOfWork` on each guarded route's input, which would change seven input types, make a body field mean something to the pipeline that no handler reads, and leave the object validators to accept a field their handlers ignore.
+**Reason.** Over HTTP the solution is the header `Velve-Proof-Of-Work: <challenge>.<nonce>`, read by `toWebHandler` into `RouteCall.proofOfWork`. On a direct call it is `proofOfWork: { challenge, nonce }`, an envelope field beside `origin` and `ipAddress` in `ServerCallFields`, which `defineRoute` already reserves against route input names; `createServerMethod` writes it into the same text form, and a value that is no such pair arrives as presented but malformed. The route inputs, the client's input types and the validators are untouched.
+**Price.** A cross-origin page has to list the header in its preflight's `Access-Control-Allow-Headers`, which the CORS section now shows.
+
+<a id="e-3666"></a>
+
+### Passkey sign-in counts by address only
+`E-3666` · proof-of-work · scope, settled
+
+**Context.** The requirement asks for a proof on "sign-in after repeated failures for that account or address bucket". Password sign-in names an account before any work; a discoverable passkey sign-in names none until its assertion is verified, and the credential id it carries is chosen by the caller.
+**Rejected.** (a) An account counter keyed by the credential id, which an attacker varies at will, so it would count nothing for them and could be filled against a real credential. (b) Leaving passkey sign-in unguarded, which would leave the one sign-in Velve's own model uses outside the requirement.
+**Reason.** `signIn.passkey.finish` asks once the address's failure counter reaches the threshold, and counts `webauthn_challenge_invalid` and `webauthn_credential_rejected`. The check is on the finish and not the start, because the finish is where failures and the signature check happen; it runs before the handler, so a refusal leaves the WebAuthn challenge unspent and the client can retry the same assertion with a solution.
+**Price.** Behind one address a crowd shares one counter, so one person's failures make the others solve too; they solve invisibly and the counter forgets.
+
+<a id="e-3667"></a>
+
+### Failure counters are rows of rate_bucket that forget one failure an hour
+`E-3667` · proof-of-work · storage, settled
+
+**Context.** A failure count per account and per address is needed, keyed so that it reveals nothing about existence (L-5), forgotten over time so it is not a lock, and removed by the sweep. The account rate bucket counts attempts, successful ones included, so it cannot be read as a failure count.
+**Rejected.** (a) A new table, when `velve.rate_bucket` already holds HMAC-keyed counters with an expiry the sweep removes; the requirement names one new table and it is the spent one. (b) Resetting the account counter on a successful sign-in, which adds a write to the success path for no protection, and must never apply to the address counter, which an attacker could reset by signing in to an account of their own. (c) Counting only failures without a solution, which would let anyone with computing power keep a counter below the threshold.
+**Reason.** A counter is a row whose key is `failures|` followed by the rate bucket key of the same scope, so it cannot collide with a bucket and carries the identifier only as `HMAC(token-pepper, …)`. A failure adds one after decaying the stored count by the seconds since its last update divided by 3600, capped at 100, and the row expires when the count would reach zero, so the sweep removes it. Every answer the route's failure codes name counts, with or without a solution; requiring one compares `ceil(count)` with the threshold, so a failure counts in full until its hour has passed. A counter that fails to write is logged and costs the caller no answer.
+**Price.** `velve.rate_bucket.tokens` now holds two kinds of number, told apart by the key's first field. The first version compared the decayed count without `ceil`, and three failures within a second read as 2.999 and asked for nothing; `test/proof-of-work-sign-in.test.ts` found it. It also passed both keys as one `text[]` parameter, which the test suite's own driver cannot encode and the library avoids elsewhere by writing an array literal; the counters now take each key as a parameter of its own.
+
+<a id="e-3668"></a>
+
+### The proof is spent before the account bucket, the KDF and the mail
+`E-3668` · proof-of-work · ordering, settled
+
+**Context.** The check has to run before any expensive work and before any mail. Inside a route there are three costly steps after the origin check and the address bucket: drawing the account bucket, the key derivation and the send callback.
+**Rejected.** Spending the proof after the account bucket, which would let a caller without solutions drain a victim's account bucket and turn the rate limit into the lockout L-5 refuses.
+**Reason.** For the five request routes the pipeline spends the proof when it builds the request context, after the input parsed and before the handler. For password sign-in the handler's first statement is `enforceAccountRateLimit`, and the pipeline asks both counters and spends the proof there, before it draws the bucket; for passkey sign-in, which has no account bucket, it asks the address counter before the handler. The counters are read only on the routes that ask after failures, so no other route pays a round trip.
+**Price.** A request without a solution still draws from the address bucket, which runs first and protects the free check itself.
+
+<a id="e-3669"></a>
+
+### A guard is held against the route object, not written in its declaration
+`E-3669` · proof-of-work · interface, settled
+
+**Context.** The pipeline must know which routes ask for a proof and how. A field on `RouteDeclaration` would be the obvious place.
+**Rejected.** A `proofOfWork` field on `RouteDeclaration`. `PluginRoute` is `RouteDeclaration` minus an enumerated list in `src/core/plugin/config.ts`, a file outside this feature, so the field would appear in the plugin interface, and the registry's one reading of a plugin route would drop it silently.
+**Reason.** `guardedByProofOfWork(route, guard)` records the guard in a `WeakMap` keyed by the route object, as `classifyCoreReadingRoutes` does for reading routes (E-740), and the core calls it right after each guarded `defineRoute`. No plugin route can reach the map. Calling it inside the `defineRoute` expression was tried first and widened every inferred route name to `string`, which `test/client-route-table-type.test.ts` caught; it is a statement of its own.
+**Price.** Whether a route is guarded is not visible in its declaration but one line below it.
+
+<a id="e-3670"></a>
+
+### The challenge route is a reading GET that exists only while the proof of work is configured
+`E-3670` · proof-of-work · route, settled
+
+**Context.** The orchestrator left the choice between `POST /pow/challenge` and a `GET`, minding S-CSRF-4 and the same-origin read.
+**Rejected.** A `POST`, which would make a route that changes nothing look as if it did, and would cost a same-origin page an `Origin` header it does not need.
+**Reason.** `GET /proof-of-work/challenge?route=<name>` stores nothing, so it is a reading route: S-CSRF-4 lists it, the same-origin read of E-2390 admits it without `Origin`, and a cross-origin page cannot read its answer. It carries the address bucket, accepts the seven route names the proof can guard and nothing else, and is mounted only with `rateLimit.proofOfWork`, like the recovery routes (E-3761). Its server method is `auth.proofOfWork.challenge`, and `proofOfWork` joins the reserved namespaces.
+**Price.** The reading routes are nine, and every count of them was raised.
+
+<a id="e-3671"></a>
+
+### The worker ships as a module beside the client and the calling thread solves when it cannot run
+`E-3671` · proof-of-work · client, settled
+
+**Context.** The requirement puts the solver in a Web Worker with WebCrypto in the client export, without network access, and the orchestrator asked for it to work under a strict Content Security Policy and for the CSP to be documented. CLAUDE.md §7 rules out `node:worker_threads` and anything but ESM.
+**Rejected.** (a) An inline worker from a `Blob` URL, which needs `worker-src blob:` and is the first thing a strict policy forbids. (b) A worker source passed as a string to the application, which would make every application wire the file itself.
+**Reason.** `src/client/proof-of-work-worker.ts` is a build entry of its own and lands as `dist/client/proof-of-work-worker.mjs` beside `dist/client/proof-of-work.mjs`, which starts it with `new Worker(new URL("./proof-of-work-worker.mjs", import.meta.url), { type: "module" })`, the literal form Vite, webpack and Rollup recognise and copy. It is same-origin, so `worker-src 'self'` admits it. The package exports it as `@velve/auth/client/proof-of-work-worker` and names it in `sideEffects`, the one file whose import is its listener. `createProofOfWorkWorker` lets an application start it from where it serves it. The solver asks 256 digests at a time so the browser can run them while the last is awaited. Where there is no `Worker`, or it cannot start or fails, the calling thread solves with the same function, so a policy that refuses the worker makes the call slower and not impossible.
+**Price.** The client grows by three modules. A page that solves on its own thread does the hashing between other work and may feel it at the upper bounds.
+
+<a id="e-3672"></a>
+
+### The client asks again once on the stable code and can prepare a solution ahead of the call
+`E-3672` · proof-of-work · client protocol, settled
+
+**Context.** The client's calls to the guarded routes have to obtain and solve a challenge automatically when the server requires one, and the requirement wants the browser to solve while the user types. The client does not know the server's configuration.
+**Rejected.** (a) Carrying a fresh challenge in the error body, which would make the error map decide a second kind of answer for one code and give the refusal a payload S-RATE-9 says it does not have. (b) Fetching a challenge before every guarded call, which would cost a round trip and a solve on every sign-in although most ask for nothing.
+**Reason.** A call answered `proof_of_work_required` fetches a challenge for its own route, solves it and is sent once more with the header; a second refusal, or a challenge that cannot be fetched, returns the first answer, so there is never a loop. `prepareProofOfWork(client, { route })` fetches and solves ahead, and the next call of that route sends the solution with its first request; a prepared solution is used once and dropped after its challenge expires. It was first a method `client.proofOfWork.prepare` and is a function beside the client because `test/client-calls.test.ts` holds the client to one leaf per route row, which is 3.15 E's rule that the client is the table and nothing else; the client keeps its preparations in a `WeakMap` keyed by the client object. The calls go only to the library's own routes through `src/client/transport.ts`, so `check:egress` stays as it was.
+**Price.** An unprepared guarded call costs two more round trips and a solve. A prepared solution for a sign-in that asks for nothing is sent and ignored.
+
+<a id="e-3673"></a>
+
+### A route that asks for no proof ignores one sent along
+`E-3673` · proof-of-work · behaviour, settled
+
+**Context.** A client can prepare a solution for a sign-in that, when it is sent, is below its threshold, and a direct caller can pass `proofOfWork` to any method.
+**Rejected.** Checking and spending every solution sent, which would refuse a sign-in that asked for nothing because its prepared solution expired, and would write a row for a proof nobody needed.
+**Reason.** The pipeline reads the solution only where a guard asks for it; anywhere else it is neither parsed nor spent.
+**Price.** A solution sent to a route that did not need it stays spendable on its own route until it expires, which is what an unused challenge is anyway.
+
+<a id="e-3674"></a>
+
+### One code, proof_of_work_required, at status 400
+`E-3674` · proof-of-work · error, settled
+
+**Context.** A missing, expired, reused or wrong solution answers with one stable code that reveals nothing more.
+**Rejected.** (a) 428 Precondition Required, which RFC 6585 defines for conditional requests and the lost-update problem. (b) 429, which `rate_limited` and `too_many_factor_attempts` already mean and which a client would read as "wait". (c) 403, which says the caller may not, where a solution would let them.
+**Reason.** `proof_of_work_required` answers 400 for all six inner reasons — missing, malformed, forged, unsolved, expired, spent — through `VISIBLE_CODE_BY_CONCEALED_REASON`, so the body is byte-identical and only the log says which. Every guarded route already lists 400 in D.3, so the table's statuses stay as they are. The core codes are 31.
+**Price.** A client must look at the code and not the status to tell the proof apart from a malformed input.
+
+<a id="e-3675"></a>
+
+### The requirements are S-RATE-9 to S-RATE-12
+`E-3675` · proof-of-work · specification, settled
+
+**Context.** The behaviour needs requirements in section 5 and cases in section 6.
+**Rejected.** A new class, which would change "nineteen error classes" and every table that lists them for a mechanism that bounds attempts, which is what RATE is about.
+**Reason.** S-RATE-9 states the challenge and the one answer, S-RATE-10 the single spend and the sweep, S-RATE-11 where it is asked and that it runs before the account bucket, the KDF and the mail and depends only on counters keyed like the bucket, S-RATE-12 that it is off when absent and the bounds. T-RATE-9 to T-RATE-12 block every commit. The totals rise to 148 requirements, 152 test cases and 133 that block every commit; the reading routes to nine, the swept tables to eight, the schema to nineteen tables, the core codes to 31 and the stated methods to 64, 61 and 49.
+**Price.** The counts stated here are those of this branch; change 8 is in review beside it and the merge reconciles both.
+
+<a id="e-3676"></a>
+
+### The configuration is rateLimit.proofOfWork and not a key of its own
+`E-3676` · proof-of-work · configuration, settled
+
+**Context.** The proof of work was first configured as a top-level `proofOfWork` beside `rateLimit`. The full test run then failed T-DEFAULT-1 in `test/auth-startup.test.ts`, which holds every top-level key of the configuration type to a row of `SECURITY_OPTIONS` (S-DEFAULT-1), and that list lives in `src/core/auth/security-options.ts`, a file outside the set this feature may touch.
+**Rejected.** (a) Editing `security-options.ts` anyway, which CLAUDE.md §5 forbids. (b) Keeping the top-level key and reporting the missing row, which would have left the gate red until someone else added it.
+**Reason.** The reason it moved is the file boundary, and that is what is written here. It also reads well where it landed: 3.9 is where the specification puts the proof of work, the requirement says the rate limits remain the protection, and `RateLimitConfig` is the block an operator tuning abuse defences already reads. `rateLimitConfigOf` resolves only the three buckets and drops the field, so no default, weakening or bucket check changes; the instance and the start read `config.rateLimit.proofOfWork` directly.
+**Price.** `RateLimitConfig`, which A.6 calls the resolved form, now carries an optional field the resolution never fills. Whether the proof of work deserves a top-level key and a `SECURITY_OPTIONS` row is left to whoever owns that file; the move is one line in the configuration type.
