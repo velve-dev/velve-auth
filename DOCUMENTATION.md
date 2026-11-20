@@ -141,7 +141,7 @@ CI runs the whole test suite against 14 and against 16 on every push. 15, 17 and
 ## Schema
 
 Everything lives in its own PostgreSQL schema, `velve` by default, so nothing
-collides with the application's own tables. Eighteen tables.
+collides with the application's own tables. Nineteen tables.
 
 `user` is a reserved word in SQL, but `velve.user` is valid without quoting
 because PostgreSQL accepts any keyword after the dot. No statement in this
@@ -152,7 +152,7 @@ tokens, challenges, recovery codes. What it needs in cleartext is encrypted —
 the TOTP secret, third-party OAuth tokens, the PKCE verifier, the PHC string.
 Passwords are derived with a KDF. Nothing confidential is in cleartext.
 
-**The schema.** Eighteen tables in their own PostgreSQL schema, `velve` by
+**The schema.** Nineteen tables in their own PostgreSQL schema, `velve` by
 default. The SQL is shipped as files under `migrations/`, so it can be read,
 reviewed and applied with your own tooling; the library carries the same text
 and never reads a file at run time.
@@ -357,8 +357,8 @@ One row per code, never a blob.
 
 | Column | Type | Notes |
 |---|---|---|
-| `bucket_key` | `text` | primary key |
-| `tokens` | `real` | negative means the request is rejected |
+| `bucket_key` | `text` | primary key; a key beginning `failures\|` is a failure counter of the [proof of work](#the-failure-counters) |
+| `tokens` | `real` | negative means the request is rejected; in a failure counter, the failures not yet forgotten |
 | `updated_at` | `timestamptz` | |
 | `expires_at` | `timestamptz` | indexed for the sweep |
 
@@ -398,6 +398,17 @@ per account, added by migration 7. No sign-in path reads this table; see
 | `public_key`, `sign_count`, `transports`, `aaguid`, `backup_eligible`, `backup_state`, `user_verified_at_registration`, `label` | | as in `velve.webauthn_credential`, moved there unchanged by the activation |
 | `created_at` | `timestamptz` | when the passkey was registered |
 | `activates_at` | `timestamptz` | when it may replace every other way in, by the database clock; sealed in whole microseconds |
+
+### `velve.proof_of_work_spent`
+
+A challenge of the proof of work once it has been accepted, kept until its
+expiry so it is accepted once; added by migration 9. See
+[The proof of work](#proof-of-work).
+
+| Column | Type | Notes |
+|---|---|---|
+| `challenge_sha256` | `bytea` | primary key, the SHA-256 of the challenge, 32 bytes |
+| `expires_at` | `timestamptz` | the challenge's expiry, indexed for the sweep |
 
 ### `velve.security_state`
 
@@ -453,9 +464,10 @@ the two byte for byte.
 | `0005_pending_password_reset.sql` | 5 | adds the nullable `new_password_phc` and `new_password_key_version` to `velve.pending_authentication`, with the constraint `pending_authentication_new_password_whole` that sets both or neither; rewrites no row, so nobody is signed out and no pending state ends |
 | `0006_recovery_disabled.sql` | 6 | adds the nullable `recovery_disabled_at` to `velve.user`, the [no-recovery switch](#the-no-recovery-switch); rewrites no row, so nobody is signed out and no seal changes |
 | `0007_passkey_recovery.sql` | 7 | adds `passkey_recovery_generation` with default 1 to `velve.security_state` and the table `velve.passkey_recovery`, the [recovery to a new passkey](#recovery-to-a-new-passkey); rewrites no row, so nobody is signed out and no seal changes |
+| `0009_proof_of_work.sql` | 9 | the table `velve.proof_of_work_spent` and its sweep index, the [proof of work](#proof-of-work); rewrites no row and belongs to no account |
 
 Exactly one of the three version-2 files is applied — the one matching the
-configured identity mode. Migrations 3 to 7 are the same in every mode; migration 4
+configured identity mode. Migrations 3 to 7 and 9 are the same in every mode; migration 4
 signs every user out, because no existing token row carries the MAC it adds. Changing the mode of a database that has already
 migrated is a schema change of its own; the runner will report the recorded
 migration 2 as changed rather than silently swapping the constraint.
@@ -1420,7 +1432,7 @@ handler.
 Five declaration mistakes are start errors rather than request-time surprises: a
 path that is not absolute or carries an empty or trailing segment; `freshness:
 "required"` without `caller: "session"`; `caller: "pending"` with
-`pendingCookie: "hidden"`; an input field named like one of the six
+`pendingCookie: "hidden"`; an input field named like one of the seven
 `ServerCallFields`; and, when the handler is built, a route table with a
 duplicate name or with two routes answering the same folded path.
 
@@ -1563,6 +1575,7 @@ Freshness is measured against `createdAt`, never against `lastUsedAt` (3.5).
 | `callers` | `CallerResolver` | `resolveSession` returns the `Session`, `resolvePending` the `ResolvedPendingAuthentication`; both throw, and the error map decides what the caller sees. |
 | `pluginContextOf` | `(route: RouteMetadata) => FrozenContext` | The frozen context a route's handler receives as `context.plugin`: the registering plugin's for a plugin route, the core one — with no tables of its own — for a route nobody registered. Required; the instance builds it from its plugin registry. |
 | `rateLimiter` | `RateLimiter` | See below. |
+| `proofOfWork` | `ProofOfWorkGate?` | The [proof of work](#proof-of-work) the guarded routes ask for; absent while `proofOfWork` is not configured, and then no route asks. |
 | `clock` | `Clock` | |
 | `log` | `(level, message, fields?) => void` | Where the true reason of every concealed failure is written. |
 
@@ -1583,7 +1596,7 @@ const result = await signIn({
 It runs the same pipeline in the same order as a request — origin check,
 address bucket, input parse, caller resolution, handler — because 3.11 puts both
 checks in front of the direct call too. Beside the route's own input it takes
-six fields, and only these six:
+seven fields, and only these seven:
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -1593,14 +1606,15 @@ six fields, and only these six:
 | `oauthStateToken` | `string?` | What `__Host-velve_oauth_state` would have carried; used where the route declares `oauthStateCookie: "readable"`. |
 | `ipAddress` | `string \| null?` | Passed to the rate limiter as the scope of the address bucket, unchanged. Absent becomes `null`, and the seam is then obliged to count that request rather than skip it (S-RATE-4); normalising an address to its `/64` prefix is the limiter's work (S-RATE-1), not this layer's. |
 | `userAgent` | `string \| null?` | Put on `RequestContext` and nothing else. Whatever stores it is obliged to truncate it by default (L-10); this layer neither stores nor shortens it. |
+| `proofOfWork` | `ProofOfWorkSolution?` | `{ challenge, nonce }`, what the `Velve-Proof-Of-Work` header would have carried; read only where the route asks for a [proof of work](#proof-of-work). A value that is no such pair counts as presented and malformed. |
 
-These six names are reserved: a route declaring an input field of the same name
+These seven names are reserved: a route declaring an input field of the same name
 is a start error, because the envelope would swallow it here and the HTTP path
 would keep it.
 
 The method throws where the client returns a result (3.15 E), and it throws
 exactly what a request would have answered: a `VelveError` carrying one of the
-30 codes, mapped and logged by the same code as the HTTP path. An application
+31 codes, mapped and logged by the same code as the HTTP path. An application
 that catches it and forwards `error.code` into its own response publishes
 nothing the HTTP answer would not have published.
 
@@ -1712,7 +1726,7 @@ http:
         accessControlAllowOriginList: ["https://app.example.com"]
         accessControlAllowCredentials: true
         accessControlAllowMethods: ["GET", "POST", "OPTIONS"]
-        accessControlAllowHeaders: ["Content-Type"]
+        accessControlAllowHeaders: ["Content-Type", "Velve-Proof-Of-Work"]
         accessControlMaxAge: 600
 ```
 
@@ -1723,7 +1737,7 @@ the second.
 
 ### Error codes
 
-Every failure of the core carries one of 30 stable codes. The status, the
+Every failure of the core carries one of 31 stable codes. The status, the
 message and the mapping from internal reason to visible code live in
 `src/core/http/error-map.ts`, and no other module decides what a caller sees. A
 plugin adds codes of its own without widening that union; they are described
@@ -1746,6 +1760,7 @@ under [A plugin's own codes](#a-plugins-own-codes) below.
 | `internal_error` | 500 | `passkey_limit_reached` | 409 |
 | `identity_limit_reached` | 409 | `recovery_disabled` | 409 |
 | `passkey_recovery_failed` | 400 | `webauthn_credential_not_discoverable` | 400 |
+| `proof_of_work_required` | 400 | | |
 
 This table is the whole of `VelveErrorCode`. It does not list a plugin's codes,
 which are not part of that union and are resolved separately.
@@ -1755,7 +1770,7 @@ indistinguishable from a wrong password there (L-4). It appears only when an
 existing session is resolved, where the caller has already proved the account is
 theirs.
 
-Nine of these codes are merged: several internal reasons produce one code, one
+Ten of these codes are merged: several internal reasons produce one code, one
 message and one body, and the true reason goes to `log` only. Code throwing a
 concealed failure raises `ConcealedError(reason)` and never chooses the visible
 code itself.
@@ -1771,6 +1786,7 @@ code itself.
 | `oauth_flow_invalid` | `state_not_found`, `state_expired`, `pkce_mismatch`, `nonce_mismatch`, `issuer_mismatch`, `id_token_signature_invalid`, `user_disabled_on_oauth_flow`, `session_issue_missed_on_oauth_flow` |
 | `webauthn_challenge_invalid` | `challenge_not_found`, `challenge_expired`, `challenge_purpose_mismatch` |
 | `webauthn_credential_rejected` | `credential_unknown`, `signature_invalid`, `rp_id_mismatch`, `origin_mismatch`, `user_not_verified`, `user_disabled_on_webauthn_assertion`, `session_issue_missed_on_passkey_sign_in`, `session_issue_missed_on_passkey_second_factor` |
+| `proof_of_work_required` | `proof_of_work_missing`, `proof_of_work_malformed`, `proof_of_work_forged`, `proof_of_work_unsolved`, `proof_of_work_expired`, `proof_of_work_spent` |
 
 Two concealed reasons answer with a code that is not merged with others:
 `session_issue_missed_on_sign_up` with `invalid_input` and
@@ -1847,6 +1863,10 @@ It keeps three counters, and only two of them can refuse a request.
 | Address | route name and the address prefix | `rate_limited` |
 | Account | route name and `HMAC(token-pepper, identifier)` | `rate_limited` |
 | Per route, per instance | route name, in memory | an alarm, and nothing else |
+
+`rateLimit.proofOfWork` adds an invisible puzzle in front of the request routes
+and of sign-ins that keep failing; it is off unless configured and is described
+in [Proof of work](#proof-of-work).
 
 ### The defaults, and why they are these
 
@@ -6189,13 +6209,14 @@ nothing else would tell you.
 | `plugin_id_duplicated` | two plugins claim the same `id` |
 | `plugin_dependency_missing` | a `dependsOn` names a plugin that is not configured |
 | `plugin_dependency_cycle` | the `dependsOn` graph has a cycle (3.11) |
-| `plugin_route_conflict` | a plugin route collides with a core route or with another plugin's, or the plugin's `id` or a route name's first segment is one of the twenty-one namespaces 3.15 B gives the instance |
+| `plugin_route_conflict` | a plugin route collides with a core route or with another plugin's, or the plugin's `id` or a route name's first segment is one of the twenty-two namespaces 3.15 B gives the instance |
 | `plugin_field_unknown` | a plugin carries a field the interface does not enumerate, at the top level or among `hooks` |
 | `plugin_anchor_incomplete` | a plugin's `securityStateAnchor` is not an object carrying the functions `recordSeal` and `minimumVersion` (E-3174) |
 | `plugin_route_reads_a_core_cookie` | a plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` |
 | `route_namespace_conflict` | two route names fold onto the same object path, so one server method would shadow the other |
 | `security_state_sealing_unknown` | `securityState` is given and its `sealing` is neither `"required"` nor `"migrating"` (S-INTEG-1, E-3112) |
 | `passkey_recovery_unusable` | `webauthn.recovery` is given and is not an object carrying a function `waitingPeriodInSeconds`, or the identity mode is `"username"`, where no address begins a recovery (E-3761) |
+| `proof_of_work_unusable` | `rateLimit.proofOfWork` is given and is not an object carrying the functions `difficulty` and `signInFailuresBeforeProof` (E-3662) |
 
 #### A route conflict names both contributors
 
@@ -6216,7 +6237,7 @@ through the optional field rather than by branching on the code first.
 
 `claimed` is what the two sides both claimed, in the form the collision was
 found in: a route name (`session.list`), a folded method and path
-(`POST /sign-out`), or one of the twenty-one surface namespaces of 3.15 B
+(`POST /sign-out`), or one of the twenty-two surface namespaces of 3.15 B
 (`session`). `contributors` is the two of them, in a fixed order: the side that
 already held the claim first, and the side that arrived second. A plugin appears
 under its own `id`; the library appears as `THE_CORE`, which is exported beside
@@ -6368,9 +6389,10 @@ after.
 `close()` resolves without doing anything. The connection came from the
 application and goes back to it; the library never opened one.
 
-`maintenance.sweep()` deletes expired rows from the seven tables that carry a
+`maintenance.sweep()` deletes expired rows from the eight tables that carry a
 `*_sweep_idx` — `session`, `one_time_token`, `pending_authentication`,
-`totp_used_step`, `webauthn_challenge`, `oauth_flow` and `rate_bucket` — and
+`totp_used_step`, `webauthn_challenge`, `oauth_flow`, `rate_bucket` and
+`proof_of_work_spent` — and
 reports how many rows went from each (L-11). It has no HTTP route, on purpose.
 `maintenance.sealSecurityState()` and `maintenance.resealSecurityState()` have
 none either; see
@@ -6387,10 +6409,11 @@ none either; see
 | `auth.username` | `isAvailable`, `change` — present only in `"username"` and `"username_email"` |
 | `auth.oneTimeToken` | `resolve` — present only in `"email"` and `"username_email"`; no route, see [Resolving a one-time token](#resolving-a-one-time-token) |
 | `auth.passkeyRecovery` | `request`, `start`, `finish`, `pending`, `cancel` — present only in `"email"` and `"username_email"` and only with `webauthn.recovery`, see [Recovery to a new passkey](#recovery-to-a-new-passkey) |
+| `auth.proofOfWork` | `challenge` — present only with `rateLimit.proofOfWork`, see [Proof of work](#proof-of-work) |
 
-Every method reached through a route takes the six call fields beside its own
+Every method reached through a route takes the seven call fields beside its own
 input: `origin` (required, `string | null`), `sessionToken`, `pendingToken`,
-`oauthStateToken`, `ipAddress` and `userAgent`. `origin` is required and not
+`oauthStateToken`, `ipAddress`, `userAgent` and `proofOfWork`. `origin` is required and not
 optional because a security field that may be omitted is omitted; the origin
 check runs on the direct server call exactly as it runs on the HTTP path
 (S-CSRF-1).
@@ -6458,9 +6481,9 @@ interface UsernameNamespace {
 | `UserNamespace` | `auth.user`, in `"email"` and `"username_email"` | in `"email"` `auth.user` is exactly this type; in `"username_email"` it is this type plus `findByUsername(input: { username: string }): Promise<User \| null>`; in `"username"` it is this type without `findByEmail` and with `findByUsername` (E-3022) |
 | `UsernameNamespace` | `auth.username` | present only in `"username"` and `"username_email"`, absent from the type and the object in `"email"` |
 
-`ServerCallFields` is the six call fields named above: `origin: string | null`,
-required, and `sessionToken`, `pendingToken`, `oauthStateToken`, `ipAddress` and
-`userAgent`, optional. A method whose input carries them runs through its
+`ServerCallFields` is the seven call fields named above: `origin: string | null`,
+required, and `sessionToken`, `pendingToken`, `oauthStateToken`, `ipAddress`,
+`userAgent` and `proofOfWork`, optional. A method whose input carries them runs through its
 route's pipeline, origin check first. A method whose input does not —
 `session.resolveFromHeaders`, `pending.resolve`, `pending.resolveFromHeaders`
 and every method of `auth.user` — has no origin check and no rate limit.
@@ -6872,7 +6895,7 @@ route. All but one are decided when `createVelveAuth` runs;
 | `plugin_table_prefix_conflict` | One plugin's `id` is another's table prefix — `audit` and `audit_trail` — so `audit_trail_entry` belongs to both of them (S-DEFAULT-5). |
 | `plugin_dependency_missing` | A `dependsOn` names a plugin that is not configured, so nothing can order the two. |
 | `plugin_dependency_cycle` | The `dependsOn` graph has a cycle, which has no topological order (3.11). |
-| `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route or with another plugin's, or the plugin's `id` — or the first segment of one of its route names — is one of the twenty-one namespaces 3.15 B gives the instance. Those twenty-one are a list, `SURFACE_NAMESPACES` in `instance.ts`, and reading the built surface instead released five of them (E-779). |
+| `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route or with another plugin's, or the plugin's `id` — or the first segment of one of its route names — is one of the twenty-two namespaces 3.15 B gives the instance. Those twenty-two are a list, `SURFACE_NAMESPACES` in `instance.ts`, and reading the built surface instead released five of them (E-779). |
 | `plugin_field_unknown` | The plugin carries a field the interface does not enumerate — at the top level or among `hooks`. |
 | `plugin_anchor_incomplete` | `securityStateAnchor` is `null`, not an object, or lacks a function `recordSeal` or `minimumVersion`. An anchor that cannot be asked would refuse every check, so it refuses the start instead (E-3174). |
 | `plugin_route_reads_a_core_cookie` | A plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` — as an own property or on a prototype. |
@@ -7683,10 +7706,10 @@ longer carried by recognising positions — but it is not free of the parse
 either, and the residual is named under Rule 1.
 
 **Rule 1 — a core table is refused by its name, wherever the name stands.**
-Nineteen core table names: eighteen read out of the SQL that creates them, so no
+Twenty core table names: nineteen read out of the SQL that creates them, so no
 second list of those exists, and `plugin_schema_migration`, which no migration
 creates — the runner does — and which is therefore named from the one place it is
-defined. A statement containing any of the nineteen, bare or qualified, in any
+defined. A statement containing any of the twenty, bare or qualified, in any
 position the reader treats as code, is refused. It is the one rule that does not
 depend on recognising a *position*, which is why the boundary rests on it.
 
@@ -8066,7 +8089,7 @@ if (!answer.ok) {
 
 The `switch` is exhaustive and the compiler checks it, because `answer.error.code`
 is narrowed to the codes **that route** declares and not to the union of all
-thirty.
+31.
 
 A call returns a result rather than throwing, and the asymmetry with the server
 is on purpose: on the server a call sits in a request handler with a central
@@ -8097,10 +8120,14 @@ createVelveClient<Auth extends { routes: readonly AnyRoute[] } = { routes: Velve
 |---|---|---|
 | `baseURL` | `string` | Where the handler is mounted. A route's path is appended to it, so `"/api/auth"` and `"https://auth.example.com"` are both valid and a trailing slash is not doubled. |
 | `fetch` | `typeof fetch` | The function that sends the request. Optional; absent means `globalThis.fetch`, read at call time so a test double installed on the global is used. |
+| `createProofOfWorkWorker` | `() => ProofOfWorkWorker` | Starts the worker a [proof of work](#solving-in-the-browser) is solved in. Optional; absent means the module the package ships beside the client. |
 
-There is nothing else. The client holds no state, no cache and no token — the
-session lives in a cookie the browser sends and the library never lets JavaScript
-read.
+There is nothing else. The client holds no cache and no token — the session
+lives in a cookie the browser sends and the library never lets JavaScript read —
+and its one state is the solutions `prepareProofOfWork` solved ahead of a call,
+each used once. A call answered `proof_of_work_required` fetches a
+challenge for its own route, solves it and is sent once more; see
+[Proof of work](#proof-of-work).
 
 `createVelveClient` is synchronous and does its whole job once: it walks the
 route table, splits each `name` at the dots, and puts a function at each leaf.
@@ -8185,7 +8212,7 @@ try {
 ```
 
 `VelveError` rebuilds its message from its own copy of the error table rather
-than from the wire. For the thirty core codes the two are the same table and
+than from the wire. For the thirty-one core codes the two are the same table and
 the strings are identical; for a code this build of the package does not know,
 `unwrap` throws with `internal_error`'s message and the response's status is
 lost. The un-unwrapped path always keeps what the server said, in
@@ -8263,7 +8290,8 @@ route with your own `fetch` against `/x/<plugin-id>/…`.
 
 | Name | What it is |
 |---|---|
-| `VelveClientOptions` | The two options above. |
+| `VelveClientOptions` | The three options above. |
+| `ProofOfWorkWorker`, `ProofOfWorkTask` | The worker `createProofOfWorkWorker` returns, and the message it is posted. |
 | `VelveResult<Value, Code>` | The result object. |
 | `VelveFailure<Code>` | Its `error` half. |
 | `ClientRoute` | One row of the table: `name`, `method`, `path`. |
@@ -8286,11 +8314,15 @@ instance instead.
 
 ### What reaches the browser
 
-`@velve/auth/client` loads five modules and no more: its own entry, the table,
-the result types, the transport, and `core/http/error-map.mjs`. That last one is
-the only piece of `core/` a browser gets, it imports nothing itself, and it is
-there so that `instanceof VelveError` holds on both sides of an application that
-calls the library on the server and in the browser alike. Nothing in the closure
+`@velve/auth/client` loads nine modules and no more: its own entry, the table,
+the result types, the transport, the proof of work and its solver, and three
+pieces of `core/`: `core/http/error-map.mjs`, so that `instanceof VelveError`
+holds on both sides of an application that calls the library on the server and
+in the browser alike, and `core/pow/work.mjs` and `core/pow/config.mjs`, so that
+the browser hashes exactly the bytes the server checks and clamps to the same
+bound. None of the three imports anything. The worker module
+`client/proof-of-work-worker.mjs` is loaded only when a challenge is solved, and
+imports the solver alone. Nothing in the closure
 imports a package, a Node built-in, a driver, a handler or a line of SQL, and
 `test/client-bundle-reach.test.ts` walks the built output to say so rather than
 asserting it.
@@ -10557,7 +10589,317 @@ Run the migrations (`runMigrations` with `coreMigrations(mode)`) before starting
 
 ## Proof of work
 
-> Reserved for the `proof-of-work` feature of release 3.0.0 and not written yet. Only that feature writes into this chapter (`CLAUDE.md` §5), and its writer deletes this note when filling it.
+An invisible puzzle the browser solves while the user types (architecture 3.9,
+S-RATE-9 to S-RATE-12). It makes mass sign-ups, mass sign-in attempts and mass
+requests for mailed links cost the sender computing time, and keeps the
+operator's mail server from being used against other people's addresses. **The
+rate limits remain the protection**; the proof of work makes each attempt that
+gets past them more expensive and does not replace them.
+
+It is **off** unless `rateLimit.proofOfWork` is configured. Off means no route asks for a
+solution, `GET /proof-of-work/challenge` does not exist, `auth.proofOfWork` is
+absent and no row is ever written to `velve.proof_of_work_spent`.
+
+### `rateLimit.proofOfWork` — turning it on
+
+It lives under `rateLimit` because it is part of the abuse defence 3.9
+describes, and the buckets there stay the protection (E-3676). Resolving the
+rate limit defaults leaves it alone: configuring it changes no bucket.
+
+```ts
+import type { ProofOfWorkConfig } from "@velve/auth";
+
+const proofOfWork: ProofOfWorkConfig = {
+  difficulty: ({ route }) => (route === "signIn.password" ? 14 : 16),
+  signInFailuresBeforeProof: () => 5,
+};
+
+const auth = createVelveAuth({
+  identity: { mode: "email" },
+  // …
+  rateLimit: { proofOfWork },
+});
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `rateLimit.proofOfWork` | `ProofOfWorkConfig?` | absent: no proof of work anywhere |
+| `rateLimit.proofOfWork.difficulty` | `(context: ProofOfWorkContext) => number` | leading zero bits a challenge for `context.route` asks for |
+| `rateLimit.proofOfWork.signInFailuresBeforeProof` | `(context: SignInFailureContext) => number` | failed sign-ins on one account or one address after which a sign-in asks for a solution |
+
+`ProofOfWorkContext` is `{ route: ProofOfWorkRoute }` and `SignInFailureContext`
+is `{ route: "signIn.password" | "signIn.passkey.finish" }`. Both functions are
+called **on every request they decide** — `difficulty` each time a challenge is
+handed out, `signInFailuresBeforeProof` on each sign-in — and never once at
+construction, so an application that reads its parameters from its own settings
+store picks a change up on the next request. A function that throws fails that
+request with `500 internal_error`.
+
+Both answers are clamped to bounds the library holds (E-3662):
+
+| Answer | Difficulty | Failure threshold |
+|---|---|---|
+| a number inside the bounds | that many bits, a fraction rounded **up** | that many failures, a fraction rounded **down** |
+| below the lower bound, `-Infinity` | 0 | 1 |
+| above the upper bound, `Infinity` | 20 | 100 |
+| `NaN`, or anything that is not a number | 20, the hardest | 1, the strictest |
+
+The bounds are exported from `@velve/auth` as `LOWEST_PROOF_OF_WORK_DIFFICULTY`
+(0), `HIGHEST_PROOF_OF_WORK_DIFFICULTY` (20),
+`FEWEST_SIGN_IN_FAILURES_BEFORE_PROOF` (1) and
+`MOST_SIGN_IN_FAILURES_BEFORE_PROOF` (100). A difficulty of 0 still asks for a
+challenge, which any nonce solves; it costs one extra round trip and the
+challenge is still spent once.
+
+What a difficulty costs, measured with the shipped solver in Node on four vCPU
+while the test suite ran beside it, five challenges each (E-3662):
+
+| Difficulty | Expected hashes | Measured |
+|---|---|---|
+| 12 bits | 4,096 | 87 ms on average |
+| 16 bits | 65,536 | 1.2 s on average |
+| 18 bits | 262,144 | 2.7 s on average |
+| 20 bits | 1,048,576 | not measured; about 16 s at the 65,000 hashes a second above |
+
+A browser's WebCrypto runs at a similar order of magnitude and a phone slower;
+12 to 16 bits is a sensible range for a form the user is still filling in.
+
+A `rateLimit.proofOfWork` that is not an object carrying both functions refuses the start
+with `VelveStartupError` code **`proof_of_work_unusable`**.
+
+### Where it is asked for
+
+| Route | Method | Asks |
+|---|---|---|
+| `POST /sign-up` | `auth.signUp.withPassword` | on every call |
+| `POST /sign-up/passwordless` | `auth.signUp.withoutPassword` | on every call |
+| `POST /password/request-reset` | `auth.password.requestReset` | on every call |
+| `POST /sign-in/magic-link/request` | `auth.signIn.magicLink.request` | on every call |
+| `POST /passkey-recovery/request` | `auth.passkeyRecovery.request` | on every call |
+| `POST /sign-in/password` | `auth.signIn.password` | once the account's **or** the address's failure counter reaches the threshold |
+| `POST /sign-in/passkey/finish` | `auth.signIn.passkey.finish` | once the address's failure counter reaches the threshold |
+
+The check runs after the origin check and the address bucket, and **before**
+the account bucket, any key derivation and any mail (E-3668). A refusal for a
+missing solution therefore spends no token of the victim's account bucket, so a
+caller without solutions cannot drain it, and it reaches no KDF.
+
+A passkey sign-in counts by address only: a discoverable passkey names no account
+before it is verified, and the credential id it carries is the caller's to
+choose (E-3666).
+
+#### The failure counters
+
+A failed sign-in is any answer `invalid_credentials` on `signIn.password`, and
+any answer `webauthn_challenge_invalid` or `webauthn_credential_rejected` on
+`signIn.passkey.finish` — whether or not a solution came with it (E-3667). Each
+failure adds one to the address counter and, for a password sign-in, to the
+account counter of the identifier as it was entered, in its comparison form.
+
+A counter is a row of `velve.rate_bucket` whose key begins with `failures|` and
+is formed the way the rate buckets' keys are (L-5): the address counter by the
+`/32` or `/64` network, the account counter by `HMAC(token-pepper, identifier)`.
+An identifier with no account behind it therefore counts exactly as one with an
+account, and asks for a solution after exactly as many failures; requiring a
+solution tells nobody whether an account exists. The identifier never stands in
+the table in cleartext.
+
+A counter forgets one failure an hour and stops at 100, so it is empty at the
+latest a hundred hours after its last failure, and its row expires then and is
+removed by the sweep. A failure counts in full until its hour has passed. A
+successful sign-in does not reset a counter. A counter that cannot be written is
+logged as `a failed sign-in was not counted` and costs the caller nothing.
+
+### The challenge
+
+`GET /proof-of-work/challenge?route=<name>` hands out one challenge, and
+`auth.proofOfWork.challenge({ route })` does the same for a server-rendered
+form. `route` is one of the seven names above; any other answers `400
+invalid_input`. The route is reading, admits a same-origin `GET` without an
+`Origin` header (S-CSRF-4) and carries the address bucket.
+
+```ts
+interface ProofOfWorkChallenge {
+  challenge: string;   // what the client hashes and sends back
+  difficulty: number;  // leading zero bits asked for
+  expiresAt: Date;     // ten minutes after the issue
+}
+```
+
+`challenge` is `<key version>.<difficulty>.<expiry>.<value>.<mac>`: the
+`cookie-sig` key version, the difficulty, the expiry in Unix seconds, 32 random
+bytes as base64url, and an HMAC-SHA256 over a fixed domain, the **route name**
+and the four fields before it. The MAC key is expanded from `cookie-sig` by
+HKDF-Expand, so a `KeyProvider` of the application's own answers no new purpose
+(E-3661); a challenge stays valid across a key rotation for as long as its key
+version stays in the ring. **Nothing is stored when a challenge is handed out**
+(E-3660). `PROOF_OF_WORK_LIFETIME_IN_SECONDS` (600) is exported from
+`@velve/auth`; the expiry is read from the database clock when the challenge is
+handed out and checked against the same clock when it is spent (E-3664). The
+instance's `clock` decides only the failure counters, as it decides the rate
+buckets.
+
+### Solving and sending a solution
+
+The client looks for a nonce `n`, an integer from 0 to 2^53 − 1, such that
+`SHA-256(challenge ‖ n)` begins with `difficulty` zero bits, where `challenge`
+is its UTF-8 bytes and `n` is eight bytes big-endian (E-3663). The solution is
+`<challenge>.<n>`:
+
+| Caller | Carries the solution in |
+|---|---|
+| a browser through `toWebHandler` | the request header `Velve-Proof-Of-Work` |
+| a direct server call | the field `proofOfWork: { challenge, nonce }` beside `origin` (`ProofOfWorkSolution`) |
+
+A route that does not ask for a solution — a route that is never guarded, or a
+sign-in whose counters are below the threshold — neither checks nor spends one
+sent along (E-3673).
+
+A cross-origin page needs `Velve-Proof-Of-Work` in the
+`Access-Control-Allow-Headers` its preflight is answered with; see [CORS](#cors).
+
+### What the check does
+
+One SHA-256 over the presented bytes, the MAC over the name of the route that
+was called, and then, in one statement, the expiry against `now()` of the
+database and the insert of the challenge's SHA-256 into
+`velve.proof_of_work_spent` with `ON CONFLICT DO NOTHING`. Of any number of
+simultaneous uses of one solution exactly one is accepted (S-RATE-10).
+
+Every refusal answers the same thing (S-RATE-9):
+
+```json
+{ "error": { "code": "proof_of_work_required", "message": "A solved proof of work is required." } }
+```
+
+with status `400`. Only the operator's log names the reason:
+
+| Logged reason | When |
+|---|---|
+| `proof_of_work_missing` | no solution came with the request |
+| `proof_of_work_malformed` | the solution is not of the form the route hands out, its nonce is above 2^53 − 1, or its difficulty above 20 |
+| `proof_of_work_forged` | the MAC does not hold: another route's challenge, a changed field, another instance's keys, or a key version no longer in the ring |
+| `proof_of_work_unsolved` | the hash does not begin with enough zero bits |
+| `proof_of_work_expired` | the database clock has passed the expiry |
+| `proof_of_work_spent` | the challenge was accepted before |
+
+### `velve.proof_of_work_spent`
+
+Added by migration 9. A challenge is written here only once it is spent, and
+kept until its expiry.
+
+| Column | Type | Notes |
+|---|---|---|
+| `challenge_sha256` | `bytea` | primary key, the SHA-256 of the challenge as handed out, 32 bytes |
+| `expires_at` | `timestamptz` | the challenge's expiry, indexed for the sweep |
+
+`auth.maintenance.sweep()` deletes a row once `expires_at` has passed by the
+database clock — the clock the spending statement checks the expiry by, so a
+challenge the sweep has removed is refused as expired and never accepted a
+second time. `SweepReport.deletedRowsByTable.proof_of_work_spent` says how many
+went.
+
+### Solving in the browser
+
+`createVelveClient` handles the proof of work without any configuration:
+
+1. A call the server answers `proof_of_work_required` fetches a challenge for
+   **its own route** from `/proof-of-work/challenge`, solves it and is sent
+   **once** more with the header. If the second answer refuses too, or the
+   challenge cannot be fetched (a server without the proof of work answers 404),
+   the first answer is returned (E-3672).
+2. `prepareProofOfWork(client, { route })` fetches and solves a challenge ahead
+   of the call — call it when the form is shown, and the work runs while the user
+   types. It is a function beside the client rather than a method on it, so the
+   client stays the route table and carries no leaf without a row (E-3672); given
+   an object `createVelveClient` did not build it throws a `TypeError`. The next call of that route sends the prepared solution with its first
+   request. A prepared solution is used once, and dropped once its challenge has
+   expired. The promise resolves when the solution is ready and never rejects.
+
+```ts
+import { createVelveClient, prepareProofOfWork } from "@velve/auth/client";
+
+const client = createVelveClient({ baseURL: "/api/auth" });
+
+form.addEventListener("focusin", () => {
+  void prepareProofOfWork(client, { route: "signUp.withPassword" });
+}, { once: true });
+
+const answer = await client.signUp.withPassword({ email, password });
+```
+
+For a sign-in, which asks only after failures, a prepared solution is sent along
+and ignored while the counters are below the threshold.
+
+#### The worker, and the Content Security Policy it needs
+
+The client solves in a **module worker** that `@velve/auth/client` ships beside
+itself as `proof-of-work-worker.mjs`, started with
+
+```ts
+new Worker(new URL("./proof-of-work-worker.mjs", import.meta.url), { type: "module" })
+```
+
+which is the form Vite, webpack and Rollup recognise and copy the worker along
+for; without a bundler the module is fetched from beside the client module. The
+worker is served from the application's own origin, so a Content Security Policy
+admits it with
+
+```
+worker-src 'self'
+```
+
+(or `script-src 'self'` where `worker-src` is not set). It needs neither `blob:`
+nor `'unsafe-eval'`, and it reaches no network: it hashes with
+`crypto.subtle.digest` and posts the nonce back (E-3671).
+
+An application that serves the module from elsewhere starts the worker itself:
+
+```ts
+import workerUrl from "@velve/auth/client/proof-of-work-worker?url"; // Vite
+
+const client = createVelveClient({
+  baseURL: "/api/auth",
+  createProofOfWorkWorker: () => new Worker(workerUrl, { type: "module" }),
+});
+```
+
+| Option | Type | Meaning |
+|---|---|---|
+| `createProofOfWorkWorker` | `() => ProofOfWorkWorker` | Starts the worker for one challenge; it is terminated after its answer. Absent means the shipped module beside the client. |
+
+The package exports the module as `@velve/auth/client/proof-of-work-worker`, and
+names it its one file with a side effect, so no bundler drops its message
+listener. Where no `Worker` exists (Node, a test) or the worker cannot start or
+fails — a policy refusing it, for instance — the calling thread solves with the
+same function, so the call still completes.
+
+### The types this feature exports
+
+From `@velve/auth`: `ProofOfWorkConfig`, `ProofOfWorkContext`,
+`SignInFailureContext`, `ProofOfWorkRoute`, `SignInRouteGuardedAfterFailures`,
+`ProofOfWorkChallenge`, `ProofOfWorkSolution`, `ProofOfWorkNamespace`, and the
+constants `LOWEST_PROOF_OF_WORK_DIFFICULTY`, `HIGHEST_PROOF_OF_WORK_DIFFICULTY`,
+`FEWEST_SIGN_IN_FAILURES_BEFORE_PROOF`, `MOST_SIGN_IN_FAILURES_BEFORE_PROOF` and
+`PROOF_OF_WORK_LIFETIME_IN_SECONDS`. From `@velve/auth/client`:
+`prepareProofOfWork`, `ProofOfWorkTask` and `ProofOfWorkWorker`.
+
+### Upgrading
+
+Run the migrations (`runMigrations` with `coreMigrations(mode)`) before
+starting 3.0.0; migration 9 creates one table and rewrites no row. Configure
+`rateLimit.proofOfWork` only once every instance runs 3.0.0: an older instance knows
+neither the table nor the header, and would let through what a newer one asks a
+solution for. A client older than 3.0.0 does not solve, so its calls to the
+guarded routes answer `proof_of_work_required` until it is updated.
+
+### What it does not do
+
+It is not a CAPTCHA and tells no human from a machine: whoever has computing
+power of their own pays milliseconds to seconds per attempt. A challenge can be
+solved in advance until its expiry, and each one is spent once. Sign-ins through
+a provider, a magic link's redemption and the second-factor routes ask for
+nothing; the rate limits bound them.
 
 ## Resolving a one-time token
 
