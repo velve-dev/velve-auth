@@ -321,7 +321,21 @@ describe("a writer who plays the whole state back to before the switch went on (
 			[account.userId],
 		);
 		await anchored.user.disableRecovery({ userId: account.userId });
-		await new Promise((resolve) => setTimeout(resolve, 20));
+		const [sealed] = await mounted.connection.query<{ version: string }>(
+			`SELECT version::text AS version FROM ${mounted.schema}.security_state WHERE user_id = $1`,
+			[account.userId],
+		);
+		const switchedVersion = Number(sealed?.version);
+		for (let waited = 0; waited < 200; waited += 1) {
+			if (
+				anchor.recorded.some(
+					(event) => event.userId === account.userId && event.version >= switchedVersion,
+				)
+			) {
+				break;
+			}
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
 
 		await clearTheSwitch(account.userId);
 		await restoreCodeRows(savedCodes);
@@ -344,6 +358,14 @@ describe("a writer who plays the whole state back to before the switch went on (
 				() => "accepted",
 				(error: { code?: string }) => error.code ?? "thrown",
 			);
+
+		for (
+			let waited = 0;
+			waited < 200 && !alarms.some((alarm) => alarm.userId === account.userId);
+			waited += 1
+		) {
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
 
 		expect(refused).toBe("invalid_recovery_code");
 		expect(
