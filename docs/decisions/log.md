@@ -19157,3 +19157,133 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) A new class, which changes "nineteen error classes" and every table that lists them for one item. (b) S-LINK, which is about taking over an account through linking an identity, and a registration here runs under the account's own session or recovery.
 **Reason.** DEFAULT is the class of settings whose effect must be what the configuration says: S-DEFAULT-4 and S-DEFAULT-6 already make a configuration that cannot mean what it says a start error. S-DEFAULT-8 states the switch, the check, the refusal on both paths, what is stored and spent, and the start errors; T-DEFAULT-8 is its case and blocks every commit. The totals rise to 144 requirements, 148 test cases and 129 that block every commit, and the codes to 30.
 **Price.** DEFAULT now holds a requirement that is about an option being honoured rather than about a default, which a reader of the class heading would not expect.
+
+<a id="e-3840"></a>
+
+### The requirement is S-INTEG-13
+`E-3840` · verified-attestation · specification, settled
+
+**Context.** Change 8 of release 3.0.0 asks for verified attestation and a per-account AAGUID allowlist, and the maintainer's binding answer adds that the list is enforced at sign-in and that the list and every credential's attestation status are part of the sealed security state. The behaviour needs a requirement in section 5 and a test case in section 6.
+**Rejected.** (a) S-DEFAULT, where E-3817 put the discoverable registration, because most of this change is not an option being honoured but state a writer must not be able to change. (b) A new class, which would change "nineteen error classes" for one item.
+**Reason.** INTEG is the class of the sealed security state against a writer on the database (3.18), and S-INTEG-11 and S-INTEG-12 already hold two per-account settings of 3.0.0 there. S-INTEG-13 states what counts as verified, when attestation is requested, the refusals at registration and sign-in, the seal, the reseal and L-13; T-INTEG-13 holds them with thresholds. The totals become 145 requirements, 149 test cases and 130 on every commit, in both languages.
+**Price.** S-INTEG-13 is long, because one requirement carries the configuration, the enforcement and the seal together.
+
+<a id="e-3841"></a>
+
+### Attestation is requested as direct, and only where a list needs it
+`E-3841` · verified-attestation · WebAuthn, settled
+
+**Context.** The requirement says accounts without a list behave as today, with no attestation requested, and the orchestrator asked for attestation only for accounts with a list or when the application asks for it, and for a decision between `"direct"` and `"enterprise"`. WebAuthn Level 3 §5.4.7 defines `"direct"` as the attestation the authenticator generated, and `"enterprise"` as one that may identify the individual device and that a client returns only to relying parties an enterprise policy or the browser vendor has listed.
+**Rejected.** (a) `"enterprise"`, which a browser ignores for an ordinary relying party and which carries a device-unique identity no list here needs. (b) `"indirect"`, under which the client may replace the attestation with an anonymised one that no configured root signs. (c) Asking every registration for attestation whenever roots are configured, which changes what an account without a list is asked and shows some users a privacy prompt the requirement does not want.
+**Reason.** `registrationOptionsFor` asks for `"direct"` when the verified read of the account holds a list or `webauthn.attestation.requestForEveryAccount` is `true`, and for `"none"` otherwise. A registration in a session reads the list through `checkAccount`; a broken state there asks for `"none"`, since the finish refuses it under the lock anyway, and the recovery start passes the list of the read it already holds. `requestForEveryAccount` is the "when the application asks for it" of the brief: without it an account that signs up with a passkey and gets a list later could never have a verified passkey, because an attestation cannot be verified after the fact.
+**Price.** A third switch in the `webauthn` block, and a registration in a session now reads the security state at its start where attestation is configured.
+
+<a id="e-3842"></a>
+
+### Only a full packed attestation whose chain reaches a configured root counts as verified
+`E-3842` · verified-attestation · WebAuthn, settled
+
+**Context.** The requirement says an AAGUID without a verified chain never satisfies a list, and the orchestrator asked which formats count, with a self, none or surrogate attestation never counting. `verifyRegistrationResponse` returns `verified: true` for `none` and for a self attestation, and its packed verifier skips the path validation when no root is set for `packed`, so its own verdict says nothing about a chain. The only real attestation a test can produce here is a packed one, from a test CA made in the test setup.
+**Rejected.** (a) Counting every format whose verifier passes, which counts `none` and self attestation. (b) Counting `tpm`, `android-key` and `apple` as well, whose verifiers check chains against roots the dependency presets and which no fixture here can produce, so the library would ship a claim no test holds. (c) Counting `fido-u2f`, whose AAGUID is always zero and so names no model a list could hold.
+**Reason.** `attestedAaguidOf` in `src/core/factor/webauthn/attestation.ts` counts an attestation only when its format is `packed` with a non-empty `x5c` — so the dependency has verified the attestation signature with the leaf and the leaf's `id-fido-gen-ce-aaguid` extension where present — when the authenticator names an AAGUID that is not all zeros, and when `validateCertificatePath` leads the chain to one of the configured roots. The result is stored as `attestation_verified`, and a check constraint lets only a row with an AAGUID carry it, so a verified attestation always names the model a list compares. FIDO's security keys use full packed attestation.
+**Price.** Windows Hello, Android and Apple attestations never satisfy a list, and a leaf without the AAGUID extension is trusted to report its own model because a configured root vouched for the authenticator.
+
+<a id="e-3843"></a>
+
+### The roots come from the application and are read once at the start
+`E-3843` · verified-attestation · configuration, settled
+
+**Context.** The requirement names roots the application configures, for example a manufacturer's FIDO roots, and the orchestrator ruled out downloading the FIDO Metadata Service, which `pnpm check:egress` would refuse. `@simplewebauthn/server` keeps root certificates in a process-wide `SettingsService`.
+**Rejected.** (a) Setting the roots on `SettingsService`, which one instance would change for every other instance and for the application's own use of the dependency in the same process. (b) Accepting a root that does not parse, which would make every attestation unverified at run time without saying why.
+**Reason.** `webauthn.attestation.trustedRoots` takes PEM text or DER bytes per entry. `webAuthnSettingsOf` parses each once with `getCertificateInfo`, stores it as PEM and passes the list to `validateCertificatePath` on each registration, so the roots belong to the instance. A missing object, an empty list, an entry that is not exactly one certificate and a `requestForEveryAccount` that is no boolean are start errors with their own `InvalidWebAuthnConfigError` codes, as S-DEFAULT-8 does for the discoverable switch.
+**Price.** A root that expires is filtered out by the dependency at verification time and not at the start, so an expired root turns every attestation of its chain unverified silently.
+
+<a id="e-3844"></a>
+
+### A certificate that names a revocation list is never handed to the verifier
+`E-3844` · verified-attestation · egress, settled
+
+**Context.** Reading `validateCertificatePath` showed that it calls `isCertRevoked` on every certificate of the chain and on every root before it builds the chain, and that `isCertRevoked` fetches the URL of the certificate's first CRL distribution point with the global `fetch`. The chain is supplied by the client, so an attacker with a session could make the server fetch any URL — a request forgery from inside the deployment — and the README promises no egress beyond the one provider seam (E-1844). `pnpm check:egress` looks only at `src/`, so it would not have seen this.
+**Rejected.** (a) Stubbing the dependency's internal `_fetchInternals`, which is not part of its public exports. (b) Building and checking the chain in the library, which is cryptography the dependency already does.
+**Reason.** `attestedAaguidOf` counts a chain in which any certificate carries the extension `2.5.29.31` as unverified and never passes it on, and the start refuses a root that carries it with `attestation_root_names_a_revocation_list`. A test registers such a chain with `fetch` spied on and expects no call.
+**Price.** A genuine chain whose leaf or intermediate names a revocation list never satisfies a list, and the library checks no revocation at all.
+
+<a id="e-3845"></a>
+
+### The attestation is verified before the lock and the list is checked under it
+`E-3845` · verified-attestation · WebAuthn, settled
+
+**Context.** Verifying a chain costs signature checks and must not hold the account lock, while the list must be read from the verified state under the lock, as every component of 3.18 is (S-INTEG-4).
+**Rejected.** Reading the list before the lock, which a concurrent `limitAuthenticators` could change between the read and the insert.
+**Reason.** `verifiedRegistration` computes `attestationVerified` with the rest of the ceremony, and `refuseAnAuthenticatorOutsideTheList` runs inside the sealing change of `register.finish` and of the recovery's `registerUnderTheSeal`, on the read the seal verified, before any row is written.
+**Price.** A registration under a list verifies a chain that the lock then refuses, which costs the verification for nothing.
+
+<a id="e-3846"></a>
+
+### A passkey's attested AAGUID and the list are optional fields of the encoding
+`E-3846` · verified-attestation · storage format, frozen
+
+**Context.** The maintainer's answer puts the list and each credential's attestation status under the seal. Adding a field to the canonical encoding changes the HMAC of every account, as E-3731 found for the no-recovery switch, and the AAGUID itself must be sealed too, since a writer who changes the AAGUID of a verified credential to an allowed one would otherwise satisfy the list without touching the flag.
+**Rejected.** (a) Sealing the flag alone, which leaves the AAGUID to the writer. (b) Always encoding both, which breaks every seal sealed before migration 8.
+**Reason.** The record of a passkey carries a UUID field after the public key only when its attestation is verified, and the same holds for the held passkey of a waiting recovery; the list stands as the last field of the encoding, a list field of UUIDs, only while one is set. Its type byte differs from the three optional fields before it, so no two states share an encoding. The read derives the attested AAGUID from `attestation_verified` and `aaguid` together, so setting the flag and changing the AAGUID both break the seal. An account without either keeps its encoding, which a test compares byte for byte.
+**Price.** The encoding now has four optional trailing fields whose order is frozen, and the next one must again take a type byte none of them uses.
+
+<a id="e-3847"></a>
+
+### Passkeys outside a new list are kept and stop signing in
+`E-3847` · verified-attestation · behaviour, settled
+
+**Context.** The maintainer ruled that a credential that does not satisfy the account's list cannot sign the account in, and the orchestrator asked to decide whether such credentials are also removed.
+**Rejected.** Removing them when the list is set, which cannot be undone, deletes a passkey the user may need again once the list is lifted, and would make setting a list a second way to remove sign-in methods past `factor.webauthn.remove`.
+**Reason.** They stay in `velve.webauthn_credential` and under the seal; registration, both passkey sign-ins and the activation of a recovery refuse them while the list holds, and lifting the list makes them work again. The application removes them through `factor.webauthn.remove` where it wants them gone. A waiting recovery whose held passkey does not satisfy the new list is the exception and is withdrawn in the same transaction, because it is not yet a credential and would otherwise block every new recovery of the account until it is cancelled.
+**Price.** `factor.webauthn.list` shows passkeys that no longer sign in, with `attestationVerified` the only hint why.
+
+<a id="e-3848"></a>
+
+### A refused registration in a session names its own code, and a refused sign-in names none
+`E-3848` · verified-attestation · error surface, settled
+
+**Context.** The requirement asks for one stable code for a refused registration, and the orchestrator asked that the recovery keep its uniform failure and that a sign-in with a passkey outside the list answer like an unknown passkey.
+**Rejected.** (a) Reusing `webauthn_credential_rejected` for the registration, which tells the owner nothing about why a working key was refused. (b) A distinct answer at sign-in, which would tell anyone holding a credential id that the passkey exists and is limited.
+**Reason.** `authenticator_not_allowed` (403) is the visible code of the concealed reason `authenticator_not_allowed`, which only a registration in a session of the account can reach, as E-3813 argued for the discoverable refusal. The reason is in the registration refusals, so the recovery answers `passkey_recovery_failed`. At sign-in the concealed reason `authenticator_not_allowed_on_assertion` maps to `webauthn_credential_rejected` and is raised before the signature is verified, so no counter moves and the body is the one an unknown passkey gets; only the log names the cause. The core now has 31 codes.
+**Price.** A new code in the union is a change every exhaustive `switch` over the codes in an application has to follow.
+
+<a id="e-3849"></a>
+
+### The list is set by two server-only methods and refused without roots
+`E-3849` · verified-attestation · interface, settled
+
+**Context.** The requirement says the application limits an account server-only, like change 5, whose switch is `user.disableRecovery` and `user.enableRecovery` with no route.
+**Rejected.** (a) One method taking `null` to lift the list, where a caller passing an empty result by mistake would lift a limit. (b) Accepting a list where `webauthn.attestation` is not configured, which no passkey could ever satisfy and which would lock every passkey of the account out.
+**Reason.** `user.limitAuthenticators({ userId, aaguids, allowNoUsableSignInMethod? })` and `user.liftAuthenticatorLimit({ userId })` are sealed changes through `setAuthenticatorAllowlist`, with the actor `actorOfAuthenticatorAllowlist`. The list is stored in lower case, sorted and without repeats, so the seal sees one spelling. An empty list, an entry that is not an AAGUID, the all-zero AAGUID, a non-boolean override, an unknown account and a call without configured roots answer `invalid_input`. Both are logged on the operator's sink once they commit, as the switch is, and the list is stored nowhere but the user row. Lifting works without roots, so an application that removed the configuration can still lift a list.
+**Price.** `AuthSurface` gains two methods in every mode, and the application has no read of the list besides what a reseal reports.
+
+<a id="e-3850"></a>
+
+### A list that leaves no usable way in is refused unless the caller asks for it
+`E-3850` · verified-attestation · L-13, settled
+
+**Context.** L-13 says an account always keeps one of password, WebAuthn credential or linked identity. A list changes which passkeys count as a way in without removing a row, so a list no passkey satisfies on a passkey-only account leaves it without any usable sign-in. The orchestrator asked to enforce L-13 or something like it, and to decide whether setting a list ends sessions.
+**Rejected.** (a) Refusing such a list without an override, which makes it impossible to move an account whose passkey was registered without attestation onto listed keys. (b) Raising the epoch, which would end the very session through which that user registers the listed key.
+**Reason.** `limitAuthenticators` refuses with `last_sign_in_method` when, under the new list, the account has no password, no linked identity and no passkey that satisfies it, unless `allowNoUsableSignInMethod: true` is passed. The change keeps the epoch, because it removes ways in and does not change who is signed in, as E-3735 argued for the switch. `factor.webauthn.remove` refuses to remove the last passkey that satisfies the list where no password and no identity remain. An account whose only second factor is a passkey outside the list keeps demanding that factor, because `secondFactorsOf` still counts every passkey; dropping it would fall back to the password alone.
+**Price.** The override lets an application leave an account that cannot sign in on purpose, and a session issued before the list keeps working until it ends.
+
+<a id="e-3851"></a>
+
+### A reseal ratifies no list and no attestation the seal does not confirm
+`E-3851` · verified-attestation · maintenance, settled
+
+**Context.** `maintenance.resealSecurityState` ratifies whatever rows an account holds (S-INTEG-7), and E-3746 ruled that it must not turn the no-recovery switch off for a writer. For the list the same holds: a writer who removed the list or inserted a passkey with `attestation_verified` set and an allowed AAGUID would get either ratified, and the second would sign in.
+**Rejected.** (a) Ratifying the list and the flags as the rows hold them and reporting them, the price E-3744 named and E-3746 ruled unacceptable for the switch. (b) Demanding the list for every unconfirmed reseal, which would make every existing reseal of an account that never used the feature name it.
+**Reason.** Where the stored seal does not confirm the state and the account holds a list or a verified attestation, or the instance has `webauthn.attestation` configured, the reseal refuses with `security_state_authenticator_allowlist_unconfirmed` unless the operator names `authenticatorAllowlist`, which it then writes. Every reseal of an unconfirmed state resets every `attestation_verified` of the account and its held recovery, since an attestation is verified once at registration and no stored object can verify it again. `SealedSecurityState` reports the list and the credential ids whose attestation the reseal kept.
+**Price.** After an incident a listed account has no passkey that satisfies its list until the operator lifts it or the user registers the key again; and a deployment that removed `webauthn.attestation` while lists remain is not asked when a writer cleared both the list and every flag.
+
+<a id="e-3852"></a>
+
+### Unlinking the last identity still counts passkeys outside the list
+`E-3852` · verified-attestation · hand-off, open
+
+**Context.** L-13 is enforced for unlinking an identity in `src/core/identity/sign-in-methods.ts`, which counts every WebAuthn credential. Under a list a passkey outside it is no way in, so unlinking the last identity of an account that otherwise holds only such passkeys leaves it without a usable sign-in.
+**Rejected.** Editing that file, which is outside the set of files this feature may touch (`CLAUDE.md` §5).
+**Reason.** The rule is enforced where this feature owns the code — setting a list and `factor.webauthn.remove` — and the gap is stated in 3.18 *The limits* and in the documentation, and handed off.
+**Price.** Until the counting in `sign-in-methods.ts` asks the list, an account can be left with only passkeys that do not sign in by unlinking its last identity.
