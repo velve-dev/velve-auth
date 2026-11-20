@@ -10360,10 +10360,13 @@ while such an account exists.
 ### `maintenance.resealSecurityState({ userId, reason })`
 
 ```ts
-resealSecurityState(input: { userId: string; reason: string }): Promise<SealedSecurityState>
+resealSecurityState(input: {
+  userId: string; reason: string; recoveryDisabled?: boolean
+}): Promise<SealedSecurityState>
 interface SealedSecurityState {
   readonly version: number; readonly sessionEpoch: number
   readonly email: string | null; readonly emailVerified: boolean; readonly disabled: boolean
+  readonly recoveryDisabled: boolean
   readonly password: boolean; readonly passwordSetBySession: string | null
   readonly passwordResetRequired: boolean
   readonly totp: "none" | "unconfirmed" | "confirmed"
@@ -10382,6 +10385,7 @@ a passkey or identity a writer inserted included.
 |---|---|
 | `userId` | the account |
 | `reason` | why, non-empty; it is logged at `warn` with the account and the new version, to the configured `log` or, without one, to the console, and it is not stored |
+| `recoveryDisabled` | optional: the [no-recovery switch](#the-no-recovery-switch) the reseal writes and ratifies; `true` also deletes the account's recovery codes. Without it the reseal ratifies the switch the row holds, unless the stored seal holds with the switch the other way round, which it refuses |
 
 The new version lies above the stored one and above every anchor's floor, and the
 anchors learn it. The session epoch is drawn afresh and differs from the current
@@ -10399,6 +10403,7 @@ It refuses with a `SecurityStateMaintenanceError` and changes nothing:
 | `security_state_version_exhausted` | the stored version or an anchor's floor is already `Number.MAX_SAFE_INTEGER` |
 | `security_state_envelope_unreadable` | the account has no seal row and an envelope its conversion cannot open; the alarm `envelope_binding_mismatch` is raised, and the reseal repairs no envelope |
 | `security_state_changed_during_reseal` | the seal row changed under the account lock, which only a writer outside the library can do |
+| `security_state_recovery_switch_unconfirmed` | `recoveryDisabled` is given and not a boolean, or it is not given and the stored seal holds with the no-recovery switch the other way round — a writer flipped `recovery_disabled_at` and nothing else the seal covers |
 
 An account at the largest version is recovered by hand: delete its sessions and
 its seal row by SQL and let `sealSecurityState()` seal it in mode `"migrating"`.
@@ -10901,6 +10906,17 @@ off: every sign-in, session resolution and redemption of the account then meets
 a broken state, answers its ordinary failure and raises the alarm with
 `seal_mismatch`, until an administrator reseals (S-INTEG-7). Setting the column
 breaks the state in the same way.
+
+A reseal does not turn the switch off for that writer either.
+`maintenance.resealSecurityState` refuses with
+`security_state_recovery_switch_unconfirmed` while the stored seal holds with the
+switch the other way round, until you name the switch with `recoveryDisabled`; it
+then writes that value, and with `true` deletes the recovery codes. If the writer
+changed another component as well, the seal holds with neither value and the
+reseal ratifies what the rows hold, as it does for every component; it reports
+the switch in `SealedSecurityState.recoveryDisabled`, so read it, or name the
+switch you expect. `maintenance.sealSecurityState()` refuses an account whose
+switch was changed like every broken state, and keeps a switch that is on.
 
 The encoding the seal is taken over appends the switch as its last field only
 while it is on, so an account that never turns the switch on keeps the seal it

@@ -878,6 +878,8 @@ interface SealedSecurityState {
   readonly password: boolean;
   readonly passwordResetRequired: boolean;
   readonly passwordSetBySession: string | null;
+  /** whether the account's no-recovery switch is on in the state the reseal ratified */
+  readonly recoveryDisabled: boolean;
   readonly sessionEpoch: number;
   readonly totp: "confirmed" | "none" | "unconfirmed";
   readonly version: number;
@@ -887,7 +889,7 @@ interface SealedSecurityState {
   }[];
   readonly recoveryCodeCount: number;
 }
-type SecurityStateMaintenanceErrorCode = "security_state_account_failed" | "security_state_account_missing" | "security_state_anchor_unavailable" | "security_state_changed_during_reseal" | "security_state_envelope_unreadable" | "security_state_reason_missing" | "security_state_version_exhausted";
+type SecurityStateMaintenanceErrorCode = "security_state_account_failed" | "security_state_account_missing" | "security_state_anchor_unavailable" | "security_state_changed_during_reseal" | "security_state_envelope_unreadable" | "security_state_reason_missing" | "security_state_recovery_switch_unconfirmed" | "security_state_version_exhausted";
 /** a maintenance call refused, with a stable code and the account it was about where there is one */
 declare class SecurityStateMaintenanceError extends Error {
   readonly code: SecurityStateMaintenanceErrorCode;
@@ -899,8 +901,10 @@ declare class SecurityStateMaintenanceError extends Error {
 /** the two operator calls of the security state, which no route reaches */
 interface SecurityStateMaintenance {
   sealSecurityState(): Promise<SecurityStateReport>;
+  /** recoveryDisabled names the no-recovery switch the reseal writes, and without it a switch the last seal does not confirm is refused */
   resealSecurityState(input: {
     reason: string;
+    recoveryDisabled?: boolean;
     userId: string;
   }): Promise<SealedSecurityState>;
 }
