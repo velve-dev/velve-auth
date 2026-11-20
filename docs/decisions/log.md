@@ -19497,3 +19497,63 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Keeping the reservation and recording it as a breaking change, which would charge every application for a feature it did not turn on. (b) Checking `cookie-sig` in `assertKeysAnswerForEveryPurpose` for every instance, which would refuse a provider that starts today for a feature it does not use.
 **Reason.** The direct server call takes `proofOfWork` out of the input as its envelope field, except while `environment.proofOfWork` is absent and the route declares an input field of that name; then the field reaches the route as its own input, as before 3.0.0, and a call that passes the envelope field to a route that does not declare it still has it ignored. With it, the assembly refuses any core or plugin route declaring an input field `proofOfWork` with `proof_of_work_unusable`, naming the route, since the envelope would swallow that field. `migrate()`, where the key ring is already asked for every purpose, then also asks `keyTakesMac` of the current `cookie-sig` key when the proof of work is configured and refuses with `keys_unusable`, naming `cookie-sig` and the proof of work, as a key that cannot take a MAC is refused for the integrity purposes.
 **Price.** An application with a plugin route that takes a `proofOfWork` input has to rename it before it can turn the proof of work on. The key check runs at `migrate()` and not at construction, like every other key check that needs to await the provider.
+
+<a id="e-3870"></a>
+
+### The threat model is section 5.0 and the map is section 5.22, both in section 5
+`E-3870` · security-review · specification structure, settled
+
+**Context.** The security review of the whole library asks for a threat model and for a map of every way into an account in the specification, German with the English translation. Section 5 already models attackers class by class in each class's part (a), and 3.18 models the database writer; no place models the attackers across the classes.
+**Rejected.** (a) A new top-level section 8 after the decision log, which would put the map behind the history of the design rather than beside the requirements its guards cite. (b) Spreading the threat model over the class intros of 5.1 to 5.21, which would leave no single place that names an attacker who crosses classes, the mailbox holder or the malicious plugin. (c) Putting the map into 3.15, which describes the interface and not its guards.
+**Reason.** 5.0 precedes the classes because it says which class stands against which attacker; 5.22 follows the last class because each of its guards cites a requirement of 5.1 to 5.21. The region from 5.21 to section 6 is compared paragraph by paragraph by `test/security-state-spec-translation.test.ts`, so 5.22 is written line for line parallel in both files, with the same numbers and the same code spans in every line; the tables are produced from one list and are therefore identical in everything but the translated guard text.
+**Price.** 5.22 makes the region `test/security-state-spec-translation.test.ts` compares about five hundred lines longer, and a later edit to either file's map has to keep the line parallel. Section 5 gains two third-level headings and thirty-six fourth-level ones, one per way, and the contents line of section 5 names the two new parts.
+
+<a id="e-3871"></a>
+
+### A way into an account ends in a session, an added way in, or a changed address, factor or recovery
+`E-3871` · security-review · delimitation, settled
+
+**Context.** The requirement names a minimum list and asks for everything else found by reading `src/`. The map needed a rule for what counts, or it would either miss a path or list every route.
+**Rejected.** (a) Listing every route of 3.15 D.3, which would bury the paths that grant access under reading routes that grant none. (b) Listing only the paths that issue a session, which would leave out adding a passkey, changing the address and the recovery switch, all of which change who can get in later.
+**Reason.** A way in is every path that ends in a session, in an added way of signing in, or in a changed address, factor or recovery of an account; presenting an existing session and the pending state count, because both decide about access. Thirty-five paths follow from reading `src/core/*/routes.ts`, every method of `auth.*` that has no route, the plugin points and the maintenance steps, and a thirty-sixth, `W-EVERY-ROUTE`, holds the guards of `runRoute` that every path with a route passes, so they are written once and not thirty times. Reading routes that hand out nothing granting access, the lookups `user.find*`, `user.delete` and `maintenance.sweep` are named in 5.22 as left out, with the reason. The rename of a passkey is in `W-PASSKEY-REMOVE` because it reaches the same rows by the same owner predicate.
+**Price.** The boundary is a judgement, and a path judged to grant no access is not in the map; 5.22 names what was left out so that the judgement can be checked. The migration module of section 4 is not built in `src/`, so no import path is mapped.
+
+<a id="e-3872"></a>
+
+### A missing protection is an open gap O-n, and a guard no requirement asks for cites none
+`E-3872` · security-review · identifiers, settled
+
+**Context.** Mapping found protections that are missing and guards that exist in the code but that no `S-` requirement states: freshness, the checks of a WebAuthn ceremony beyond its challenge, the pending state after a magic link or a provider sign-in. The brief says not to invent an `S-` requirement whose test does not exist yet.
+**Rejected.** (a) New `S-` items now, which would break `test/requirement-coverage.test.ts` until a test case and a test exist, and would state promises nobody has checked. (b) Leaving the requirement cell empty for every such guard, which would hide that the gap is known.
+**Reason.** Each gap gets an identifier `O-1` to `O-9`, defined in 5.0 in the shape the decided gaps L-1 to L-13 use in 3.16, and the guards that stand on it cite it. A later fix turns an `O-` into an `S-` of the fitting class with its test case. A guard that a decided gap `L-` asks for cites the `L-`; a guard for which neither an `S-`, an `L-` nor an `O-` fits says `— none —`, which happens for the rules of 3.15 B that are prose and no requirement, such as that a refresh issues no new token.
+**Price.** `O-` is a third kind of identifier beside `S-` and `L-`; `test/architecture-translation.test.ts` does not count it, so its census in the two files is held only by the map test, which checks that every cited `O-` is defined in the German file.
+
+<a id="e-3873"></a>
+
+### The map is written three times and one test keeps the three equal
+`E-3873` · security-review · tooling, open until the attack tests land
+
+**Context.** The later attack-test writers and a later gate need the map in a form a program reads; the specification needs it in prose for people.
+**Rejected.** (a) Generating the specification tables from `test/attacks/map.json` at build time, which would put generated text into the binding specification and a generator into the repository for one table. (b) Keeping only the JSON and pointing the specification at it, which the requirement rules out by asking for the map as a section of its own.
+**Reason.** `test/attacks/map.json` holds `{ id, title, guards: [{ guard, requirement, enforcedIn, legitimateTest, attackTest }] }`, and `test/attacks/map.test.ts` checks that the same ways stand in the same order in the JSON and in 5.22 of both files, that the English rows carry the JSON's guard text word for word and every row in both files the same requirement, enforcement point and tests, that every `enforcedIn` names a file of the tree and a function declared in it, that every cited requirement is defined in the German file and that every named test file exists. It plants a fault for each check and proves the check reports it. Whether every guard has an attack test is not asserted yet; the attack-test step adds that.
+**Price.** "Declared in it" is a textual match on a function, method or property declaration, not a type-level lookup; a renamed function fails the test, a function that keeps its name and loses its guard does not. That gap is what the attack tests close: each must fail when its guard is removed.
+
+<a id="e-3874"></a>
+
+### A test is named as an attack test only when it drives the attack at the guard
+`E-3874` · security-review · map content, settled
+
+**Context.** Many test files exercise a guard on the legitimate path and assert a refusal elsewhere in the same file; naming such a file twice would make the map look complete.
+**Rejected.** Filling the attack column from the requirement a test cites, which would name a file for the requirement and not for the guard.
+**Reason.** A file is named in the attack column only where its test titles show the attacker's attempt refused — a foreign identifier, a replayed or forged token, a parallel request, a broken seal, a planted row — against that guard; where no title showed it, the cell says `— none —`. Of 234 guards, 57 carry no attack test and 20 no test of the legitimate path. None of the named attack tests was checked by removing its guard; that is step 3 of the review and belongs to the attack-test writers.
+**Price.** The choice rests on reading test titles and, where unclear, the test body; a file named here can still prove less than its title says, which only removing the guard shows.
+
+<a id="e-3875"></a>
+
+### The passkey sign-in and the mailbox alone on an account without a second factor are positions, not gaps
+`E-3875` · security-review · threat model, settled
+
+**Context.** The requirement's first risk says no path ends in a session with fewer factors than the account has. A passkey sign-in ends in a session with `webauthn` alone on an account that also has a password and TOTP, and a magic link or a mailed reset opens an account without a second factor with the mailbox alone.
+**Rejected.** Counting both as open gaps, which would contradict 3.15 B.1 and 3.6, where the specification decided them: a passkey with user verification is possession and verification in one, and the mailbox is a first factor.
+**Reason.** 5.0 names them as deliberate positions so that a reader of the map does not take them for oversights and the maintainer can overrule them in one place. The recovery-code reset is not one of them: 3.6 holds every mailed reset back for a second factor, and the code path that skips it on an account with TOTP is recorded as O-2.
+**Price.** If the maintainer reads the first risk literally, both positions become gaps and need a fix of their own; this entry records that the map did not decide that.
