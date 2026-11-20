@@ -19077,3 +19077,83 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Asking the function before the challenge is consumed, which needs the account and so a read of the challenge row before its removal (S-RACE-2).
 **Reason.** The finish now consumes the challenge, verifies the attestation, asks the function and writes the held passkey in one transaction, so a throw, a refused attestation or a refused account rolls the challenge back with everything else; E-3764's sentence is true from here on.
 **Price.** A challenge whose attestation was refused can be presented again within its five minutes, which helps only whoever holds the challenge.
+
+<a id="e-3810"></a>
+
+### The switch checks the result, and the request it relies on was already there
+`E-3810` · discoverable-registration · configuration, settled
+
+**Context.** Change 7 asks for an option, off by default, that makes every registration request a discoverable credential with user verification, and for a check of the result. Reading the code first: every registration already asks for `residentKey: "required"` whatever the configuration says (E-483), `@simplewebauthn/server` 13 adds `credProps: true` to every set of creation options on its own, the recovery's registration already asks for `userVerification: "required"` (E-3766), and only the registration in a session takes `webauthn.userVerification`, which may be `"preferred"`. The requirement says that where the library already lets the application request a setting, that is documented and kept, and only the check and the refusal are added.
+**Rejected.** (a) An option per setting — one for the resident key, one for user verification, one for `credProps` — which adds two switches for requests that are already made. (b) Turning the check on for everyone, which would refuse registrations from a browser that does not report `credProps` in every application that never asked for it.
+**Reason.** One boolean, `webauthn.requireDiscoverableCredential`, in the existing `webauthn` block, beside `userVerification`, because it is a property of the relying party's registrations and both ceremonies read that block. Off, nothing changes. On, the requests stay as they were — the only one that could be weaker, user verification in a session, is held to `"required"` by E-3811 — and the result is checked (E-3812). It follows WebAuthn Level 3 §5.4.4 and §10.1.3, which make `residentKey: "required"` a request a client may fail and `credProps` the way the relying party learns what was created.
+**Price.** An application has to know that the switch adds a check and not a request, which the documentation says; nothing in the type tells it.
+
+<a id="e-3811"></a>
+
+### A preferred user verification beside the switch refuses the start
+`E-3811` · discoverable-registration · configuration, settled
+
+**Context.** With the switch on every registration must request and verify the user, but `webauthn.userVerification: "preferred"` asks for less in a session. The orchestrator left open whether the contradiction is refused at start or overridden. A caller writing JavaScript can also pass a value for the switch that is no boolean.
+**Rejected.** (a) Overriding `"preferred"` with `"required"` while the switch is on, which leaves a configuration that says one thing and does another, and an operator who reads it is wrong about what the registration asks for. (b) Reading anything but `true` as off, which lets `"true"` or `1` from an environment variable switch the check off without a word.
+**Reason.** `webAuthnSettingsOf` refuses both with `InvalidWebAuthnConfigError`: `discoverable_credential_without_user_verification` for the contradiction and `require_discoverable_credential_not_a_boolean` for a value that is no boolean, so `createVelveAuth` does not return. This is the shape S-DEFAULT-4 and S-DEFAULT-6 already give a configuration that cannot mean what it says, and it is where every other `webauthn` setting is refused (E-452). The start report of S-DEFAULT-1 is not touched: turning the switch on weakens nothing, and `"preferred"` is still reported as the weakening it was, since the switch cannot sit beside it.
+**Price.** Two new codes of `InvalidWebAuthnConfigError`, and an application that had `"preferred"` has to change it before it can turn the switch on.
+
+<a id="e-3812"></a>
+
+### Only an own rk of true counts, and silence refuses
+`E-3812` · discoverable-registration · WebAuthn, settled
+
+**Context.** Whether a discoverable credential was created is reported by the client in `clientExtensionResults.credProps.rk`. It is not in the authenticator data and no authenticator signs it. A client that cannot tell leaves `rk` out (WebAuthn Level 3 §10.1.3), and some leave the whole extension result out. The response reaches the service as a record the route accepted without a shape, so any of the three levels can be missing, of another type, or inherited.
+**Rejected.** (a) Accepting a missing `rk` as "probably discoverable" because `residentKey: "required"` was asked, which is exactly the trust in the request the requirement refuses. (b) Inferring discoverability from the authenticator data — the backup flags or the AAGUID — which say nothing about it. (c) Reading `results.credProps.rk` with ordinary property access, which would let a polluted prototype answer `true` for a field the caller never sent (E-481).
+**Reason.** The registration is accepted only when `clientExtensionResults`, `credProps` and `rk` are each an own property and `rk` is the boolean `true`; `false`, a string, a number, an array, a missing level and an inherited one are all a refusal. The requirement says so for a missing report, and a check that accepted what it cannot read would protect nothing. What the check protects against is a browser or authenticator that passes over the request for a discoverable credential — one that creates a server-side credential anyway, or a client that does not enforce `required` — and an application that registered it would have an account whose only passkey never appears in a sign-in. It does not protect against a client that lies: whoever controls the client already holds the session or the recovery the registration runs under, can register whatever their authenticator makes, and a credential claimed as discoverable that is not only fails that same person at sign-in.
+**Price.** A browser that creates a discoverable credential and does not report `credProps` is refused, and its user has to register with another browser or authenticator. An application whose own code discards `clientExtensionResults` before posting the response is refused on every registration until it passes them through.
+
+<a id="e-3813"></a>
+
+### A refused registration in a session names its own code, and the recovery keeps its one answer
+`E-3813` · discoverable-registration · error codes, settled
+
+**Context.** The requirement asks for one stable code. The registration in a session and the one that ends a recovery share `verifiedRegistration`, but the recovery must keep answering every failing step with `passkey_recovery_failed` (S-ENUM-10), and `asAFailedRecoveryStep` passes a `VelveError` through unchanged and folds only a `ConcealedError`.
+**Rejected.** (a) Answering `webauthn_credential_rejected`, the merged code of a bad signature, a wrong origin and an unknown credential, which tells the user nothing they can act on, while this refusal has a remedy: another authenticator or browser. (b) Throwing a `VelveError` with the new code, which would reach the recovery's answer unchanged and tell a caller without a session which check failed.
+**Reason.** A new visible code, `webauthn_credential_not_discoverable` with status 400, reached from a new concealed reason, `credential_not_discoverable`, that `error-map.ts` maps to it and lists among the registration refusals the recovery folds into `passkey_recovery_registration_refused`. In a session the caller is the account's own holder, so naming the refusal reveals nothing about another account; in the recovery the answer stays byte for byte that of an unknown challenge. A new code on an existing route is what 3.15 F allows a minor or major release to add.
+**Price.** The thirtieth code, one more error in the client's route table for `factor.webauthn.register.finish`, and an application that switches on the error code has a case to add.
+
+<a id="e-3814"></a>
+
+### The check runs after the attestation verified, and costs what the ceremony already spends
+`E-3814` · discoverable-registration · flow, settled
+
+**Context.** The check could run before or after the signature check, and the requirement says nothing is stored for a refused registration. The orchestrator asked that a refusal consume no more than the ceremony's challenge, and that what a refused recovery registration costs be decided and recorded.
+**Rejected.** (a) Checking `credProps` first, which is cheaper but would answer a forged attestation with the specific code and let anyone probe the check with responses that never came from an authenticator. (b) Keeping the recovery's challenge spent after the refusal, which E-3782 already ruled against for every refused attestation.
+**Reason.** `verifiedRegistration` verifies origin, relying party, challenge, signature and user verification first and only then reads `credProps`, so a forged response is answered `webauthn_credential_rejected` and only a genuine ceremony learns it made no discoverable credential. The refusal is thrown before any insert. In a session the challenge was consumed in its own statement before verification and stays spent, as for every other refusal there. In the recovery the challenge, the verification and the write are one transaction (E-3782), so the refusal rolls the challenge back and the same recovery can finish with another authenticator within the challenge's five minutes; the link and the recovery code were spent by the start and stay spent, as they do for every other refused finish.
+**Price.** A refused registration in a session needs a new start. A refused recovery registration keeps a challenge that only its holder can use.
+
+<a id="e-3815"></a>
+
+### The request names credProps itself
+`E-3815` · discoverable-registration · WebAuthn, settled
+
+**Context.** The creation options already carry `extensions: { credProps: true }` because `generateRegistrationOptions` adds it to whatever extensions it is given. The check of E-3812 depends on that request being made: a client asked for no extension reports none, and every registration would be refused.
+**Rejected.** Relying on the dependency's default, which a later major of `@simplewebauthn/server` could drop without a type error, and the switch would then refuse every registration.
+**Reason.** `registrationOptionsFor` passes `extensions: { credProps: true }` itself, for both ceremonies and whether the switch is on or not, so the options a client receives do not change with the switch. The tests read `credProps: true` from the options of both ceremonies.
+**Price.** One line that repeats what the dependency does today.
+
+<a id="e-3816"></a>
+
+### User verification at registration is enforced by the verified flag and not by a second check
+`E-3816` · discoverable-registration · WebAuthn, settled
+
+**Context.** The orchestrator asked that the user verified flag of the authenticator data be enforced at registration when the switch is on. `verifiedRegistration` already passes `requireUserVerification: userVerification === "required"` to `verifyRegistrationResponse`, which reads the `UV` flag out of the authenticator data inside the signed attestation object and throws without it; E-3811 makes `"required"` the only value the switch allows, and the recovery always passes it.
+**Rejected.** A second comparison of `registrationInfo.userVerified` in the library, which no input can reach while the verifier enforces the flag and would be code without a case.
+**Reason.** The enforcement is the verifier's flag check, reached with `"required"` on every registration the switch governs, and the tests prove it: an attestation with `UV` cleared and `rk: true` reported is refused as `webauthn_credential_rejected` in a session and as `passkey_recovery_failed` in the recovery, and nothing is stored. This follows WebAuthn Level 3 §7.1, which has the relying party verify the `UV` flag when it requires user verification.
+**Price.** The guarantee rests on the dependency's check, as every signature and flag check of a registration already does; a dependency that stopped enforcing it would be caught by those tests and not by the library's code.
+
+<a id="e-3817"></a>
+
+### The requirement is S-DEFAULT-8
+`E-3817` · discoverable-registration · specification, settled
+
+**Context.** The behaviour needs a requirement and a test case in section 5 and 6. None of the nineteen classes is about WebAuthn as such; S-REPLAY-5 covers the challenge and nothing covers what a registration accepts.
+**Rejected.** (a) A new class, which changes "nineteen error classes" and every table that lists them for one item. (b) S-LINK, which is about taking over an account through linking an identity, and a registration here runs under the account's own session or recovery.
+**Reason.** DEFAULT is the class of settings whose effect must be what the configuration says: S-DEFAULT-4 and S-DEFAULT-6 already make a configuration that cannot mean what it says a start error. S-DEFAULT-8 states the switch, the check, the refusal on both paths, what is stored and spent, and the start errors; T-DEFAULT-8 is its case and blocks every commit. The totals rise to 144 requirements, 148 test cases and 129 that block every commit, and the codes to 30.
+**Price.** DEFAULT now holds a requirement that is about an option being honoured rather than about a default, which a reader of the class heading would not expect.
