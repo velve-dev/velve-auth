@@ -80,7 +80,7 @@ import { ResolvedSessionView, UsernameAvailabilityAnswer } from "../core/auth/ro
 import { TotpEnrollment } from "../core/factor/totp/secret.mjs";
 import { WebAuthnCredential } from "../core/factor/webauthn/credential-repository.mjs";
 import { WebAuthnAuthenticationChallenge, WebAuthnRegistrationChallenge } from "../core/factor/webauthn/service.mjs";
-import { ChangedUser, SetPasswordResult } from "../core/flows/results.mjs";
+import { ChangedUser, RedeemResetResult, SetPasswordResult } from "../core/flows/results.mjs";
 import { OAuthRouteTable } from "../core/oauth/routes.mjs";
 
 //#region src/client/routes.d.ts
@@ -125,7 +125,7 @@ type VelveRouteTable = readonly [Route<"signOut", "/sign-out", {} & {}, void, "i
 } & {}, void, "invalid_input" | "origin_not_allowed" | "rate_limited">, Route<"password.redeemReset", "/password/redeem-reset", {
   newPassword: string;
   token: string;
-} & {}, SetPasswordResult, "invalid_input" | "invalid_token" | "origin_not_allowed" | "password_unacceptable" | "rate_limited">, Route<"signIn.password", "/sign-in/password", {
+} & {}, RedeemResetResult, "invalid_input" | "invalid_token" | "origin_not_allowed" | "password_unacceptable" | "rate_limited">, Route<"signIn.password", "/sign-in/password", {
   email: string;
   emailOrUsername: string;
   password: string;
@@ -1413,8 +1413,9 @@ export {
 
 import { User } from "../auth/user.mjs";
 import { IdentityMode } from "../db/migrations/identity-mode.mjs";
-import { Session } from "../http/caller.mjs";
+import { PendingAuthentication, Session } from "../http/caller.mjs";
 import { ServerCallFields } from "../http/route.mjs";
+import { PendingToken } from "../factor/pending/token.mjs";
 import { SessionToken } from "../session/token.mjs";
 import { SignInResult, SignUpResult } from "../auth/results.mjs";
 import { IdentityFields, SignInLookup } from "../auth/config.mjs";
@@ -1427,6 +1428,18 @@ interface SetPasswordResult {
   readonly session: Session;
   readonly sessionToken: SessionToken;
 }
+/** a mailed reset writes the password at once, or holds it back until an enrolled second factor is proven */
+type RedeemResetResult = {
+  /** how many sessions were revoked, which for a reset is every session the account had */
+  readonly revokedOtherSessionsCount: number;
+  readonly session: Session;
+  readonly sessionToken: SessionToken;
+  readonly status: "password_reset";
+} | {
+  readonly pending: PendingAuthentication;
+  readonly pendingToken: PendingToken;
+  readonly status: "second_factor_required";
+};
 /** what the two redeeming `/email/*` routes answer with, the account and nothing else */
 interface ChangedUser {
   readonly user: User;
@@ -1465,7 +1478,7 @@ interface MailedPasswordNamespace {
   redeemReset(input: {
     newPassword: string;
     token: string;
-  } & ServerCallFields): Promise<SetPasswordResult>;
+  } & ServerCallFields): Promise<RedeemResetResult>;
 }
 /** the way back into an account that has no address, present in every mode */
 interface RecoveryPasswordNamespace<M extends IdentityMode> {
@@ -1481,6 +1494,7 @@ export {
 	MagicLinkNamespace,
 	MailedPasswordNamespace,
 	RecoveryPasswordNamespace,
+	RedeemResetResult,
 	SetPasswordResult,
 	SignUpNamespace,
 };
@@ -2437,7 +2451,7 @@ import { ResolvedSessionView } from "./core/auth/routes.mjs";
 import { TotpEnrollment } from "./core/factor/totp/secret.mjs";
 import { WebAuthnCredential } from "./core/factor/webauthn/credential-repository.mjs";
 import { WebAuthnAuthenticationChallenge, WebAuthnRegistrationChallenge } from "./core/factor/webauthn/service.mjs";
-import { ChangedUser, EmailNamespace, MagicLinkNamespace, MailedPasswordNamespace, RecoveryPasswordNamespace, SetPasswordResult, SignUpNamespace } from "./core/flows/results.mjs";
+import { ChangedUser, EmailNamespace, MagicLinkNamespace, MailedPasswordNamespace, RecoveryPasswordNamespace, RedeemResetResult, SetPasswordResult, SignUpNamespace } from "./core/flows/results.mjs";
 import { OAuthCallbackOutcome } from "./core/oauth/service.mjs";
 import { AuthenticatorResponse, RecoveryNamespace, SignInPasskeyNamespace, TotpNamespace, WebAuthnNamespace } from "./core/factor/routes.mjs";
 import { EmailFlowSurface } from "./core/flows/routes.mjs";
@@ -2520,6 +2534,7 @@ export {
 	type RecoveryCodesRequirement,
 	type RecoveryNamespace,
 	RecoveryPasswordNamespace,
+	RedeemResetResult,
 	type RedeemedOneTimeToken,
 	type ResolvedOneTimeToken,
 	type ResolvedSession,

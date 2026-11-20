@@ -2,7 +2,8 @@ import type { IdentityFields, SignInLookup } from "../auth/config.js";
 import type { SignInResult, SignUpResult } from "../auth/results.js";
 import type { User } from "../auth/user.js";
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
-import type { Session } from "../http/caller.js";
+import type { PendingToken } from "../factor/pending/token.js";
+import type { PendingAuthentication, Session } from "../http/caller.js";
 import type { ServerCallFields } from "../http/route.js";
 import type { SessionToken } from "../session/token.js";
 
@@ -13,6 +14,21 @@ export interface SetPasswordResult {
 	/** how many sessions were revoked, which for a reset is every session the account had */
 	readonly revokedOtherSessionsCount: number;
 }
+
+/** a mailed reset writes the password at once, or holds it back until an enrolled second factor is proven */
+export type RedeemResetResult =
+	| {
+			readonly status: "password_reset";
+			readonly sessionToken: SessionToken;
+			readonly session: Session;
+			/** how many sessions were revoked, which for a reset is every session the account had */
+			readonly revokedOtherSessionsCount: number;
+	  }
+	| {
+			readonly status: "second_factor_required";
+			readonly pendingToken: PendingToken;
+			readonly pending: PendingAuthentication;
+	  };
 
 /** what the two redeeming `/email/*` routes answer with, the account and nothing else */
 export interface ChangedUser {
@@ -43,7 +59,7 @@ export interface MailedPasswordNamespace {
 	requestReset(input: { email: string } & ServerCallFields): Promise<void>;
 	redeemReset(
 		input: { token: string; newPassword: string } & ServerCallFields,
-	): Promise<SetPasswordResult>;
+	): Promise<RedeemResetResult>;
 }
 
 /** the way back into an account that has no address, present in every mode */

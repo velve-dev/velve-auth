@@ -6,6 +6,7 @@ import type {
 } from "../../http/caller.js";
 import { ConcealedError, type ConcealedReason } from "../../http/error-map.js";
 import { equalsInConstantTime } from "../../keys/constant-time.js";
+import { encryptBound } from "../../keys/envelope-binding.js";
 import type { KeyProvider } from "../../keys/provider.js";
 import {
 	bindToken,
@@ -18,13 +19,14 @@ import {
 	type TokenBindingRefusalReport,
 	type TokenBindingVerdict,
 } from "../../token/binding.js";
-import { pendingBinding } from "./binding.js";
+import { newPasswordBindingOf, pendingBinding, type StoredNewPassword } from "./binding.js";
 import { type BookedAttempt, lendBooking } from "./booking.js";
 import {
 	createPendingAuthenticationRepository,
 	type PendingAuthenticationRepository,
 	type PendingAuthenticationWithOwner,
 	type PendingCandidate,
+	type RemovedPendingReset,
 	type SecondFactor,
 } from "./repository.js";
 import { createPendingToken, hashPendingToken, type PendingToken } from "./token.js";
@@ -51,13 +53,18 @@ export interface IssuedPendingAuthentication {
 }
 
 /** the resolved intermediate state, which is not a session and mints no `Actor` */
-export type PendingResolution = ResolvedPendingAuthentication;
+export interface PendingResolution extends ResolvedPendingAuthentication {
+	/** set where the row completes a mailed password reset rather than a sign-in */
+	readonly completesReset?: true;
+}
 
 export interface ConsumedPendingAuthentication {
 	readonly userId: string;
 	readonly factorsCompleted: readonly AuthenticationFactor[];
 	/** the epoch the row was created under, which the session the completion issues must still find */
 	readonly sessionEpoch: number;
+	/** the held back new password with the proof its removal makes, null for a row that completes a sign-in */
+	readonly reset: RemovedPendingReset | null;
 }
 
 export type FailedAttempt =
@@ -100,6 +107,8 @@ export interface PendingAuthenticationService {
 		readonly sessionEpoch?: number;
 		/** the second factors the first factor's check read, and what a sign-in that loses one answers */
 		readonly offered?: OfferedFactors;
+		/** the PHC string a mailed reset holds back until the second factor, sealed into the row */
+		readonly newPassword?: { readonly phc: string };
 	}): Promise<IssuedPendingAuthentication>;
 	resolve(token: PendingToken): Promise<PendingResolution | null>;
 	consume(token: PendingToken): Promise<ConsumedPendingAuthentication>;
@@ -112,11 +121,18 @@ interface CheckedPendingRow extends StoredTokenMac {
 	readonly attempts: number;
 	readonly sessionEpoch: number;
 	readonly attemptGeneration: number;
+	readonly newPassword: StoredNewPassword | null;
 	/** whether the account had a seal row when the row was read, which only then moves a generation */
 	readonly accountSealed: boolean;
 }
 
 const FIRST_ATTEMPT_GENERATION = 1;
+
+const utf8 = new TextEncoder();
+
+function wellFormedNewPassword(candidate: PendingCandidate<unknown>): StoredNewPassword | null {
+	return candidate.newPassword === "malformed" ? null : candidate.newPassword;
+}
 
 function attemptsRemainingAfter(attempts: number): number {
 	return Math.max(MAXIMUM_PENDING_ATTEMPTS - attempts, 0);
@@ -145,11 +161,17 @@ export function createPendingAuthenticationService(
 	}
 
 	function bindingOf(tokenHash: Uint8Array, candidate: PendingCandidate<unknown>): TokenBinding {
-		return pendingBinding(candidate.userId, tokenHash, candidate.storedFactorNames ?? [], {
-			attempts: candidate.attempts,
-			sessionEpoch: candidate.sessionEpoch,
-			attemptGeneration: candidate.attemptGeneration,
-		});
+		return pendingBinding(
+			candidate.userId,
+			tokenHash,
+			candidate.storedFactorNames ?? [],
+			{
+				attempts: candidate.attempts,
+				sessionEpoch: candidate.sessionEpoch,
+				attemptGeneration: candidate.attemptGeneration,
+			},
+			wellFormedNewPassword(candidate),
+		);
 	}
 
 	//a pending row a mass revocation has overtaken is no row, and no writer's doing (E-3484)
@@ -194,7 +216,7 @@ export function createPendingAuthenticationService(
 		tokenHash: Uint8Array,
 		candidate: PendingCandidate<unknown>,
 	): Promise<TokenBindingVerdict> {
-		return candidate.storedFactorNames === null
+		return candidate.storedFactorNames === null || candidate.newPassword === "malformed"
 			? "mismatch"
 			: checkTokenBinding(options.keys, bindingOf(tokenHash, candidate), candidate);
 	}
@@ -234,6 +256,7 @@ export function createPendingAuthenticationService(
 			attempts: candidate.attempts,
 			sessionEpoch: candidate.sessionEpoch,
 			attemptGeneration: candidate.attemptGeneration,
+			newPassword: wellFormedNewPassword(candidate),
 			accountSealed: candidate.currentAttemptGeneration !== null,
 			tokenMac: candidate.tokenMac,
 			tokenMacKeyVersion: candidate.tokenMacKeyVersion,
@@ -291,11 +314,13 @@ export function createPendingAuthenticationService(
 	): Promise<StoredTokenMac & { readonly attemptGeneration: number }> {
 		const mac = await bindToken(
 			options.keys,
-			pendingBinding(row.userId, tokenHash, row.factorNames, {
-				attempts: row.attempts + 1,
-				sessionEpoch: row.sessionEpoch,
-				attemptGeneration,
-			}),
+			pendingBinding(
+				row.userId,
+				tokenHash,
+				row.factorNames,
+				{ attempts: row.attempts + 1, sessionEpoch: row.sessionEpoch, attemptGeneration },
+				row.newPassword,
+			),
 		);
 		return { ...mac, attemptGeneration };
 	}
@@ -405,6 +430,7 @@ export function createPendingAuthenticationService(
 				expiresAt: found.expiresAt,
 			},
 			observedAt: found.observedAt,
+			...(found.completesReset ? { completesReset: true } : {}),
 		};
 	}
 
@@ -430,7 +456,7 @@ export function createPendingAuthenticationService(
 
 	const service: PendingAuthenticationService = {
 		//the factors on offer are the account's state so the write reads them itself (E-735)
-		async begin({ userId, factorsCompleted, sessionEpoch, offered }) {
+		async begin({ userId, factorsCompleted, sessionEpoch, offered, newPassword }) {
 			const token = createPendingToken();
 			const tokenHash = hashPendingToken(token);
 			const storedFactors = factorsCompleted.filter(
@@ -439,6 +465,19 @@ export function createPendingAuthenticationService(
 			const account = await repository.accountStateOf({ userId });
 			const boundEpoch = sessionEpoch ?? account.sessionEpoch;
 			const attemptGeneration = account.attemptGeneration ?? FIRST_ATTEMPT_GENERATION;
+			//the database holds the new password only as an envelope bound to this row (S-FIX-7)
+			const sealedNewPassword =
+				newPassword === undefined
+					? null
+					: await encryptBound(
+							options.keys,
+							newPasswordBindingOf(userId, tokenHash),
+							utf8.encode(newPassword.phc),
+						);
+			const storedNewPassword =
+				sealedNewPassword === null
+					? null
+					: { ciphertext: sealedNewPassword.ciphertext, keyVersion: sealedNewPassword.keyVersion };
 			const stored = await repository.insertPendingAuthentication({
 				userId,
 				tokenHash,
@@ -446,13 +485,16 @@ export function createPendingAuthenticationService(
 				lifetimeInSeconds: PENDING_LIFETIME_IN_SECONDS,
 				sessionEpoch: boundEpoch,
 				attemptGeneration,
+				newPassword: storedNewPassword,
 				...(await bindToken(
 					options.keys,
-					pendingBinding(userId, tokenHash, storedFactors, {
-						attempts: FIRST_ATTEMPT_COUNT,
-						sessionEpoch: boundEpoch,
-						attemptGeneration,
-					}),
+					pendingBinding(
+						userId,
+						tokenHash,
+						storedFactors,
+						{ attempts: FIRST_ATTEMPT_COUNT, sessionEpoch: boundEpoch, attemptGeneration },
+						storedNewPassword,
+					),
 				)),
 			});
 			if (offered !== undefined) {

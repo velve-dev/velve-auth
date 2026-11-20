@@ -5,6 +5,7 @@ import type { OpenTransaction } from "../src/core/auth/account-envelopes.js";
 import type {
 	Actor,
 	ConsumedOAuthFlow,
+	ConsumedPendingReset,
 	ConsumedRecoveryCode,
 	RedeemedOneTimeToken,
 	ResolvedSession,
@@ -73,6 +74,10 @@ const BRAND_MARKERS: ReadonlyMap<
 	[
 		"core/db/actor.ts:consumedOAuthFlowBrand",
 		{ asserts: "ConsumedOAuthFlow", note: "a hand-built row is not a consumed flow" },
+	],
+	[
+		"core/db/actor.ts:consumedPendingResetBrand",
+		{ asserts: "ConsumedPendingReset", note: "a hand-built row is not a removed pending reset" },
 	],
 	[
 		"core/db/actor.ts:consumedRecoveryCodeBrand",
@@ -153,6 +158,11 @@ const BRAND_REFUSES_ITS_BASE: {
 		{ readonly userId: UserId },
 		"ConsumedOAuthFlow"
 	>;
+	readonly ConsumedPendingReset: BaseIsRefusedBy<
+		ConsumedPendingReset,
+		{ readonly userId: UserId },
+		"ConsumedPendingReset"
+	>;
 	readonly ConsumedRecoveryCode: BaseIsRefusedBy<
 		ConsumedRecoveryCode,
 		{ readonly userId: UserId },
@@ -183,6 +193,7 @@ const BRAND_REFUSES_ITS_BASE: {
 } = {
 	Actor: true,
 	ConsumedOAuthFlow: true,
+	ConsumedPendingReset: true,
 	ConsumedRecoveryCode: true,
 	DerivedKey: true,
 	OAuthFlowPointer: true,

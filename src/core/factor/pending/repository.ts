@@ -1,7 +1,10 @@
+import type { ConsumedPendingReset } from "../../db/actor.js";
 import type { Driver } from "../../db/driver.js";
+import { toEntityId } from "../../db/entity-id.js";
 import { qualifiedTableName } from "../../db/identifier.js";
 import type { AuthenticationFactor } from "../../http/caller.js";
 import type { StoredTokenMac } from "../../token/binding.js";
+import { newPasswordOfColumns, type StoredNewPassword } from "./binding.js";
 
 const AUTHENTICATION_FACTORS: readonly AuthenticationFactor[] = [
 	"password",
@@ -20,6 +23,8 @@ export interface PendingAuthenticationInsert extends StoredTokenMac {
 	readonly lifetimeInSeconds: number;
 	readonly sessionEpoch: number;
 	readonly attemptGeneration: number;
+	/** the sealed new password of a mailed reset held back for its second factor, null on every other row */
+	readonly newPassword: StoredNewPassword | null;
 }
 
 export interface StoredPendingAuthentication {
@@ -34,6 +39,8 @@ export interface StoredPendingAuthentication {
 
 export interface PendingAuthenticationWithOwner extends StoredPendingAuthentication {
 	readonly userDisabledAt: Date | null;
+	/** whether the row completes a mailed reset rather than a sign-in */
+	readonly completesReset: boolean;
 	//callers use the db clock and never compare their own clock with the row
 	readonly observedAt: Date;
 }
@@ -41,6 +48,14 @@ export interface PendingAuthenticationWithOwner extends StoredPendingAuthenticat
 export interface RemovedPendingAuthentication {
 	readonly userId: string;
 	readonly factorsCompleted: readonly AuthenticationFactor[];
+	/** the held back new password and the proof its removal makes, null for a row that completes a sign-in */
+	readonly reset: RemovedPendingReset | null;
+}
+
+/** what the removal of a reset's pending row hands its completion */
+export interface RemovedPendingReset {
+	readonly consumed: ConsumedPendingReset;
+	readonly newPassword: StoredNewPassword;
 }
 
 /** a row whose MAC is still to be checked, with the completed factors exactly as stored */
@@ -59,6 +74,8 @@ export interface PendingCandidate<Decoded> extends StoredTokenMac {
 	readonly currentAttemptGeneration: number | null;
 	/** the token hash of the pending row whose booking moved the account's attempt generation last */
 	readonly attemptLast: Uint8Array | null;
+	/** the held back new password exactly as stored, malformed where only one of its two columns is set */
+	readonly newPassword: StoredNewPassword | null | "malformed";
 	decode(): Decoded;
 }
 
@@ -119,6 +136,8 @@ interface MacColumns {
 	readonly attempt_generation: string;
 	readonly current_attempt_generation: string | null;
 	readonly attempt_last: Uint8Array | null;
+	readonly new_password_phc: Uint8Array | null;
+	readonly new_password_key_version: number | null;
 }
 
 interface OwnedPendingRowShape
@@ -185,6 +204,7 @@ function candidateOf<Decoded>(
 		currentAttemptGeneration:
 			row.current_attempt_generation === null ? null : Number(row.current_attempt_generation),
 		attemptLast: row.attempt_last,
+		newPassword: newPasswordOfColumns(row.new_password_phc, row.new_password_key_version),
 		tokenMac: row.token_mac,
 		tokenMacKeyVersion: row.token_mac_key_version,
 		decode: () => decode((storedFactorNames ?? []).join(",")),
@@ -215,6 +235,20 @@ function availableFactorsOf(row: EnrolmentColumns): readonly SecondFactor[] {
 	return available;
 }
 
+//the brand is asserted where the row was removed and nowhere else (E-3632)
+function resetOf(
+	userId: string,
+	newPassword: StoredNewPassword | null | "malformed",
+): RemovedPendingReset | null {
+	if (newPassword === null || newPassword === "malformed") {
+		return null;
+	}
+	return {
+		consumed: { userId: toEntityId<"user">(userId) } as ConsumedPendingReset,
+		newPassword,
+	};
+}
+
 function toStored(row: InsertedPendingRowShape): StoredPendingAuthentication {
 	return {
 		userId: row.user_id,
@@ -231,9 +265,9 @@ function insertStatement(table: string, totp: string, webauthn: string, recovery
 	return `WITH inserted AS (
 		INSERT INTO ${table}
 			(token_sha256, user_id, factors_completed, expires_at, token_mac, token_mac_key_version,
-			session_epoch, attempt_generation)
+			session_epoch, attempt_generation, new_password_phc, new_password_key_version)
 		VALUES ($1, $2, $3::text[], now() + make_interval(secs => $4::double precision), $5, $6,
-			$7::bigint, $8::bigint)
+			$7::bigint, $8::bigint, $9, $10)
 		RETURNING user_id, factors_completed, attempts, created_at, expires_at
 	)
 	SELECT i.user_id, array_to_string(i.factors_completed, ',') AS factors_completed,
@@ -276,6 +310,7 @@ function resolveStatement(
 		p.attempts, p.created_at, p.expires_at, p.token_mac, p.token_mac_key_version,
 		${epochColumns("p.session_epoch", states, "p.user_id")},
 		${generationColumns("p", states)},
+		p.new_password_phc, p.new_password_key_version,
 		u.disabled_at, now() AS observed_at,
 		${enrolmentColumns(totp, webauthn, recovery, "p.user_id")}
 	FROM ${table} p
@@ -296,7 +331,8 @@ function deleteStatement(table: string, states: string): string {
 	RETURNING user_id, array_to_json(factors_completed)::text AS factor_names, attempts,
 		token_mac, token_mac_key_version,
 		${epochColumns(`${table}.session_epoch`, states, `${table}.user_id`)},
-		${generationColumns(table, states)}`;
+		${generationColumns(table, states)},
+		new_password_phc, new_password_key_version`;
 }
 
 function accountStateStatement(states: string): string {
@@ -336,6 +372,10 @@ export function createPendingAuthenticationRepository(
 			: candidateOf(row, (factorsCompleted) => ({
 					userId: row.user_id,
 					factorsCompleted: toFactors(factorsCompleted),
+					reset: resetOf(
+						row.user_id,
+						newPasswordOfColumns(row.new_password_phc, row.new_password_key_version),
+					),
 				}));
 	}
 
@@ -350,6 +390,8 @@ export function createPendingAuthenticationRepository(
 				insert.tokenMacKeyVersion,
 				insert.sessionEpoch,
 				insert.attemptGeneration,
+				insert.newPassword?.ciphertext ?? null,
+				insert.newPassword?.keyVersion ?? null,
 			]);
 			if (row === undefined) {
 				throw new TypeError("the insert of a pending authentication returned no row");
@@ -378,6 +420,7 @@ export function createPendingAuthenticationRepository(
 				: candidateOf(row, (factorsCompleted) => ({
 						...toStored({ ...row, factors_completed: factorsCompleted }),
 						userDisabledAt: toOptionalDate(row.disabled_at),
+						completesReset: row.new_password_phc !== null,
 						observedAt: toDate(row.observed_at),
 					}));
 		},

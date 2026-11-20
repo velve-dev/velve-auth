@@ -45,7 +45,7 @@ Velve Auth is a sign-in library for TypeScript and PostgreSQL that runs inside t
 
 **The runtime.** Pure TypeScript, no Rust/WASM module of its own, six dependencies without native bindings. Measured on 2 vCPU, so an order of magnitude rather than an absolute value: Argon2id at OWASP parameters costs 263 ms in JavaScript against 76 ms in WASM — but WASM fails in Cloudflare Workers on `Wasm code generation disallowed by embedder` and is untested on Caprock (ESTIMATE), and a Rust module of one's own would be only 1.6 times faster than off-the-shelf WASM, at the price of a second toolchain and an unauditable binary blob. The decisive finding: `@noble/hashes`, `hash-wasm` and a Rust WASI variant produce **byte-identical** Argon2id hashes. The compute engine is thereby exchangeable without touching a single stored hash.
 
-**The safeguarding.** 135 security requirements in nineteen error classes, each with at least one test case and a number fixed in advance as its threshold; 139 test cases, of which 120 block every commit. Fifteen of the 33 Better Auth advisories transfer directly to Velve Auth and are excluded by named requirements; eighteen are not applicable because the affected feature does not exist.
+**The safeguarding.** 137 security requirements in nineteen error classes, each with at least one test case and a number fixed in advance as its threshold; 141 test cases, of which 122 block every commit. Fifteen of the 33 Better Auth advisories transfer directly to Velve Auth and are excluded by named requirements; eighteen are not applicable because the affected feature does not exist.
 
 **Honestly named limits.** In the `username` configuration there is no reset by email — the library refuses to start there if no recovery codes are configured. Usernames are by definition enumerable as soon as an availability check is offered; that stands in the data sheet instead of being a silent gap in the code. The encrypted password storage means: key loss is password loss. Imported bcrypt hashes check only the first 72 bytes until the rehash has replaced them. A writer on the database who also has the root key has everything, and without the anchor from section 3.18 they can reset an account to an old, internally consistent state. And whether Node starts on Caprock and the chosen PostgreSQL driver works there is the only notable unverified assumption of the whole design.
 
@@ -57,8 +57,8 @@ Velve Auth is a sign-in library for TypeScript and PostgreSQL that runs inside t
 2. Language and runtime — the assessment, the measurements, the recommendation
 3. Target architecture — package structure, schema, sessions, verification path, identity, second factor, tokens, keys, rate limiting, third-party providers, plugins, public interface, error handling, decided gaps, integrity of the security state
 4. Migration module — five sources, per source schema, mapping, hash adoption, losses, follow-up work
-5. Security requirements — 135 requirements in nineteen error classes, with a coverage table of the 33 advisories
-6. Test plan — 139 test cases with thresholds fixed in advance
+5. Security requirements — 137 requirements in nineteen error classes, with a coverage table of the 33 advisories
+6. Test plan — 141 test cases with thresholds fixed in advance
 7. Decision log — E-01 to E-46, the initial stock for the case study
 
 The build brief lies separately as `CLAUDE-CODE-AUFTRAG.md`.
@@ -114,7 +114,7 @@ Source references are relative to `/home/claude/better-auth/` and come from the 
 | A28 `beforeEmailVerification` / `afterEmailVerification` | Two hooks around the verification process (`init-options.ts:752,761`) | Omit | The application takes it over: the extension points are enumerated (section 3.11) and contain no verification hooks. The route's return value says the same thing without foreign code standing in the process. |
 | A29 Request a password reset | `POST /request-password-reset`, response always `{status:true}` (`api/routes/password.ts:35-150`) | Adopt | As `POST /password/request-reset` with response 204 without a body, artefact with `purpose='password_reset'`, lifetime 1 h; a newly requested token deletes the previous ones of the same user. |
 | A30 Reset link entry | `GET /reset-password/:token` redirects with `?token=` (`password.ts:152-227`) | Adopt | The entry by link remains; the landing page is a page of the application, which passes the token on to `POST /password/redeem-reset`. A redirecting endpoint does not exist, because the library builds no URLs (section 3.15, A.7) — and therefore none that it would have to validate. |
-| A31 Reset password | `POST /reset-password`, token consumed atomically (`password.ts:229-335`) | Adopt | As `POST /password/redeem-reset`: consumption and password write in one transaction; the response carries a new session token, all other sessions are revoked (A34). |
+| A31 Reset password | `POST /reset-password`, token consumed atomically (`password.ts:229-335`) | Adopt | As `POST /password/redeem-reset`: consumption and password write in one transaction; the response carries a new session token, all other sessions are revoked (A34). Where the account has a second factor, password, revocation and session wait for its completion (3.6). |
 | A32 `resetPasswordTokenExpiresIn` | Option, default 3600 s (`init-options.ts:826`) | Solve differently | Fixed lifetime of 1 h, see A27. |
 | A33 `onPasswordReset` | Callback after a successful reset (`init-options.ts:831`) | Omit | The application takes it over: it calls the route itself, or gets its result. An additional callback brings no state here that the caller does not already have. |
 | A34 `revokeSessionsOnPasswordReset` | Revokes all sessions — **default off** (`password.ts:328-330`) | Surpass | Password reset and password change revoke all other sessions. That is not a switch (section 3.5). A reset that leaves the attacker's session standing is not a reset. |
@@ -1497,6 +1497,44 @@ password (L-8).
   change of scheme all are generated anew and the old ones deleted in the same
   transaction.
 
+#### The mailed password reset with a second factor
+
+When an account has a second factor — a confirmed TOTP secret, a passkey or recovery codes,
+exactly the factors a sign-in offers —, the redemption of a mailed reset token
+(`password.redeemReset`) does not write the password (S-FIX-7). It checks and hashes the new
+password as before, before the token is spent, spends the token under the account lock, draws the
+generation of its purpose anew and keeps the epoch; it revokes no session, issues none and calls no
+hook. It answers `{ status: "second_factor_required", pendingToken, pending }` like the magic-link
+redemption and sets `__Host-velve_pending`. The row in `velve.pending_authentication` holds the new
+password as a PHC string in `new_password_phc`, encrypted under `password-enc` and bound to the
+owner `user_id` and the row `token_sha256` (S-INTEG-1), with its key version in
+`new_password_key_version`; its `token_mac` additionally binds the SHA-256 value of this ciphertext
+and its key version (S-INTEG-9). A row without a new password is encoded exactly as before
+migration 5.
+
+Only the completion through one of the four routes writes the password (S-FIX-8). The factor check
+runs as on a sign-in, in its service, and writes there what it always writes: the booked attempt,
+the claimed TOTP step, the spent recovery code, the passkey's signature counter. After that one
+transaction removes the row, locks the account, refuses when the seal is no longer the one the
+factor check read or left — with the ordinary failure of the factor path (S-INTEG-5) —, writes the
+password, revokes all sessions with the reason `password_reset` and issues a new session with
+`factors = {password, <factor>}`. `beforeSessionCreate` and `beforeSessionRevoke` run in this
+transaction, `afterSessionCreate` after it; `beforeSignIn` and `afterSignIn` do not run, as in the
+reset without a second factor. A wrong factor, the end of the five attempts (L-8), expiry,
+`pending.cancel`, a refusing `beforeSessionCreate` and an account changed in the meantime leave
+password and sessions unchanged. Without a second factor the reset stays as it was and answers
+`{ status: "password_reset", sessionToken, session, revokedOtherSessionsCount }`.
+`redeemResetWithRecoveryCode` stays unchanged, because the code is itself the second factor.
+
+```sql
+-- Migration 5
+ALTER TABLE velve.pending_authentication
+  ADD COLUMN new_password_phc bytea,
+  ADD COLUMN new_password_key_version integer CHECK (new_password_key_version >= 1),
+  ADD CONSTRAINT pending_authentication_new_password_whole
+    CHECK ((new_password_phc IS NULL) = (new_password_key_version IS NULL));
+```
+
 ### 3.7 One-time artefacts
 
 Every one-time artefact is a row with `sha256(token)` as the primary key,
@@ -2211,16 +2249,21 @@ interface PasswordNamespace<M extends IdentityMode> {
     : Promise<SetPasswordResult>
   requestReset: OnlyWhen<ModeHasEmail<M>, (i: { email: string }) => Promise<void>>
   redeemReset:  OnlyWhen<ModeHasEmail<M>, (i: { token: string; newPassword: string })
-    => Promise<SetPasswordResult>>
+    => Promise<RedeemResetResult>>
 }
 interface SetPasswordResult {
   sessionToken: SessionToken            // new; the old one is invalid
   session: Session
   revokedOtherSessionsCount: number
 }
+type RedeemResetResult =
+  | ({ status: "password_reset" } & SetPasswordResult)
+  | { status: "second_factor_required"; pendingToken: PendingToken; pending: PendingAuthentication }
 ```
 
-All four writing methods revoke **all other** sessions and return a new token.
+For an account with a second factor `redeemReset` first writes nothing but the spent token and
+answers `second_factor_required`; password, revocation and new session come into being at the
+completion of that factor (3.6). All four writing methods revoke **all other** sessions and return a new token.
 That is not a switch; a field `revokeOtherSessions` does not exist. `set` is for
 accounts without a password credential and fails when one already exists — two methods
 instead of an optional `currentPassword`, because an optional current password is exactly the
@@ -2687,7 +2730,7 @@ cookie; `caller: "session"` produces exactly this one difference between the sig
 | POST | `/password/set` | `{ newPassword }` | `SetPasswordResult` | 200, 400, 401, 403, 409 | IP+account | yes |
 | POST | `/password/change` | `{ currentPassword, newPassword }` | `SetPasswordResult` | 200, 400, 401, 403 | IP+account | yes |
 | POST | `/password/request-reset` | `{ email }` | — | 204, 400 | IP+account | yes |
-| POST | `/password/redeem-reset` | `{ token, newPassword }` | `SetPasswordResult` | 200, 400 | IP | yes |
+| POST | `/password/redeem-reset` | `{ token, newPassword }` | `RedeemResetResult` | 200, 400 | IP | yes |
 | POST | `/password/redeem-reset-with-recovery-code` | `SignInLookup & { recoveryCode, newPassword }` | `SetPasswordResult` | 200, 400, 401 | IP+account | yes |
 | POST | `/email/request-verification` | — | — | 204, 401 | IP+account | yes |
 | POST | `/email/redeem-verification` | `{ token }` | `{ user }` | 200, 400 | IP | yes |
@@ -4255,6 +4298,8 @@ The design is **not** changed here. Where the elaboration exposed a gap in the t
 - **S-FIX-4:** The state between a correct password and the second factor is not a row in `velve.session` but a row in `velve.pending_authentication` with its own token in its own cookie. *(Section 3.6, first paragraph)*
 - **S-FIX-5:** The session cookie carries in every response the name, `__Host-velve_session` by default or as `session.cookieName` configures it, no `Domain` attribute and `Path=/`; the server never sets more than one `Set-Cookie` header entry for the session cookie in one response. *(Section 3.5, cookie paragraph)*
 - **S-FIX-6:** Password reset and password change revoke all other sessions of the user; there is no configuration option that switches this behaviour off. *(Section 3.5: "That is not a switch.")*
+- **S-FIX-7:** When an account has a second factor — a confirmed TOTP secret, a passkey or recovery codes —, the redemption of a mailed reset token writes no password, revokes no session and creates no row in `velve.session`; it spends the token, answers `second_factor_required` with an intermediate state like the magic-link redemption, and the new password stands only as an envelope of its PHC string bound to the owner and `token_sha256` in that row, whose SHA-256 value and key version its `token_mac` binds. *(Section 3.6, The mailed password reset with a second factor)*
+- **S-FIX-8:** Password, revocation of all sessions and new session of a reset held back this way come into being only at the completion of the second factor, in the transaction that removes the intermediate state's row, and only when the seal under the account lock is still the one the factor check read or left; a wrong factor, the end of the five attempts, expiry, cancellation and an account changed in the meantime leave password and sessions unchanged, and of two completions of the same row at most one takes effect. *(Section 3.6, The mailed password reset with a second factor)*
 
 ---
 
@@ -4653,9 +4698,9 @@ While this section and the test plan were being elaborated, thirteen gaps in the
 
 ## 6. Test plan
 
-To each of the 135 requirements from section 5 belongs a test case. The test ID carries the same class and the same number as the requirement: `T-OWNER-3` verifies `S-OWNER-3`. In addition there are four supplementary test cases that are not assigned to a single requirement but secure a class more broadly (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — in total **139 test cases** together.
+To each of the 137 requirements from section 5 belongs a test case. The test ID carries the same class and the same number as the requirement: `T-OWNER-3` verifies `S-OWNER-3`. In addition there are four supplementary test cases that are not assigned to a single requirement but secure a class more broadly (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — in total **141 test cases** together.
 
-**Columns.** *Kind* is one of six: `Unit`, `Integration`, `Property` (fast-check), `Statistical`, `Concurrency`, `Static` (lint rule, AST analysis, type check); combinations are given with `+`. *Threshold* is a number or a hard criterion — no test in this plan passes with "no errors". *Runs in* is one of three tiers: `CI on every commit` (120 test cases, plus the static part of T-RACE-2 and the part of T-INTEG-5 other than its timing part), `CI nightly` (15, plus the concurrency part of T-RACE-2 and the timing part of T-INTEG-5), `before every release` (2).
+**Columns.** *Kind* is one of six: `Unit`, `Integration`, `Property` (fast-check), `Statistical`, `Concurrency`, `Static` (lint rule, AST analysis, type check); combinations are given with `+`. *Threshold* is a number or a hard criterion — no test in this plan passes with "no errors". *Runs in* is one of three tiers: `CI on every commit` (122 test cases, plus the static part of T-RACE-2 and the part of T-INTEG-5 other than its timing part), `CI nightly` (15, plus the concurrency part of T-RACE-2 and the timing part of T-INTEG-5), `before every release` (2).
 
 **Principle of the tier assignment.** Everything deterministic blocks every commit. Everything statistical and everything that runs longer than 60 seconds runs nightly on a dedicated runner and reports as a ticket, not as a red build. The reason is in section 6.20.
 
@@ -4686,6 +4731,8 @@ To each of the 135 requirements from section 5 belongs a test case. The test ID 
 | T-FIX-4 | S-FIX-4 | Integration | Sign in with the correct password while a second factor is active; then count the tables. | `velve.session` **+0 rows**, `velve.pending_authentication` **+1 row**; the response sets `__Host-velve_pending`, not the session cookie (`__Host-velve_session` by default, or as `session.cookieName` configures it) | CI on every commit |
 | T-FIX-5 | S-FIX-5 | Integration | Parse the `Set-Cookie` headers of every response that creates a session. | Exactly **1** entry with the session name; attribute set exactly `{HttpOnly, Secure, SameSite=Lax, Path=/}`; **no** `Domain` | CI on every commit |
 | T-FIX-6 | S-FIX-6 | Integration + Static | Create three sessions A (the caller), B, C; change the password and reset it separately. In addition a type check: the options types contain no key that controls this revocation. | B and C return the "not signed in" response, A stays valid: **2/2 per event**; **0 option keys** | CI on every commit |
+| T-FIX-7 | S-FIX-7 | Integration | Have an account with TOTP, one with a passkey and one with recovery codes alone each redeem a reset token; read answer, cookies, hooks, sessions and the columns of the intermediate state's row; as a writer of the database empty the envelope, swap it for another row's and copy it into a sign-in's row. | Answer `second_factor_required` in **3/3**, **0** new sessions, **0** revoked, **0** `beforeSessionCreate`; the old password signs in, the new one does not; the row contains neither the password nor `$argon2id$`; emptied, swapped and copied envelope refused in **3/3**, with alarm `token_binding_mismatch` | CI on every commit |
+| T-FIX-8 | S-FIX-8 | Integration + Concurrency | Complete the held-back reset with TOTP, passkey and recovery code; with a wrong code up to the budget, after cancellation, after expiry, with a refusing `beforeSessionCreate`, after a password change and after a change of the account between factor check and completion; two completions of the same row with two codes at once over a pool. | Completion **3/3** with the new password signing in, the old session revoked, exactly **1** session, factors `{password, <factor>}`; in **6/6** refusal cases old password and old session unchanged; of two simultaneous completions **exactly 1** succeeds | CI on every commit |
 
 ---
 
@@ -5048,7 +5095,7 @@ For a one-person team this is **not** worth it **on the whole estate**: a Stryke
 - **Target: mutation score ≥ 85 % on this section**, measured **before every release**, not on every commit.
 - **The value for a one-person team is not the number but the list of surviving mutants.** It is a work list of missing assertions and replaces the code review by a second person at exactly the place where such a review would be worth the most.
 
-**Coverage is not a security measure.** The 139 test cases of this plan are the security measure; the coverage number is only the warning light that shows that a new branch has been added without a test case. No test case of this plan may be dropped with the argument "the coverage is fine, after all".
+**Coverage is not a security measure.** The 141 test cases of this plan are the security measure; the coverage number is only the warning light that shows that a new branch has been added without a test case. No test case of this plan may be dropped with the argument "the coverage is fine, after all".
 
 ---
 

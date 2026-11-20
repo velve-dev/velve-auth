@@ -31,9 +31,17 @@ export type TokenRowContent =
 			readonly sessionEpoch: number;
 			/** the account's attempt generation the row's last booking moved it to */
 			readonly attemptGeneration: number;
+			/** the sealed new password a mailed reset holds back for its second factor, null on every other row */
+			readonly newPassword?: SealedNewPasswordDigest | null;
 	  }
 	| { readonly ceremony: string }
 	| { readonly payload: OneTimeTokenPayload | null };
+
+/** what a pending row's MAC binds of the new password it holds, the ciphertext's SHA-256 and its key version */
+interface SealedNewPasswordDigest {
+	readonly ciphertextSha256: Uint8Array;
+	readonly keyVersion: number;
+}
 
 /** everything a token MAC is taken over */
 export interface TokenBinding {
@@ -211,11 +219,18 @@ function contentField(content: TokenRowContent): Uint8Array {
 			textField(content.absoluteExpiresAtMicros),
 		]);
 	}
+	//a pending row without a new password encodes as it did before the reset held one back (E-3634)
 	return concatenated([
 		listField(content.factors),
 		integerField(content.attempts),
 		integerField(content.sessionEpoch),
 		integerField(content.attemptGeneration),
+		...(content.newPassword === undefined || content.newPassword === null
+			? []
+			: [
+					bytesField(content.newPassword.ciphertextSha256),
+					integerField(content.newPassword.keyVersion),
+				]),
 	]);
 }
 

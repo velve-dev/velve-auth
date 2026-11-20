@@ -6,7 +6,7 @@ import {
 	microsOf,
 	type SecurityStateSealing,
 } from "../db/repositories/session.js";
-import { pendingBinding } from "../factor/pending/binding.js";
+import { newPasswordOfColumns, pendingBinding } from "../factor/pending/binding.js";
 import type { KeyProvider } from "../keys/provider.js";
 import { sessionBinding } from "../session/binding.js";
 import {
@@ -55,6 +55,8 @@ interface StoredTokenRow {
 	readonly session_generation?: string | null;
 	readonly attempt_generation?: string | null;
 	readonly attempts?: number;
+	readonly new_password_phc?: Uint8Array | null;
+	readonly new_password_key_version?: number | null;
 	readonly purpose?: string;
 	readonly payload_text?: string | null;
 }
@@ -114,20 +116,24 @@ function pendingBindingOf(row: StoredTokenRow, tokenHash: Uint8Array): TokenBind
 	const names = namesOf(row.factor_names);
 	const sessionEpoch = exactIntegerOf(row.session_epoch);
 	const attemptGeneration = exactIntegerOf(row.attempt_generation);
+	const newPassword = newPasswordOfColumns(row.new_password_phc, row.new_password_key_version);
 	if (
 		row.user_id === null ||
 		names === null ||
 		row.attempts === undefined ||
 		sessionEpoch === null ||
-		attemptGeneration === null
+		attemptGeneration === null ||
+		newPassword === "malformed"
 	) {
 		return null;
 	}
-	return pendingBinding(row.user_id, tokenHash, names, {
-		attempts: row.attempts,
-		sessionEpoch,
-		attemptGeneration,
-	});
+	return pendingBinding(
+		row.user_id,
+		tokenHash,
+		names,
+		{ attempts: row.attempts, sessionEpoch, attemptGeneration },
+		newPassword,
+	);
 }
 
 function oneTimeBindingOf(row: StoredTokenRow, tokenHash: Uint8Array): TokenBinding | null {
@@ -179,7 +185,7 @@ const SHAPES: Readonly<Record<TokenTable, TableShape>> = {
 	pending_authentication: {
 		hashColumn: "token_sha256",
 		contentColumns: () =>
-			"array_to_json(t.factors_completed)::text AS factor_names, t.attempts, t.session_epoch::text AS session_epoch, t.attempt_generation::text AS attempt_generation",
+			"array_to_json(t.factors_completed)::text AS factor_names, t.attempts, t.session_epoch::text AS session_epoch, t.attempt_generation::text AS attempt_generation, t.new_password_phc, t.new_password_key_version",
 		guardsAttempts: true,
 		bindingOf: pendingBindingOf,
 	},

@@ -5,6 +5,7 @@ declare const resolvedSessionBrand: unique symbol;
 declare const redeemedOneTimeTokenBrand: unique symbol;
 declare const consumedOAuthFlowBrand: unique symbol;
 declare const consumedRecoveryCodeBrand: unique symbol;
+declare const consumedPendingResetBrand: unique symbol;
 
 export type Actor = string & { readonly [actorBrand]: "an owner some proof named" };
 
@@ -43,6 +44,15 @@ export type ConsumedRecoveryCode = { readonly userId: UserId } & {
 };
 
 export function actorOfConsumedRecoveryCode(consumed: ConsumedRecoveryCode): Actor {
+	return consumed.userId as string as Actor;
+}
+
+//a mailed reset held back for a second factor proves its account only once its pending row is removed (E-3632)
+export type ConsumedPendingReset = { readonly userId: UserId } & {
+	readonly [consumedPendingResetBrand]: "produced by pending password reset consumption";
+};
+
+export function actorOfConsumedPendingReset(consumed: ConsumedPendingReset): Actor {
 	return consumed.userId as string as Actor;
 }
 

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, expectTypeOf, it } from "vitest";
@@ -41,10 +41,14 @@ const COLUMNS: readonly BoundColumn[] = [
 	"identity.refresh_token_enc",
 	"identity.id_token_enc",
 	"oauth_flow.pkce_verifier_enc",
+	"pending_authentication.new_password_phc",
 ];
 
 function bindingFor(column: BoundColumn): EnvelopeBinding {
 	const owner = randomUUID();
+	if (column === "pending_authentication.new_password_phc") {
+		return { column, owner, row: new Uint8Array(randomBytes(32)) };
+	}
 	return { column, owner, row: column.startsWith("identity.") ? randomUUID() : owner };
 }
 
@@ -178,7 +182,9 @@ describe("a bound ciphertext opens only under its own binding (S-INTEG-1)", () =
 			? column === "identity.access_token_enc"
 				? "identity.refresh_token_enc"
 				: "identity.access_token_enc"
-			: column;
+			: column === "pending_authentication.new_password_phc"
+				? "password_credential.phc"
+				: column;
 		const variants: EnvelopeBinding[] = [
 			{ ...binding, owner: randomUUID() },
 			{ ...binding, owner: null },

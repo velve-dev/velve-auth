@@ -4,6 +4,7 @@ import type {
 	SealVerification,
 	SecurityStateSealing,
 } from "../../db/repositories/session.js";
+import { ConcealedError, type ConcealedReason } from "../../http/error-map.js";
 import type { KeyProvider } from "../../keys/provider.js";
 import type { SessionConfig } from "../../session/config.js";
 import type { SessionMetadataMode } from "../../session/metadata.js";
@@ -41,10 +42,24 @@ export interface SecondFactorCompletion {
 }
 
 //a missed issue answers as the factor that completed the sign-in fails (S-INTEG-5)
-const SECOND_FACTOR_PATH: Readonly<Record<SecondFactor, SessionIssuePath>> = {
+export const SECOND_FACTOR_PATH: Readonly<Record<SecondFactor, SessionIssuePath>> = {
 	totp: "totp_second_factor",
 	webauthn: "passkey_second_factor",
 	recovery: "recovery_second_factor",
+};
+
+/** what a completion answers a state the factor check did not read, as the factor's own failure */
+export const MISSED_COMPLETION_OF_FACTOR: Readonly<Record<SecondFactor, ConcealedReason>> = {
+	totp: "session_issue_missed_on_totp_second_factor",
+	webauthn: "session_issue_missed_on_passkey_second_factor",
+	recovery: "session_issue_missed_on_recovery_second_factor",
+};
+
+/** what a completion answers a broken state with, as the factor's own failure */
+export const BROKEN_STATE_ON_FACTOR: Readonly<Record<SecondFactor, ConcealedReason>> = {
+	totp: "broken_state_on_totp_second_factor",
+	webauthn: "broken_state_on_passkey_second_factor",
+	recovery: "broken_state_on_recovery_second_factor",
 };
 
 //the pending row must go in the same transaction that inserts the session (S-FIX-1)
@@ -82,6 +97,10 @@ export function createSecondFactorCompletion(
 				});
 
 				const consumed = await pending.consume(pendingToken);
+				//a held back reset completes only with its new password and never as a sign-in (S-FIX-8)
+				if (consumed.reset !== null) {
+					throw new ConcealedError("pending_consumed");
+				}
 				return sessions.issueReplacingPresented({
 					completes: SECOND_FACTOR_PATH[factor],
 					authorisedBy,

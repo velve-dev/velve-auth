@@ -64,6 +64,8 @@ const SPECIFIED_COLUMNS: readonly string[] = [
 	"pending_authentication.created_at timestamp with time zone NOT NULL DEFAULT",
 	"pending_authentication.expires_at timestamp with time zone NOT NULL",
 	"pending_authentication.factors_completed text[] NOT NULL",
+	"pending_authentication.new_password_key_version integer",
+	"pending_authentication.new_password_phc bytea",
 	"pending_authentication.session_epoch bigint NOT NULL",
 	"pending_authentication.token_mac bytea NOT NULL",
 	"pending_authentication.token_mac_key_version integer NOT NULL",

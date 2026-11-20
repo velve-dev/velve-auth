@@ -7,7 +7,7 @@ import type {
 	WebAuthnAuthenticationChallenge,
 	WebAuthnRegistrationChallenge,
 } from "../core/factor/webauthn/service.js";
-import type { ChangedUser, SetPasswordResult } from "../core/flows/results.js";
+import type { ChangedUser, RedeemResetResult, SetPasswordResult } from "../core/flows/results.js";
 import type { PendingAuthentication, Session } from "../core/http/caller.js";
 import type { AnyRoute, HttpMethod, Route } from "../core/http/route.js";
 import type { OAuthRouteTable } from "../core/oauth/routes.js";
@@ -243,7 +243,7 @@ export type VelveRouteTable = readonly [
 			newPassword: string;
 			token: string;
 		} & {},
-		SetPasswordResult,
+		RedeemResetResult,
 		| "invalid_input"
 		| "rate_limited"
 		| "origin_not_allowed"
