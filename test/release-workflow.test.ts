@@ -301,7 +301,9 @@ describe("the release workflow", () => {
 				expect(
 					withoutYamlComments(region),
 					`${name} job ${jobName} runs the unit project on a shallow checkout`,
-				).toMatch(/- uses: actions\/checkout@v\d+\n\s+with:\n(?:\s+.+\n)*?\s+fetch-depth: 0\n/);
+				).toMatch(
+					/- uses: actions\/checkout@[0-9a-f]{40} # v\d+\S*\n\s+with:\n(?:\s+.+\n)*?\s+fetch-depth: 0\n/,
+				);
 			}
 		},
 	);

@@ -38,4 +38,37 @@ describe("every action a workflow runs is pinned to a commit", () => {
 
 		expect(unpinned).toStrictEqual([]);
 	});
+
+	/** GitHub's own actions are pinned as well: their tags move like anyone else's, and the publish
+	 * job runs them. The trailing comment names the release the hash was resolved from, so a reader
+	 * and an update tool can tell which one is pinned (E-3886). */
+	it("pins every action in every workflow, GitHub's own included, and names the release beside it", () => {
+		const unpinned = readdirSync(workflowDirectory).flatMap((name) =>
+			[...readFileSync(`${workflowDirectory}/${name}`, "utf8").matchAll(/^\s+(?:- )?uses: (.+)$/gm)]
+				.map((match) => String(match[1]))
+				.filter((reference) => !reference.startsWith("./"))
+				.filter((reference) => !/^[\w.-]+\/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$/.test(reference))
+				.map((reference) => `${name}: ${reference}`),
+		);
+
+		expect(unpinned).toStrictEqual([]);
+	});
+
+	/** One action at one release is one hash, so two hashes for the same action in the tree are two
+	 * releases nobody chose to run side by side. */
+	it("pins each action to one release across every workflow", () => {
+		const pinned = new Map<string, Set<string>>();
+		for (const name of readdirSync(workflowDirectory)) {
+			for (const match of readFileSync(`${workflowDirectory}/${name}`, "utf8").matchAll(
+				/uses: ([\w.-]+\/[\w.-]+)@([0-9a-f]{40})/g,
+			)) {
+				const hashes = pinned.get(String(match[1])) ?? new Set<string>();
+				hashes.add(String(match[2]));
+				pinned.set(String(match[1]), hashes);
+			}
+		}
+
+		expect([...pinned].filter(([, hashes]) => hashes.size > 1)).toStrictEqual([]);
+		expect(pinned.size).toBeGreaterThanOrEqual(3);
+	});
 });
