@@ -35,27 +35,41 @@ function freshMethodsOfB9(specification: string, heading: string, fresh: string)
 		.reduce((sum, cells) => sum + (cells[1]?.match(/`[^`]+`/g)?.length ?? 0), 0);
 }
 
-describe("the methods freshness gates, which the cancel adds to (3.15 B.9)", () => {
+function rowOfB9(specification: string, heading: string, method: string): readonly string[] {
+	const start = specification.indexOf(heading);
+	const row = specification
+		.slice(start)
+		.split("\n")
+		.find((line) => line.startsWith(`| \`${method}\``));
+	return (row ?? "").split("|").map((cell) => cell.trim());
+}
+
+//any session of the account cancels, so the cancel adds no method freshness gates (E-3780)
+describe("the methods freshness gates, which the cancel does not add to (3.15 B.9)", () => {
 	it("is the count of B.9's fresh rows wherever the German specification states it", () => {
 		const german = textOf("VELVE-AUTH-ARCHITEKTUR.md");
-		const counted = freshMethodsOfB9(german, "##### B.9 Vorbedingungen je Methode", "**ja**");
+		const heading = "##### B.9 Vorbedingungen je Methode";
+		const counted = freshMethodsOfB9(german, heading, "**ja**");
 		const stated = german.match(/sie betrifft (\d+) Methoden \(B\.9\)/)?.[1];
 
-		expect(counted).toBe(18);
+		expect(counted).toBe(17);
 		expect(Number(stated)).toBe(counted);
+		expect(rowOfB9(german, heading, "passkeyRecovery.cancel")[3]).toBe("—");
 	});
 
 	it("is the same count in the English translation", () => {
 		const english = textOf("VELVE-AUTH-ARCHITECTURE.md");
 		const stated = english.match(/it concerns (\d+) methods \(B\.9\)/)?.[1];
+		const cancel = rowOfB9(english, "##### B.9", "passkeyRecovery.cancel");
 
-		expect(Number(stated)).toBe(18);
+		expect(Number(stated)).toBe(17);
+		expect(cancel[3]).toBe("—");
 	});
 
 	it("is the same count in DOCUMENTATION.md", () => {
 		const stated = textOf("DOCUMENTATION.md").match(/gates the (\w+)\s+methods of 3\.15 B\.9/)?.[1];
 
-		expect(NUMBER_WORDS[stated ?? ""]).toBe(18);
+		expect(NUMBER_WORDS[stated ?? ""]).toBe(17);
 	});
 });
 

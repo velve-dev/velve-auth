@@ -375,3 +375,115 @@ describe("the waiting period function (E-3764)", () => {
 		expect(retried.status).toBe(200);
 	});
 });
+
+describe("who may cancel a waiting recovery (S-LINK-9, E-3780)", () => {
+	let bench: RecoveryBench;
+
+	beforeAll(async () => {
+		bench = await openRecoveryBench("pkrecovery_review_cancel", {
+			session: { freshnessWindow: "1s" },
+		});
+	}, 60_000);
+
+	afterAll(async () => {
+		await bench.close();
+	});
+
+	it("lets a valid session of the account cancel once it is no longer fresh", async () => {
+		const account = await signUp(bench);
+		const [code] = await generateCodes(bench, account);
+		bench.waitingPeriod = 3600;
+		expect((await recoverTo(bench, account, code ?? "", await newAuthenticator())).status).toBe(
+			200,
+		);
+		await waitSeconds(1.5);
+
+		const cancelled = await bench.handler(
+			postTo("/passkey-recovery/cancel", {}, withSession(account.sessionToken)),
+		);
+
+		expect(cancelled.status).toBe(204);
+		expect(await countOf(bench, "passkey_recovery", account.userId)).toBe(0);
+		expect(await countOf(bench, "recovery_code", account.userId)).toBe(9);
+	}, 30_000);
+
+	it("never lets a session of another account cancel it or read it", async () => {
+		const victim = await signUp(bench);
+		const stranger = await signUp(bench);
+		const [code] = await generateCodes(bench, victim);
+		bench.waitingPeriod = 3600;
+		expect((await recoverTo(bench, victim, code ?? "", await newAuthenticator())).status).toBe(200);
+
+		const cancelled = await bench.handler(
+			postTo("/passkey-recovery/cancel", {}, withSession(stranger.sessionToken)),
+		);
+		const read = await bench.handler(
+			new Request("https://api.example.com/passkey-recovery", {
+				headers: { Origin: TEST_ORIGIN, ...withSession(stranger.sessionToken) },
+			}),
+		);
+
+		expect(cancelled.status).toBe(204);
+		expect(await read.json()).toBeNull();
+		expect(await countOf(bench, "passkey_recovery", victim.userId)).toBe(1);
+	});
+
+	it("refuses a cancel without a session and leaves the recovery waiting", async () => {
+		const account = await signUp(bench);
+		const [code] = await generateCodes(bench, account);
+		bench.waitingPeriod = 3600;
+		expect((await recoverTo(bench, account, code ?? "", await newAuthenticator())).status).toBe(
+			200,
+		);
+
+		const cancelled = await bench.handler(postTo("/passkey-recovery/cancel", {}));
+
+		expect(cancelled.status).toBe(401);
+		expect(await countOf(bench, "passkey_recovery", account.userId)).toBe(1);
+	});
+});
+
+describe("a cancel that meets a finish of the same account (E-3781, E-3782)", () => {
+	let bench: RecoveryBench;
+
+	beforeAll(async () => {
+		bench = await openRecoveryBench("pkrecovery_review_cancel_race");
+	}, 60_000);
+
+	afterAll(async () => {
+		await bench.close();
+	});
+
+	it("never deadlocks and leaves at most what the later of the two left", async () => {
+		bench.waitingPeriod = 3600;
+		const outcomes = await Promise.all(
+			Array.from({ length: 6 }, async () => {
+				const account = await signUp(bench);
+				const [code] = await generateCodes(bench, account);
+				const started = await startedRecovery(
+					bench,
+					await mailedRecoveryLink(bench, account.email),
+					code ?? "",
+				);
+				const response = await (await newAuthenticator()).attest({
+					challenge: started.challengeToken,
+				});
+				const [finished, cancelled] = await Promise.all([
+					finishRecovery(bench, started.challengeToken, response),
+					bench.handler(postTo("/passkey-recovery/cancel", {}, withSession(account.sessionToken))),
+				]);
+				return {
+					statuses: [finished.status, cancelled.status],
+					held: await countOf(bench, "passkey_recovery", account.userId),
+				};
+			}),
+		);
+
+		for (const { statuses, held } of outcomes) {
+			expect(statuses.every((status) => status < 500)).toBe(true);
+			expect(statuses[1]).toBe(204);
+			expect(held).toBe(statuses[0] === 200 ? held : 0);
+			expect(held).toBeLessThanOrEqual(1);
+		}
+	}, 60_000);
+});
