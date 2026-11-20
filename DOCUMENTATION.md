@@ -140,6 +140,37 @@ operator upgrading from 1.1.0 has to do, are in
 (E-3020). 2.0.1 is a patch with no migration, no breaking change and no new
 configuration; its notes are in [docs/releases/2.0.1.md](docs/releases/2.0.1.md).
 
+### What importing the package changes in the process
+
+Importing `@velve/auth` changes two process-wide objects before any of your code
+runs, and the change comes from a dependency rather than from this library.
+`@simplewebauthn/server`, one of the six core dependencies, verifies attestation
+certificates with `@peculiar/x509`, and that package loads `reflect-metadata` and
+`tsyringe` when it is imported, and the `@peculiar` ASN.1 packages load `tslib`'s
+CommonJS build. Measured on this version:
+
+- **`Reflect`** gains ten members: `Reflect.decorate`, `Reflect.metadata`,
+  `Reflect.defineMetadata`, `Reflect.hasMetadata`, `Reflect.hasOwnMetadata`,
+  `Reflect.getMetadata`, `Reflect.getOwnMetadata`, `Reflect.getMetadataKeys`,
+  `Reflect.getOwnMetadataKeys` and `Reflect.deleteMetadata`. This is the
+  `reflect-metadata` polyfill. An application that loads its own copy, or a
+  different metadata polyfill, shares one global store with it, and which one
+  defines the functions depends on which is imported first.
+- **`globalThis`** gains 32 helper functions whose names start with two
+  underscores — `__extends`, `__assign`, `__awaiter`, `__decorate` and the rest of
+  `tslib`'s helpers — because `tslib`'s CommonJS build exports them to the global
+  object as well as to its module. Code that defines a global of the same name is
+  overwritten if it ran first and overwrites them if it runs afterwards.
+
+Nothing is sent anywhere and nothing reads these globals on the library's behalf;
+the cost is that they are shared with everything else in the process. The other
+entry points — `@velve/auth/http`, `@velve/auth/client`, `@velve/auth/pg`,
+`@velve/auth/schema` and `@velve/auth/testing` — change neither object, so a
+process that imports only those, a browser bundle of the client for instance,
+keeps both untouched. `test/security-supply-7-import-side-effects.test.ts`
+imports each built entry point in a fresh process and fails when this paragraph
+no longer matches what the import does (E-3891).
+
 ### PostgreSQL versions
 
 CI runs the whole test suite against 14 and against 16 on every push. 15, 17 and 18 are exercised by no leg and are stated from the features the library uses; 18 is what development runs against, which is one machine and not a tier.
