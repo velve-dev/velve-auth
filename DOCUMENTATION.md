@@ -10947,6 +10947,16 @@ An instance older than 3.0.0 does not read the column and would seal an account
 whose switch is on without it, which breaks that account's state. Turn the switch
 on only once every instance runs 3.0.0 (E-3730).
 
+**Breaking change for reseal callers.** Before 3.0.0,
+`maintenance.resealSecurityState({ userId, reason })` sealed any broken state as
+the rows held it. From 3.0.0 on, when the stored seal does not hold, lies below an
+anchor's floor or is missing in mode `"required"`, and the account's switch is off,
+the call refuses with `security_state_recovery_switch_unconfirmed` unless it names
+the switch. An existing caller adds `recoveryDisabled` to its input: `false` for an
+account that never turned the switch on, `true` for one that should keep it on —
+for example `resealSecurityState({ userId, reason, recoveryDisabled: false })`. A
+call that already resealed accounts whose switch is on needs no change (E-3746).
+
 ## Recovery to a new passkey
 
 > Reserved for the `passkey-recovery` feature of release 3.0.0 and not written yet. Only that feature writes into this chapter (`CLAUDE.md` §5), and its writer deletes this note when filling it.
