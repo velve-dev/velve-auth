@@ -43,13 +43,14 @@ describe("every count of the enumerated hook points says eight (S-LINK-8, 3.11)"
 		},
 	);
 
-	it("3.11 itself names eight points", () => {
+	//the recovery to a new passkey added the ninth point (E-3773)
+	it("3.11 itself names nine points", () => {
 		const names = linesOf("VELVE-AUTH-ARCHITEKTUR.md")
 			.join("\n")
 			.match(/An deklarierten Punkten mithören:([^.]*)\./)?.[1]
 			?.match(/`(\w+)`/g)
 			?.map((quoted) => quoted.slice(1, -1));
 
-		expect(names).toHaveLength(8);
+		expect(names).toHaveLength(9);
 	});
 });

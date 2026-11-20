@@ -50,7 +50,7 @@ describe("the advisory lock in the migration runner (E-08)", () => {
 					 WHERE table_schema = $1 AND table_type = 'BASE TABLE'`,
 					[schema],
 				);
-				expect(tables?.present).toBe(17);
+				expect(tables?.present).toBe(18);
 			} finally {
 				await Promise.all(connections.map((connection) => connection.close()));
 				await dropSchema(observer, schema);
