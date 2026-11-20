@@ -10846,7 +10846,9 @@ the confirmed address of a trusted provider (`trustedForAutomaticLinking`,
 S-LINK-2) does not ask the switch. On an account with a second factor it still
 leads only to the pending authentication; on an account without one it signs in.
 An application that relies on the switch either keeps such accounts on a second
-factor or does not mark a provider as trusted for automatic linking (E-3738).
+factor or does not mark a provider as trusted for automatic linking (E-3738). The
+gap closes when automatic linking by address is removed, which this release's
+security review provides for (E-3743).
 
 ### `recovery_disabled`
 

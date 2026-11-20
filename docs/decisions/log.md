@@ -18787,3 +18787,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Leaving the resolve as it was and documenting the window, which keeps a resolve that disagrees with its redemption.
 **Reason.** The resolve asks the same verified read with `recoveryRefusesTheLink(read, purpose)`, which `src/core/security-state/read.ts` now holds beside `recoveryIsDisabledFor` together with the two purposes the switch retires, so the resolve, the redemption and the switch name the same purposes from one list. A link of another purpose, the address confirmation's, still resolves. S-ENUM-9 and 3.18 say so in both languages; `test/no-recovery-switch-resolve.test.ts` fails when the condition is removed.
 **Price.** None beyond the one condition; the resolve reads nothing it did not read before.
+
+<a id="e-3743"></a>
+
+### The automatic link's gap closes with the removal of automatic linking
+`E-3743` · no-recovery-switch · scope, settled
+
+**Context.** E-3738 left the automatic linking of a new identity through a trusted provider's confirmed address (S-LINK-2) as a way in that does not ask the switch, because the fix lay in `src/core/oauth/**`. The orchestrator answered the hand-off: the maintainer decided that the security review of this release removes automatic linking by address altogether.
+**Rejected.** Teaching the automatic link to ask the switch now, in files outside this feature, for a path the release removes.
+**Reason.** Removing the path closes the gap for every account and not only for switched-off ones; a check added now would be deleted with it. The specification's note of the limit stays and gains one sentence that the gap closes when automatic linking is removed, in both languages, and the chapter of the switch says the same.
+**Price.** Until the security review's change merges, the limit E-3738 names stands.
