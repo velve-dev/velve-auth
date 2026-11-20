@@ -81,7 +81,8 @@ describe("the clock a plugin is handed is part of the frozen context (3.11)", ()
 			other = bystander.http.clock.now();
 		} finally {
 			rewrite = null;
-			(mounted.auth.http.clock as { now: () => Date }).now = original;
+			//a frozen system clock refuses the restore, which then has nothing to undo
+			Reflect.set(mounted.auth.http.clock, "now", original);
 		}
 
 		expect(

@@ -128,7 +128,8 @@ function freezeContext(
 	ownTables: OwnTables,
 ): FrozenContext {
 	return Object.freeze({
-		clock: services.clock,
+		//a plugin must hold its own frozen clock and never the object the core reads time from (S-OWNER-10)
+		clock: Object.freeze({ now: () => services.clock.now() }),
 		identityMode: services.identityMode,
 		schema: services.schema,
 		repositories,

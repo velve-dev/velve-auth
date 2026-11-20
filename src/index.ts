@@ -157,7 +157,7 @@ export type { OneTimeTokenPurpose } from "./core/token/purpose.js";
 export type { ResolvedOneTimeToken } from "./core/token/resolution.js";
 
 //this is the one place in the package where a clock is read (E-231)
-const SYSTEM_CLOCK: Clock = { now: () => new Date() };
+const SYSTEM_CLOCK: Clock = Object.freeze({ now: () => new Date() });
 
 type LogSink = NonNullable<VelveAuthConfig<IdentityMode>["log"]>;
 
