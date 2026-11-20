@@ -399,7 +399,7 @@ describe("the publish workflow", () => {
 
 	it("publishes with provenance, publicly, under the dist-tag the version decides", () => {
 		expect(publishCommands.filter((command) => command.startsWith("npm publish"))).toStrictEqual([
-			'npm publish --provenance --access public --tag "$DIST_TAG"',
+			'npm publish "$RUNNER_TEMP/package/velve-auth-$VERSION.tgz" --ignore-scripts --provenance --access public --tag "$DIST_TAG"',
 		]);
 		expect(commands(job("decide", publishJobs))).toContain("pnpm run release-dist-tag");
 	});
@@ -449,22 +449,27 @@ describe("the publish workflow", () => {
 			'git tag --annotate "v$VERSION"',
 			"npm publish ",
 			'git push origin "refs/tags/v$VERSION"',
-			'pnpm check:published-version "$DIST_TAG"',
+			'node tools/check-published-version.mjs "$DIST_TAG"',
 		].map((text) => region.indexOf(text));
 
 		expect(order.every((position) => position > 0)).toBe(true);
 		expect([...order].sort((a, b) => a - b)).toStrictEqual(order);
 	});
 
-	/** npm was still processing 2.0.0 when the registry check's default 180 s ran out (E-3574). */
+	/** npm was still processing 2.0.0 when the registry check's default 180 s ran out (E-3574). The
+	 * job that publishes installs no pnpm, so it runs the script `check:published-version` names
+	 * with node, and the script has to stay exactly that command (E-3887). */
 	it("gives the registry check after the publish fifteen minutes", () => {
 		const region = withoutYamlComments(job("publish", publishJobs));
 		const step = region.slice(
-			region.lastIndexOf("\n      - ", region.indexOf("check:published-version")),
+			region.lastIndexOf("\n      - ", region.indexOf("check-published-version")),
 		);
 
 		expect(step).toMatch(
-			/^\n {6}- name: .+\n {8}env:\n {10}VELVE_REGISTRY_DEADLINE_MS: "900000"\n {8}run: pnpm check:published-version "\$DIST_TAG"\n/,
+			/^\n {6}- name: .+\n {8}env:\n {10}VELVE_REGISTRY_DEADLINE_MS: "900000"\n {8}run: node tools\/check-published-version\.mjs "\$DIST_TAG"\n/,
+		);
+		expect(manifest.scripts["check:published-version"]).toBe(
+			"node tools/check-published-version.mjs",
 		);
 	});
 });

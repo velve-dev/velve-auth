@@ -123,8 +123,11 @@ identity token; `npm audit signatures` reports the registry's signature for such
 version and no attestation. From this version on, the package is published from
 GitHub Actions again: a push to `main` that raises the version runs
 `.github/workflows/publish.yml`, which runs the whole gate and the release tier on
-that commit and then publishes through npm trusted publishing, with no registry
-credential stored anywhere. Those versions carry a provenance attestation again,
+that commit, packs the tarball from the tree it verified, and hands that file to a
+separate job that publishes it through npm trusted publishing, with no registry
+credential stored anywhere. The publishing job installs, builds and packs nothing,
+and runs only in the deployment environment `npm-publish`, which the repository
+holds to `main`. Those versions carry a provenance attestation again,
 tying the tarball to the commit and the workflow run. Every published version also
 has the tag `v<version>` on the commit it was published from; `publish.yml` pushes
 it, annotated, after the publish.

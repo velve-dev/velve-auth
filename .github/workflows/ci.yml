@@ -60,6 +60,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       # Called from release.yml the ref is a tag and the checkout is detached, and what
       # fetch-depth: 0 leaves in refs/remotes for a tag ref was not established here. The two
@@ -138,6 +139,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       # This job resolves origin/main too — it chooses between the branch range and the
       # whole-history fallback by it — so it needs the same fetch on the tag path as the gate.

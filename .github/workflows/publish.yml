@@ -33,6 +33,8 @@ jobs:
       dist_tag: ${{ steps.dist_tag.outputs.value }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -92,6 +94,7 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
@@ -102,6 +105,16 @@ jobs:
       - run: ./tools/start-dex.sh
       - run: pnpm gate
       - run: pnpm test:release
+      # The tarball is packed here, from the tree the gate and the release tier just ran over, and
+      # handed to the publish job as it is; that job installs, builds and packs nothing (E-3887).
+      - run: mkdir -p "$RUNNER_TEMP/package"
+      - run: npm pack --ignore-scripts --pack-destination "$RUNNER_TEMP/package"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: package
+          path: ${{ runner.temp }}/package/velve-auth-${{ needs.decide.outputs.version }}.tgz
+          if-no-files-found: error
+          retention-days: 7
 
   # The environment is what npm and GitHub hold the publish to: npm accepts the token only from a
   # job in npm-publish, and GitHub lets only main deploy to it. The ref condition says the same thing
@@ -120,19 +133,24 @@ jobs:
     env:
       VERSION: ${{ needs.decide.outputs.version }}
       DIST_TAG: ${{ needs.decide.outputs.dist_tag }}
+    # Every step here can mint the token npm accepts, so no step runs code from a dependency: the
+    # tarball arrives from the verify job, the checkout keeps no credential, and the one step that
+    # pushes is the only one handed the repository token (E-3887).
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version-file: .node-version
-          cache: pnpm
       # Trusted publishing needs npm 11.5.1 or newer, and nothing here pins the npm the Node image
       # bundles, so the publish runs an npm installed by its exact version (E-3543).
       - run: npm install --global npm@11.20.0
       - run: npm --version
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: package
+          path: ${{ runner.temp }}/package
       # The tag is cut before the publish, where a refusal still costs nothing, and pushed after it,
       # so a tag on the remote always names a version that is on the registry (E-2765, E-3543).
       - name: Cut the annotated tag
@@ -140,11 +158,20 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag --annotate "v$VERSION" --message "v$VERSION"
-      - run: npm publish --provenance --access public --tag "$DIST_TAG"
-      - run: git push origin "refs/tags/v$VERSION"
+      - run: npm publish "$RUNNER_TEMP/package/velve-auth-$VERSION.tgz" --ignore-scripts --provenance --access public --tag "$DIST_TAG"
+      # The repository token reaches git through the environment of this one command, as the header
+      # actions/checkout would otherwise have left in .git/config for every later step (E-3887).
+      - name: Push the tag
+        env:
+          REPOSITORY_TOKEN: ${{ github.token }}
+        run: |
+          BASIC=$(printf 'x-access-token:%s' "$REPOSITORY_TOKEN" | base64 --wrap=0)
+          echo "::add-mask::$BASIC"
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $BASIC" git push origin "refs/tags/v$VERSION"
       # npm was still processing 2.0.0 when the check's default of 180 s ran out, so the check
-      # after a publish waits fifteen minutes before it calls the version absent (E-3574).
+      # after a publish waits fifteen minutes before it calls the version absent (E-3574). It is the
+      # script check:published-version names, run by node so that no pnpm is installed here.
       - name: Check the registry serves the published version
         env:
           VELVE_REGISTRY_DEADLINE_MS: "900000"
-        run: pnpm check:published-version "$DIST_TAG"
+        run: node tools/check-published-version.mjs "$DIST_TAG"
