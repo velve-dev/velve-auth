@@ -350,6 +350,61 @@ function assertNoRouteExemptsItselfFromTheOriginCheck(plugin: VelvePlugin): void
 	}
 }
 
+//a member a promise or every object reads must not become a server method a plugin answers (E-3945)
+const MEMBER_NAMES_NO_ROUTE_SEGMENT_MAY_TAKE: ReadonlySet<string> = new Set([
+	"then",
+	"catch",
+	"finally",
+	"constructor",
+	"prototype",
+	"__proto__",
+	"toString",
+	"toLocaleString",
+	"valueOf",
+	"toJSON",
+	"hasOwnProperty",
+	"isPrototypeOf",
+	"propertyIsEnumerable",
+	"__defineGetter__",
+	"__defineSetter__",
+	"__lookupGetter__",
+	"__lookupSetter__",
+]);
+
+function namesItsOwnNamespace(id: string, route: PluginRoute<string>): boolean {
+	const [owner, ...rest] = route.name.split(".");
+	return owner === id && rest.length > 0;
+}
+
+function liesUnderItsOwnPath(id: string, route: PluginRoute<string>): boolean {
+	const [root, prefix, owner, ...below] = route.path.split("/");
+	return root === "" && prefix === "x" && owner === id && below.length > 0;
+}
+
+function namespaceClaimedBy(route: PluginRoute<string>, byName: boolean): string {
+	return (byName ? route.name.split(".")[0] : route.path.split("/")[2]) ?? "";
+}
+
+//a javascript plugin must meet at start the namespace its type states (S-OWNER-11)
+function assertEveryRouteStaysInItsNamespace(plugin: VelvePlugin, ids: ReadonlySet<string>): void {
+	for (const route of plugin.routes ?? []) {
+		const byName = !namesItsOwnNamespace(plugin.id, route);
+		if (byName || !liesUnderItsOwnPath(plugin.id, route)) {
+			const namespace = namespaceClaimedBy(route, byName);
+			const conflict: RouteConflict = {
+				claimed: byName ? route.name : `${route.method} ${route.path}`,
+				contributors: [ids.has(namespace) ? namespace : THE_CORE, plugin.id],
+			};
+			throw new VelveStartupError("plugin_route_conflict", conflict);
+		}
+		if (
+			route.name.split(".").some((segment) => MEMBER_NAMES_NO_ROUTE_SEGMENT_MAY_TAKE.has(segment))
+		) {
+			throw new VelveStartupError("route_name_segment_reserved");
+		}
+	}
+}
+
 //a plugin route must never leave the address bucket out of its rule (S-DEFAULT-3)
 function assertEveryRouteIsLimitedByAddress(plugin: VelvePlugin): void {
 	for (const route of plugin.routes ?? []) {
@@ -651,10 +706,12 @@ export function createPluginRuntime(options: {
 	assertNoIdIsTakenTwice(plugins);
 	assertNoTablePrefixContainsAnother(plugins);
 	assertEveryDependencyIsRegistered(plugins);
+	const ids = new Set(plugins.map((plugin) => plugin.id));
 	for (const plugin of plugins) {
 		assertEveryErrorCodeIsItsOwn(plugin);
 		assertEveryRouteErrorIsDeclared(plugin);
 		assertEveryRateLimitRuleNamesAContributedRoute(plugin);
+		assertEveryRouteStaysInItsNamespace(plugin, ids);
 		assertEveryRouteIsLimitedByAddress(plugin);
 		assertEveryDeclaredTableIsItsOwn(plugin);
 	}

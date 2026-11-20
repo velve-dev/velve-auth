@@ -96,11 +96,11 @@ describe("a route conflict names both contributors (S-OWNER-11, T-OWNER-11)", ()
 		const refusal = refusalOf([
 			asJavaScriptPlugin({
 				id: SHADOWING_ID,
-				routes: [routeNamed("shared.x", `/x/${SHADOWING_ID}/x`)],
+				routes: [routeNamed(`${SHADOWING_ID}.x`, `/x/${SHADOWING_ID}/x`)],
 			}),
 			asJavaScriptPlugin({
 				id: SHADOWED_BY,
-				routes: [routeNamed("shared.x", `/x/${SHADOWED_BY}/x`)],
+				routes: [routeNamed(`${SHADOWING_ID}.x`, `/x/${SHADOWED_BY}/x`)],
 			}),
 		]);
 
@@ -108,7 +108,7 @@ describe("a route conflict names both contributors (S-OWNER-11, T-OWNER-11)", ()
 		expect(refusal.contributors).toEqual([SHADOWING_ID, SHADOWED_BY]);
 		expect(refusal.statedInTheMessage).toEqual([SHADOWING_ID, SHADOWED_BY]);
 		expect(refusal.claimedInTheMessage).toBe(refusal.claimed);
-		expect(refusal.claimed).toBe("shared.x");
+		expect(refusal.claimed).toBe(`${SHADOWING_ID}.x`);
 	});
 
 	/**
@@ -123,11 +123,11 @@ describe("a route conflict names both contributors (S-OWNER-11, T-OWNER-11)", ()
 			refusalOf([
 				asJavaScriptPlugin({
 					id: SHADOWING_ID,
-					routes: [routeNamed("shared.x", `/x/${SHADOWING_ID}/x`)],
+					routes: [routeNamed(`${SHADOWING_ID}.x`, `/x/${SHADOWING_ID}/x`)],
 				}),
 				asJavaScriptPlugin({
 					id: SHADOWED_BY,
-					routes: [routeNamed("shared.x", `/x/${SHADOWED_BY}/x`)],
+					routes: [routeNamed(`${SHADOWING_ID}.x`, `/x/${SHADOWED_BY}/x`)],
 				}),
 			]),
 		]) {
