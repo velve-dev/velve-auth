@@ -1928,18 +1928,21 @@ type PendingCookieAccess = "hidden" | "readable";
 type OAuthStateCookieAccess = "hidden" | "readable";
 /** how a POST body arrives, where `form` serves only a provider's `form_post` callback */
 type RequestBodyFormat = "form" | "json";
-interface RequestContext {
-  readonly cookies: CookieWriter;
+/** what a plugin route's handler is given, which carries no token and no way to write a cookie */
+interface PluginRequestContext {
   readonly ipAddress: string | null;
-  readonly oauthStateToken: string | null;
-  readonly pending: ResolvedPendingAuthentication | null;
-  readonly pendingToken: string | null;
   /** the frozen plugin context, which for a core route carries no tables of its own */
   readonly plugin: FrozenContext;
   readonly session: Session | null;
-  readonly sessionToken: string | null;
   readonly userAgent: string | null;
   enforceAccountRateLimit(normalisedIdentifier: string): Promise<void>;
+}
+interface RequestContext extends PluginRequestContext {
+  readonly cookies: CookieWriter;
+  readonly oauthStateToken: string | null;
+  readonly pending: ResolvedPendingAuthentication | null;
+  readonly pendingToken: string | null;
+  readonly sessionToken: string | null;
 }
 interface RouteDeclaration<Name extends string, Path extends string, Input$1, Output$1, Code extends AnyErrorCode> {
   readonly caller: CallerRequirement;
@@ -2006,6 +2009,7 @@ export {
 	HttpMethod,
 	Nest,
 	OriginRequirement,
+	PluginRequestContext,
 	Route,
 	RouteDeclaration,
 	RouteMetadata,
@@ -2333,7 +2337,7 @@ import { VelveErrorCode } from "../http/error-map.mjs";
 import { RateLimitRule } from "../http/rate-limit.mjs";
 import { Clock } from "../http/environment.mjs";
 import { SecurityStateFloor, SecurityStateSealedEvent } from "../security-state/anchor.mjs";
-import { RouteDeclaration } from "../http/route.mjs";
+import { PluginRequestContext, RouteDeclaration } from "../http/route.mjs";
 
 //#region src/core/plugin/config.d.ts
 type RevokeReason = "email_verified" | "identity_linked" | "passkey_recovery" | "password_changed" | "password_reset" | "revoked_by_user" | "sign_out";
@@ -2426,9 +2430,10 @@ interface PluginMigration<Id extends string> {
 }
 /** who may call a plugin route, which never sees the pending or the OAuth state cookie */
 type PluginCallerRequirement = "anonymous" | "server_only" | "session";
-/** a route a plugin declares, with its own error codes and no exemption from the origin check */
-type PluginRoute<Id extends string> = Omit<RouteDeclaration<`${Id}.${string}`, `/x/${Id}/${string}`, unknown, unknown, VelveErrorCode | `${Id}.${string}`>, "caller" | "oauthStateCookie" | "originCheck" | "pendingCookie" | "requestBody"> & {
+/** a route a plugin declares, with its own error codes, no exemption from the origin check and a handler that sees no token */
+type PluginRoute<Id extends string> = Omit<RouteDeclaration<`${Id}.${string}`, `/x/${Id}/${string}`, unknown, unknown, VelveErrorCode | `${Id}.${string}`>, "caller" | "handler" | "oauthStateCookie" | "originCheck" | "pendingCookie" | "requestBody"> & {
   readonly caller: PluginCallerRequirement;
+  readonly handler: (input: unknown, context: PluginRequestContext) => Promise<unknown>;
   readonly originCheck: "checked";
 };
 /** an anchor kept outside the reach of whoever can write the velve schema, which learns every new seal and sets a floor under its version */
@@ -2813,7 +2818,7 @@ import { ProofOfWorkSolution } from "./core/http/proof-of-work.mjs";
 import { Clock } from "./core/http/environment.mjs";
 import { SecurityStateFloor, SecurityStateSealedEvent } from "./core/security-state/anchor.mjs";
 import { EmailChangedEvent, FrozenContext, FrozenRepositories, PasskeyRecoveryStartedEvent, PluginActor, PluginHooks, PluginMigration, PluginRoute, RevokeReason, SecurityStateAnchor, SessionCreateEvent, SessionCreatedEvent, SessionRevokeEvent, SignInCompletedEvent, SignInEvent, UserCreateEvent, UserCreatedEvent, VelvePlugin } from "./core/plugin/config.mjs";
-import { AnyRoute, CallerRequirement, OriginRequirement } from "./core/http/route.mjs";
+import { AnyRoute, CallerRequirement, OriginRequirement, PluginRequestContext } from "./core/http/route.mjs";
 import { FEWEST_SIGN_IN_FAILURES_BEFORE_PROOF, HIGHEST_PROOF_OF_WORK_DIFFICULTY, LOWEST_PROOF_OF_WORK_DIFFICULTY, MOST_SIGN_IN_FAILURES_BEFORE_PROOF, ProofOfWorkConfig, ProofOfWorkContext, ProofOfWorkRoute, SignInFailureContext, SignInRouteGuardedAfterFailures } from "./core/pow/config.mjs";
 import { PendingToken } from "./core/factor/pending/token.mjs";
 import { SessionToken } from "./core/session/token.mjs";
@@ -2922,6 +2927,7 @@ export {
 	type PluginErrorDefinition,
 	PluginHooks,
 	PluginMigration,
+	PluginRequestContext,
 	PluginRoute,
 	type ProofOfWorkChallenge,
 	type ProofOfWorkConfig,
