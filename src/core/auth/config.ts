@@ -58,6 +58,8 @@ export interface WebAuthnConfig {
 	readonly relyingPartyName: string;
 	readonly origins: readonly string[];
 	readonly userVerification: "required" | "preferred";
+	/** refuses every registration whose client does not report a discoverable credential, and is off while absent */
+	readonly requireDiscoverableCredential?: boolean;
 	/** turns the recovery to a new passkey on, which is off while this is absent */
 	readonly recovery?: PasskeyRecoveryConfig;
 }

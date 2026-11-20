@@ -424,6 +424,7 @@ export type VelveRouteTable = readonly [
 		| "freshness_required"
 		| "webauthn_challenge_invalid"
 		| "webauthn_credential_rejected"
+		| "webauthn_credential_not_discoverable"
 	>,
 	Route<
 		"factor.webauthn.authenticate.start",

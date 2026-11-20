@@ -154,7 +154,7 @@ type VelveRouteTable = readonly [Route<"signOut", "/sign-out", {} & {}, void, "i
   response: Record<string, unknown>;
 } & {}, {
   credential: WebAuthnCredential;
-}, "account_disabled" | "freshness_required" | "invalid_input" | "origin_not_allowed" | "rate_limited" | "session_required" | "webauthn_challenge_invalid" | "webauthn_credential_rejected">, Route<"factor.webauthn.authenticate.start", "/factor/webauthn/authenticate/start", {} & {}, WebAuthnAuthenticationChallenge, "factor_not_enrolled" | "invalid_input" | "invalid_pending_authentication" | "origin_not_allowed" | "rate_limited">, Route<"factor.webauthn.authenticate.finish", "/factor/webauthn/authenticate/finish", {
+}, "account_disabled" | "freshness_required" | "invalid_input" | "origin_not_allowed" | "rate_limited" | "session_required" | "webauthn_challenge_invalid" | "webauthn_credential_not_discoverable" | "webauthn_credential_rejected">, Route<"factor.webauthn.authenticate.start", "/factor/webauthn/authenticate/start", {} & {}, WebAuthnAuthenticationChallenge, "factor_not_enrolled" | "invalid_input" | "invalid_pending_authentication" | "origin_not_allowed" | "rate_limited">, Route<"factor.webauthn.authenticate.finish", "/factor/webauthn/authenticate/finish", {
   challengeToken: string;
   response: Record<string, unknown>;
 } & {}, SignInResult, "invalid_input" | "invalid_pending_authentication" | "origin_not_allowed" | "rate_limited" | "too_many_factor_attempts" | "webauthn_challenge_invalid" | "webauthn_credential_rejected">, Route<"factor.webauthn.list", "/factor/webauthn/list", {} & {}, WebAuthnCredential[], "account_disabled" | "origin_not_allowed" | "rate_limited" | "session_required">, Route<"factor.webauthn.rename", "/factor/webauthn/rename", {
@@ -491,6 +491,8 @@ interface WebAuthnConfig {
   readonly recovery?: PasskeyRecoveryConfig;
   readonly relyingPartyId: string;
   readonly relyingPartyName: string;
+  /** refuses every registration whose client does not report a discoverable credential, and is off while absent */
+  readonly requireDiscoverableCredential?: boolean;
   readonly userVerification: "preferred" | "required";
 }
 /** five kinds answer the five one-time-token purposes, two are the enumeration cover and three tell an address what happened to its account */
@@ -1709,7 +1711,7 @@ export {
 ## core/http/error-map.d.mts
 
 //#region src/core/http/error-map.d.ts
-type VelveErrorCode = "account_disabled" | "factor_already_enrolled" | "factor_not_enrolled" | "freshness_required" | "identity_already_linked" | "identity_limit_reached" | "internal_error" | "invalid_credentials" | "invalid_factor_code" | "invalid_input" | "invalid_pending_authentication" | "invalid_recovery_code" | "invalid_token" | "last_sign_in_method" | "oauth_flow_invalid" | "oauth_provider_error" | "origin_not_allowed" | "passkey_limit_reached" | "passkey_recovery_failed" | "password_unacceptable" | "provider_not_configured" | "rate_limited" | "recovery_disabled" | "session_required" | "too_many_factor_attempts" | "username_invalid" | "username_taken" | "webauthn_challenge_invalid" | "webauthn_credential_rejected";
+type VelveErrorCode = "account_disabled" | "factor_already_enrolled" | "factor_not_enrolled" | "freshness_required" | "identity_already_linked" | "identity_limit_reached" | "internal_error" | "invalid_credentials" | "invalid_factor_code" | "invalid_input" | "invalid_pending_authentication" | "invalid_recovery_code" | "invalid_token" | "last_sign_in_method" | "oauth_flow_invalid" | "oauth_provider_error" | "origin_not_allowed" | "passkey_limit_reached" | "passkey_recovery_failed" | "password_unacceptable" | "provider_not_configured" | "rate_limited" | "recovery_disabled" | "session_required" | "too_many_factor_attempts" | "username_invalid" | "username_taken" | "webauthn_challenge_invalid" | "webauthn_credential_not_discoverable" | "webauthn_credential_rejected";
 /** an error code a plugin contributes, which begins with that plugin's id */
 type PluginErrorCode = `${string}.${string}`;
 type AnyErrorCode = VelveErrorCode | PluginErrorCode;

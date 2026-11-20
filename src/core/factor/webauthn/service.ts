@@ -52,6 +52,7 @@ import {
 } from "./credential-repository.js";
 import { isKnownTransport } from "./payload.js";
 import {
+	assertClientReportsADiscoverableCredential,
 	assertOriginIsExpected,
 	assertRelyingPartyIsExpected,
 	assertUserWasVerified,
@@ -313,6 +314,8 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 				residentKey: "required",
 				userVerification: input.userVerification,
 			},
+			//the check below reads this answer so the request does not rest on a dependency default (E-3815)
+			extensions: { credProps: true },
 			...(input.userDisplayName === undefined ? {} : { userDisplayName: input.userDisplayName }),
 		});
 	}
@@ -336,6 +339,10 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 		);
 		if (!verification.verified) {
 			throw new ConcealedError("signature_invalid");
+		}
+		//only a ceremony that verified is told it made no discoverable credential (E-3814)
+		if (settings.requireDiscoverableCredential) {
+			assertClientReportsADiscoverableCredential(input.response);
 		}
 		const { credential, aaguid, userVerified, credentialBackedUp, credentialDeviceType } =
 			verification.registrationInfo;
