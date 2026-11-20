@@ -90,7 +90,7 @@ function certificatesTheVerifierReads(
 }
 
 //a certificate the client sends is never handed to a verifier that would fetch the revocation list it names (E-3854)
-export function refuseAnAttestationTheVerifierWouldFetchFor(attestationObject: unknown): void {
+export function refuseAnAttestationNamingARevocationList(attestationObject: unknown): void {
 	const bytes = typeof attestationObject === "string" ? decodeBase64Url(attestationObject) : null;
 	if (bytes === null || bytes.length > LONGEST_ATTESTATION_OBJECT_BYTES) {
 		throw new ConcealedError("attestation_unreadable");

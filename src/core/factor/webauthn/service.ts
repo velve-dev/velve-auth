@@ -35,7 +35,7 @@ import {
 import { componentsAfter } from "../../security-state/sealing.js";
 import type { TokenBindingRefusalReport } from "../../token/binding.js";
 import type { PendingResolution } from "../pending/index.js";
-import { attestedAaguidOf, refuseAnAttestationTheVerifierWouldFetchFor } from "./attestation.js";
+import { attestedAaguidOf, refuseAnAttestationNamingARevocationList } from "./attestation.js";
 import {
 	createWebAuthnChallenges,
 	WEBAUTHN_CHALLENGE_LIFETIME_SECONDS,
@@ -391,7 +391,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 		readonly userVerification: RegistrationUserVerification;
 	}): Promise<RegisteredWebAuthnCredential> {
 		assertOriginIsExpected(input.response.response.clientDataJSON, settings.origins);
-		refuseAnAttestationTheVerifierWouldFetchFor(input.response.response.attestationObject);
+		refuseAnAttestationNamingARevocationList(input.response.response.attestationObject);
 		const verification = await verifiedOrRejected(() =>
 			verifyRegistrationResponse({
 				response: input.response,
