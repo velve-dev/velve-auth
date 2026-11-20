@@ -125,6 +125,7 @@ const SPECIFIED_COLUMNS: readonly string[] = [
 	"user.id uuid NOT NULL DEFAULT",
 	"user.imported_at timestamp with time zone",
 	"user.imported_from text",
+	"user.recovery_disabled_at timestamp with time zone",
 	"user.updated_at timestamp with time zone NOT NULL DEFAULT",
 	"user.username text",
 	"user.username_key text",

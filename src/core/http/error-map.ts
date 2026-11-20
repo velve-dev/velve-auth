@@ -25,6 +25,7 @@ export type VelveErrorCode =
 	| "webauthn_credential_rejected"
 	| "passkey_limit_reached"
 	| "identity_limit_reached"
+	| "recovery_disabled"
 	| "internal_error";
 
 const HTTP_STATUS_BY_ERROR_CODE: Readonly<Record<VelveErrorCode, number>> = {
@@ -54,6 +55,7 @@ const HTTP_STATUS_BY_ERROR_CODE: Readonly<Record<VelveErrorCode, number>> = {
 	webauthn_credential_rejected: 401,
 	passkey_limit_reached: 409,
 	identity_limit_reached: 409,
+	recovery_disabled: 409,
 	internal_error: 500,
 };
 
@@ -84,6 +86,7 @@ const MESSAGE_BY_ERROR_CODE: Readonly<Record<VelveErrorCode, string>> = {
 	webauthn_credential_rejected: "The credential was rejected.",
 	passkey_limit_reached: "The account already holds as many passkeys as it may.",
 	identity_limit_reached: "The account already holds as many linked identities as it may.",
+	recovery_disabled: "Recovery is turned off for this account.",
 	internal_error: "The request could not be completed.",
 };
 
@@ -214,6 +217,7 @@ export type ConcealedReason =
 	| "token_purpose_mismatch"
 	| "email_taken_on_change"
 	| "user_disabled_on_token_redemption"
+	| "recovery_disabled_on_token_redemption"
 	| "totp_code_wrong"
 	| "totp_step_replayed"
 	| "totp_not_confirmed"
@@ -224,6 +228,7 @@ export type ConcealedReason =
 	| "pending_expired"
 	| "pending_consumed"
 	| "pending_cookie_absent"
+	| "recovery_disabled_on_pending_reset"
 	| "state_not_found"
 	| "state_expired"
 	| "pkce_mismatch"
@@ -277,6 +282,7 @@ const VISIBLE_CODE_BY_CONCEALED_REASON: Readonly<Record<ConcealedReason, VelveEr
 	token_purpose_mismatch: "invalid_token",
 	email_taken_on_change: "invalid_token",
 	user_disabled_on_token_redemption: "invalid_token",
+	recovery_disabled_on_token_redemption: "invalid_token",
 	totp_code_wrong: "invalid_factor_code",
 	totp_step_replayed: "invalid_factor_code",
 	totp_not_confirmed: "invalid_factor_code",
@@ -287,6 +293,7 @@ const VISIBLE_CODE_BY_CONCEALED_REASON: Readonly<Record<ConcealedReason, VelveEr
 	pending_expired: "invalid_pending_authentication",
 	pending_consumed: "invalid_pending_authentication",
 	pending_cookie_absent: "invalid_pending_authentication",
+	recovery_disabled_on_pending_reset: "invalid_pending_authentication",
 	state_not_found: "oauth_flow_invalid",
 	state_expired: "oauth_flow_invalid",
 	pkce_mismatch: "oauth_flow_invalid",

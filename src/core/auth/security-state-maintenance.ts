@@ -3,6 +3,7 @@ import type { Driver } from "../db/driver.js";
 import { assertSchemaName, qualifiedTableName } from "../db/identifier.js";
 import { lockAccountRow } from "../db/lock.js";
 import { isRowIdentifier } from "../db/row-identifier.js";
+import { createRecoveryCodeRepository } from "../factor/recovery/repository.js";
 import type { LogLevel } from "../http/environment.js";
 import { ConcealedError } from "../http/error-map.js";
 import { encodeBase64Url } from "../keys/base64url.js";
@@ -17,14 +18,19 @@ import {
 	type SealedComponents,
 	type SealedGenerations,
 } from "../security-state/encoding.js";
-import { readSecurityState, type SecurityStateRead } from "../security-state/read.js";
+import {
+	checkSecurityState,
+	readSecurityState,
+	type SecurityStateRead,
+	securityStateOf,
+} from "../security-state/read.js";
 import {
 	envelopesOf,
 	readWithEnvelopes,
 	type SecurityStateRuntime,
 	sealChange,
 } from "../security-state/runtime.js";
-import { computeSeal } from "../security-state/seal.js";
+import { computeSeal, verifySeal } from "../security-state/seal.js";
 import {
 	componentsAfter,
 	drawGenerationOtherThan,
@@ -38,6 +44,7 @@ import {
 	rebindEnvelopesOfAccount,
 } from "./account-envelopes.js";
 import type { SealRowPresence } from "./security-state.js";
+import { createUserRepository } from "./user.js";
 
 /** what one key version still holds after a maintenance run */
 export interface RowsUnderSecurityStateKeyVersion {
@@ -65,6 +72,8 @@ export interface SealedSecurityState {
 	readonly email: string | null;
 	readonly emailVerified: boolean;
 	readonly disabled: boolean;
+	/** whether the account's no-recovery switch is on in the state the reseal ratified */
+	readonly recoveryDisabled: boolean;
 	readonly password: boolean;
 	readonly passwordSetBySession: string | null;
 	readonly passwordResetRequired: boolean;
@@ -82,6 +91,7 @@ type SecurityStateMaintenanceErrorCode =
 	| "security_state_version_exhausted"
 	| "security_state_changed_during_reseal"
 	| "security_state_envelope_unreadable"
+	| "security_state_recovery_switch_unconfirmed"
 	| "security_state_account_failed";
 
 /** a maintenance call refused, with a stable code and the account it was about where there is one */
@@ -301,6 +311,7 @@ function ratifiedStateOf(
 		email: read.email,
 		emailVerified: read.emailVerified,
 		disabled: read.disabled,
+		recoveryDisabled: read.recoveryDisabled,
 		password: read.password !== null,
 		passwordSetBySession: read.password?.setBySessionId ?? null,
 		passwordResetRequired: read.passwordResetRequired,
@@ -396,11 +407,77 @@ RETURNING 1 AS written`,
 	}
 }
 
+//a switch the last seal was taken with the other way round was flipped past the library (S-INTEG-11)
+async function lastSealHadTheOtherSwitch(
+	runtime: SecurityStateRuntime,
+	stored: SecurityStateRead,
+): Promise<boolean> {
+	if (stored.seal === null) {
+		return false;
+	}
+	const flipped = {
+		...securityStateOf(stored, stored.seal),
+		recoveryDisabled: !stored.recoveryDisabled,
+	};
+	const verdict = await verifySeal(runtime.keys, flipped, {
+		keyVersion: stored.seal.keyVersion,
+		digest: stored.seal.digest,
+	});
+	return verdict === "valid";
+}
+
+//a state the seal does not confirm may hide a cleared switch, which only the operator can name (S-INTEG-11)
+async function switchTheRowsMayKeep(
+	runtime: SecurityStateRuntime,
+	stored: SecurityStateRead,
+	floor: number,
+): Promise<boolean> {
+	const { verdict } = await checkSecurityState(runtime.keys, stored, runtime.sealing);
+	const confirmedBySeal =
+		verdict === "unsealed" || (verdict === "valid" && (stored.seal?.version ?? 0) >= floor);
+	if (
+		(!confirmedBySeal && !stored.recoveryDisabled) ||
+		(await lastSealHadTheOtherSwitch(runtime, stored))
+	) {
+		throw new SecurityStateMaintenanceError(
+			"security_state_recovery_switch_unconfirmed",
+			stored.userId,
+		);
+	}
+	return stored.recoveryDisabled;
+}
+
+//a reseal never ratifies a switch a writer cleared, and a switch it leaves on holds no recovery code (S-INTEG-11)
+async function withTheConfirmedSwitch(
+	runtime: SecurityStateRuntime,
+	tx: Driver,
+	read: SecurityStateRead,
+	confirmation: { readonly named: boolean | undefined; readonly floor: number },
+): Promise<SecurityStateRead> {
+	const switchOn =
+		confirmation.named ?? (await switchTheRowsMayKeep(runtime, read, confirmation.floor));
+	const actor = actorOfMaintenance(read.userId);
+	if (confirmation.named !== undefined) {
+		await createUserRepository({ driver: tx, schema: runtime.schema }).setRecoveryDisabledAt({
+			actor,
+			disabled: switchOn,
+		});
+	}
+	if (!switchOn) {
+		return { ...read, recoveryDisabled: false };
+	}
+	await createRecoveryCodeRepository({ driver: tx, schema: runtime.schema }).deleteEveryCode({
+		actor,
+	});
+	return { ...read, recoveryDisabled: true, recoveryCodes: [] };
+}
+
 //a reseal checks nothing it seals and lands above both the stored version and every floor (S-INTEG-7)
 async function resealUnderAccountLock(
 	runtime: SecurityStateRuntime,
 	userId: string,
 	floor: number,
+	recoveryDisabled: boolean | undefined,
 ): Promise<Resealed> {
 	const schema = assertSchemaName(runtime.schema);
 	return inOneTransaction(runtime.driver, async (tx) => {
@@ -413,10 +490,14 @@ async function resealUnderAccountLock(
 		if (base >= Number.MAX_SAFE_INTEGER) {
 			throw new SecurityStateMaintenanceError("security_state_version_exhausted", userId);
 		}
-		const read =
+		const read = await withTheConfirmedSwitch(
+			runtime,
+			tx,
 			stored.seal === null
 				? await rewriteEnvelopes(runtime, tx, actorOfMaintenance(userId), stored, "absent")
-				: stored;
+				: stored,
+			{ named: recoveryDisabled, floor },
+		);
 		const version = base + 1;
 		const sessionEpoch = drawSessionEpochOtherThan(stored.seal?.sessionEpoch ?? 1);
 		const generations = generationsAfterReseal(stored.seal ?? FIRST_GENERATIONS, version);
@@ -441,7 +522,7 @@ async function resealUnderAccountLock(
 async function resealAccount(
 	runtime: SecurityStateRuntime,
 	log: MaintenanceLog,
-	input: { readonly userId: string; readonly reason: string },
+	input: { readonly userId: string; readonly reason: string; readonly recoveryDisabled?: boolean },
 ): Promise<SealedSecurityState> {
 	const reason: unknown = input?.reason;
 	if (typeof reason !== "string" || reason.trim() === "") {
@@ -451,25 +532,32 @@ async function resealAccount(
 	if (typeof userId !== "string" || !isRowIdentifier(userId)) {
 		throw new SecurityStateMaintenanceError("security_state_account_missing", null);
 	}
+	const recoveryDisabled: unknown = input.recoveryDisabled;
+	if (recoveryDisabled !== undefined && typeof recoveryDisabled !== "boolean") {
+		throw new SecurityStateMaintenanceError("security_state_recovery_switch_unconfirmed", userId);
+	}
 	const reading = await consultAnchors(runtime.anchors, userId);
 	if (reading.kind === "unavailable") {
 		runtime.alarms.raise({ userId, occasion: "maintenance", reason: "anchor_unavailable" });
 		throw new SecurityStateMaintenanceError("security_state_anchor_unavailable", userId);
 	}
-	const resealed = await resealUnderAccountLock(runtime, userId, highestFloorOf(reading)).catch(
-		(error: unknown) => {
-			if (!(error instanceof KeyError)) {
-				throw error;
-			}
-			//a reseal repairs no envelope and refuses one it cannot open (E-3219)
-			runtime.alarms.raise({
-				userId,
-				occasion: "maintenance",
-				reason: "envelope_binding_mismatch",
-			});
-			throw new SecurityStateMaintenanceError("security_state_envelope_unreadable", userId);
-		},
-	);
+	const resealed = await resealUnderAccountLock(
+		runtime,
+		userId,
+		highestFloorOf(reading),
+		recoveryDisabled,
+	).catch((error: unknown) => {
+		if (!(error instanceof KeyError)) {
+			throw error;
+		}
+		//a reseal repairs no envelope and refuses one it cannot open (E-3219)
+		runtime.alarms.raise({
+			userId,
+			occasion: "maintenance",
+			reason: "envelope_binding_mismatch",
+		});
+		throw new SecurityStateMaintenanceError("security_state_envelope_unreadable", userId);
+	});
 	//a reseal is never silent and its reason is logged and not stored (S-INTEG-7)
 	log("warn", "an administrator resealed an account's security state", {
 		userId,
@@ -487,7 +575,12 @@ async function resealAccount(
 /** the two operator calls of the security state, which no route reaches */
 export interface SecurityStateMaintenance {
 	sealSecurityState(): Promise<SecurityStateReport>;
-	resealSecurityState(input: { userId: string; reason: string }): Promise<SealedSecurityState>;
+	/** recoveryDisabled names the no-recovery switch the reseal writes, and without it a switch the last seal does not confirm is refused */
+	resealSecurityState(input: {
+		userId: string;
+		reason: string;
+		recoveryDisabled?: boolean;
+	}): Promise<SealedSecurityState>;
 }
 
 export function createSecurityStateMaintenance(input: {

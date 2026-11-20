@@ -454,6 +454,7 @@ export async function checkAccountOrStandIn(
 			email: identifier,
 			emailVerified: false,
 			disabled: false,
+			recoveryDisabled: false,
 			password: null,
 			passwordResetRequired: false,
 			totp: null,

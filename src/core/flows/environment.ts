@@ -6,6 +6,7 @@ import type { Driver } from "../db/driver.js";
 import { ConcealedError } from "../http/error-map.js";
 import type { RequestContext } from "../http/route.js";
 import type { KdfSemaphore } from "../password/semaphore.js";
+import { recoveryIsDisabledFor, type SecurityStateRead } from "../security-state/read.js";
 import { type AccountCheck, checkAccount, sealChange } from "../security-state/runtime.js";
 import { componentsAfter, type SealWritten } from "../security-state/sealing.js";
 import type { ObservedRequest } from "../session/service.js";
@@ -119,6 +120,13 @@ function spentOnADisabledAccount(
 			accountMissing: () => new ConcealedError("token_not_found"),
 		},
 	);
+}
+
+//a mailed link into an account that turned recovery off answers as an invented token does and spends nothing (S-ENUM-9)
+export function refuseALinkWhileRecoveryIsDisabled(read: SecurityStateRead): void {
+	if (recoveryIsDisabledFor(read)) {
+		throw new ConcealedError("recovery_disabled_on_token_redemption");
+	}
 }
 
 //a disabled account must answer a redemption as an invented token does

@@ -3,6 +3,7 @@ import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
 import { isRowIdentifier } from "../db/row-identifier.js";
 import type { KeyProvider } from "../keys/provider.js";
+import type { OneTimeTokenPurpose } from "../token/purpose.js";
 import type { SealedComponents, SealedGenerations, SecurityState } from "./encoding.js";
 import { type SealVerdict, verifySeal } from "./seal.js";
 
@@ -64,6 +65,7 @@ export interface SecurityStateRead {
 	readonly email: string | null;
 	readonly emailVerified: boolean;
 	readonly disabled: boolean;
+	readonly recoveryDisabled: boolean;
 	readonly password: ReadPassword | null;
 	readonly passwordResetRequired: boolean;
 	readonly totp: ReadTotp | null;
@@ -89,6 +91,7 @@ export function securityStateDocumentOf(schema: string, accountIdSql: string): s
   'email', account.email,
   'email_verified', account.email_verified_at IS NOT NULL,
   'disabled', account.disabled_at IS NOT NULL,
+  'recovery_disabled', account.recovery_disabled_at IS NOT NULL,
   'seal', CASE WHEN seal.user_id IS NULL THEN NULL ELSE jsonb_build_object(
     'version', seal.version::text,
     'digest', encode(seal.digest, 'hex'),
@@ -280,6 +283,7 @@ function stateOf(spelled: string): SecurityStateRead {
 		email: textOrNull(state.email, "address"),
 		emailVerified: flag(state.email_verified, "address verification"),
 		disabled: flag(state.disabled, "disabled state"),
+		recoveryDisabled: flag(state.recovery_disabled, "recovery switch"),
 		password: passwordOf(state.password),
 		passwordResetRequired: flag(state.password_reset_required, "reset requirement"),
 		totp: totpOf(state.totp),
@@ -342,6 +346,7 @@ export function sealedComponentsOf(read: SecurityStateRead): SealedComponents {
 		email: read.email,
 		emailVerified: read.emailVerified,
 		disabled: read.disabled,
+		recoveryDisabled: read.recoveryDisabled,
 		password:
 			read.password === null
 				? null
@@ -363,6 +368,25 @@ export function sealedComponentsOf(read: SecurityStateRead): SealedComponents {
 		identities: read.identities.map(({ provider, subject }) => ({ provider, subject })),
 		recoveryCodes: read.recoveryCodes.map(({ keyVersion, codeHmac }) => ({ keyVersion, codeHmac })),
 	};
+}
+
+//every path into an account that does not use one of its own credentials asks this of a verified read (S-INTEG-11)
+export function recoveryIsDisabledFor(read: SecurityStateRead): boolean {
+	return read.recoveryDisabled;
+}
+
+/** the purposes of the mailed links that lead into an account, which turning recovery off retires and refuses */
+export const LINKS_INTO_THE_ACCOUNT: readonly OneTimeTokenPurpose[] = [
+	"password_reset",
+	"magic_link",
+];
+
+/** whether a verified read refuses a link of this purpose because the account turned recovery off */
+export function recoveryRefusesTheLink(
+	read: SecurityStateRead,
+	purpose: OneTimeTokenPurpose,
+): boolean {
+	return recoveryIsDisabledFor(read) && LINKS_INTO_THE_ACCOUNT.includes(purpose);
 }
 
 /** the state a stored seal was taken over, as the read reconstructs it */

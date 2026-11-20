@@ -170,6 +170,7 @@ describe("T-INTEG-7: the administrator reseal", () => {
 		const ratified = await auth.maintenance.resealSecurityState({
 			userId: account.userId,
 			reason: "incident 42: passkey inserted by a compromised tool",
+			recoveryDisabled: false,
 		});
 
 		const insertedBase64Url = (inserted?.credential_id ?? "")
@@ -293,6 +294,7 @@ describe("T-INTEG-7: the administrator reseal", () => {
 			const ratified = await auth.maintenance.resealSecurityState({
 				userId: account.userId,
 				reason: "rollback found",
+				recoveryDisabled: false,
 			});
 
 			expect(ratified.sessionEpoch).not.toBe(early?.epoch);

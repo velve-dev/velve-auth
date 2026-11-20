@@ -116,6 +116,13 @@ export function movesOfSpentToken(spent: SpentToken): GenerationMoves {
 	return { token: { purpose: spent.purpose, last: spent.tokenSha256 } };
 }
 
+//an account that turned recovery off takes the branch of an address that names no account (S-ENUM-9)
+export function ownerAMailedLinkMayReach<
+	Owner extends { readonly recoveryDisabledAt: Date | null },
+>(owner: Owner | null): Owner | null {
+	return owner !== null && owner.recoveryDisabledAt === null ? owner : null;
+}
+
 //a request for an unknown address must wait where a request for an account waits (E-931)
 export function subjectOfAddress(
 	owner: { readonly id: string } | null,

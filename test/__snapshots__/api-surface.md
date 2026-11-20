@@ -640,6 +640,14 @@ interface UserNamespaceInEveryMode {
   enable(input: {
     userId: string;
   }): Promise<void>;
+  /** turns every way into the account that does not use one of its own credentials off and deletes its recovery codes */
+  disableRecovery(input: {
+    userId: string;
+  }): Promise<void>;
+  /** turns the mailed paths and recovery codes that disableRecovery turned off on again */
+  enableRecovery(input: {
+    userId: string;
+  }): Promise<void>;
   delete(input: {
     userId: string;
   }): Promise<void>;
@@ -870,6 +878,8 @@ interface SealedSecurityState {
   readonly password: boolean;
   readonly passwordResetRequired: boolean;
   readonly passwordSetBySession: string | null;
+  /** whether the account's no-recovery switch is on in the state the reseal ratified */
+  readonly recoveryDisabled: boolean;
   readonly sessionEpoch: number;
   readonly totp: "confirmed" | "none" | "unconfirmed";
   readonly version: number;
@@ -879,7 +889,7 @@ interface SealedSecurityState {
   }[];
   readonly recoveryCodeCount: number;
 }
-type SecurityStateMaintenanceErrorCode = "security_state_account_failed" | "security_state_account_missing" | "security_state_anchor_unavailable" | "security_state_changed_during_reseal" | "security_state_envelope_unreadable" | "security_state_reason_missing" | "security_state_version_exhausted";
+type SecurityStateMaintenanceErrorCode = "security_state_account_failed" | "security_state_account_missing" | "security_state_anchor_unavailable" | "security_state_changed_during_reseal" | "security_state_envelope_unreadable" | "security_state_reason_missing" | "security_state_recovery_switch_unconfirmed" | "security_state_version_exhausted";
 /** a maintenance call refused, with a stable code and the account it was about where there is one */
 declare class SecurityStateMaintenanceError extends Error {
   readonly code: SecurityStateMaintenanceErrorCode;
@@ -891,8 +901,10 @@ declare class SecurityStateMaintenanceError extends Error {
 /** the two operator calls of the security state, which no route reaches */
 interface SecurityStateMaintenance {
   sealSecurityState(): Promise<SecurityStateReport>;
+  /** recoveryDisabled names the no-recovery switch the reseal writes, and without it a switch the last seal does not confirm is refused */
   resealSecurityState(input: {
     reason: string;
+    recoveryDisabled?: boolean;
     userId: string;
   }): Promise<SealedSecurityState>;
 }
@@ -958,6 +970,8 @@ interface User {
   readonly hasPassword: boolean;
   readonly id: string;
   readonly importedFrom: ImportSource | null;
+  /** when the account turned every way back in that does not use one of its own credentials off, or null while it has not */
+  readonly recoveryDisabledAt: Date | null;
   readonly updatedAt: Date;
   readonly username: string | null;
 }
@@ -1640,7 +1654,7 @@ export {
 ## core/http/error-map.d.mts
 
 //#region src/core/http/error-map.d.ts
-type VelveErrorCode = "account_disabled" | "factor_already_enrolled" | "factor_not_enrolled" | "freshness_required" | "identity_already_linked" | "identity_limit_reached" | "internal_error" | "invalid_credentials" | "invalid_factor_code" | "invalid_input" | "invalid_pending_authentication" | "invalid_recovery_code" | "invalid_token" | "last_sign_in_method" | "oauth_flow_invalid" | "oauth_provider_error" | "origin_not_allowed" | "passkey_limit_reached" | "password_unacceptable" | "provider_not_configured" | "rate_limited" | "session_required" | "too_many_factor_attempts" | "username_invalid" | "username_taken" | "webauthn_challenge_invalid" | "webauthn_credential_rejected";
+type VelveErrorCode = "account_disabled" | "factor_already_enrolled" | "factor_not_enrolled" | "freshness_required" | "identity_already_linked" | "identity_limit_reached" | "internal_error" | "invalid_credentials" | "invalid_factor_code" | "invalid_input" | "invalid_pending_authentication" | "invalid_recovery_code" | "invalid_token" | "last_sign_in_method" | "oauth_flow_invalid" | "oauth_provider_error" | "origin_not_allowed" | "passkey_limit_reached" | "password_unacceptable" | "provider_not_configured" | "rate_limited" | "recovery_disabled" | "session_required" | "too_many_factor_attempts" | "username_invalid" | "username_taken" | "webauthn_challenge_invalid" | "webauthn_credential_rejected";
 /** an error code a plugin contributes, which begins with that plugin's id */
 type PluginErrorCode = `${string}.${string}`;
 type AnyErrorCode = VelveErrorCode | PluginErrorCode;
