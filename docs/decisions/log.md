@@ -19037,3 +19037,43 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Leaving them failing, or hiding the new table and statements from them.
 **Reason.** Besides the plan, purpose, hook, namespace, route and code counts, five tests name what the recovery adds because they enumerate it by construction: the owner census and the owner predicate scan (the table, the recover challenge's consumption and the due lookup), the brand census and the proof brand scan (`ConsumedRecoveryChallenge`, `DuePasskeyRecovery`), and the password writer scan (the removal). The widest mounts in `test/client-fixtures.ts` and `test/widest-mount-fixtures.ts` configure `webauthn.recovery`, so every matrix over the route table reaches the five rows.
 **Price.** The reviewer reads more files outside the feature than the brief names, each listed in the report.
+
+<a id="e-3779"></a>
+
+### An activation time a writer made infinite is a broken state, not an unreadable one
+`E-3779` · passkey-recovery · storage format, settled
+
+**Context.** The independent review set `passkey_recovery.activates_at` to `-infinity` by SQL. The one state statement turned a non-finite time into a null count of microseconds, the reader refused the document as unreadable, and every path of the account answered 500 without an alarm, while E-3763 and S-INTEG-12 promise that a writer who moves the time breaks the state and raises the alarm.
+**Rejected.** (a) A `CHECK (isfinite(activates_at))` constraint, which the writer can drop and which leaves the reader's 500 in place. (b) Reading a non-finite time as the absence of a recovery, which would let a writer hide a held passkey from the seal.
+**Reason.** The state statement reads `infinity` as 9007199254740991 and `-infinity` as -9007199254740991 microseconds, values no change of the library writes, so the seal computed over the stored time fails to verify: every check refuses with `seal_mismatch` and the alarm, and the passkey sign-in that finds the recovery due answers `webauthn_credential_rejected` like an unknown passkey. The read of the driver's date for the pending recovery and the reseal's report skip a non-finite row, since the driver hands back no date for it.
+**Price.** A reseal of an account whose held time a writer made infinite ratifies that time and reports no held recovery, which the operator learns only from the alarm that came before it.
+
+<a id="e-3780"></a>
+
+### Any session of the account cancels a recovery, fresh or not
+`E-3780` · passkey-recovery · sessions, settled
+
+**Context.** E-3777 required a fresh session to cancel. The orchestrator ruled on the maintainer's words "any session of the account still signed in can see that a recovery is pending and cancel it" and asked for them to be followed literally: the owner whose passkey an attacker is replacing may have no way to sign in again, and a fresh session would require exactly that.
+**Rejected.** Keeping the freshness E-3777 chose, whose reason — a stale stolen session could cancel a legitimate recovery again and again — is a denial of a recovery, while freshness denies the owner the one protection the waiting period exists for.
+**Reason.** `POST /passkey-recovery/cancel` declares `freshness: "not_required"` and keeps the origin check and the address bucket of a state-changing route. B.9 lists it without freshness, so the count of methods freshness gates stays seventeen.
+**Price.** Whoever holds any session of the account, however old, can cancel every recovery that is started, so a legitimate recovery succeeds only once such a session has ended or expired.
+
+<a id="e-3781"></a>
+
+### A cancel voids every recover challenge of the account
+`E-3781` · passkey-recovery · challenge, settled
+
+**Context.** The orchestrator found that two starts made before a cancel leave a second recover challenge that finishes a new recovery after it, so a cancel did not end what the mailbox and two codes had begun.
+**Rejected.** (a) Binding recover challenges to a generation of the seal, which needs a new column for a row that lives five minutes. (b) Deleting the challenges after the account lock, which would reach a table §7 orders before `velve.user`.
+**Reason.** The cancel deletes every `recover` challenge of the account by a statement with the owner predicate, in the transaction that then takes the account lock and removes the held passkey, so a registration begun before the cancel answers `passkey_recovery_failed`. A start that commits after the cancel's delete is a new recovery with its own link and code.
+**Price.** A cancel with nothing pending still writes, deleting open challenges.
+
+<a id="e-3782"></a>
+
+### The recover challenge is spent in the transaction that asks the waiting period
+`E-3782` · passkey-recovery · flow, settled
+
+**Context.** E-3764 said a function that throws fails the finish before anything is written, and the documentation repeated it, but the finish spent the recover challenge in a transaction of its own before asking the function, so a throw cost the challenge and with it the recovery code its start had spent. The review's lifecycle test retries the same registration after a throwing function and found it refused.
+**Rejected.** Asking the function before the challenge is consumed, which needs the account and so a read of the challenge row before its removal (S-RACE-2).
+**Reason.** The finish now consumes the challenge, verifies the attestation, asks the function and writes the held passkey in one transaction, so a throw, a refused attestation or a refused account rolls the challenge back with everything else; E-3764's sentence is true from here on.
+**Price.** A challenge whose attestation was refused can be presented again within its five minutes, which helps only whoever holds the challenge.
