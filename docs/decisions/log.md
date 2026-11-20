@@ -18767,3 +18767,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** A twentieth class for recovery, which would change "neunzehn Fehlerklassen" for two members, as E-3716 rejected for the address notice.
 **Reason.** S-INTEG-11 and T-INTEG-11, S-ENUM-9 and T-ENUM-9 are added in both languages, S-INTEG-2 names the switch among the sealed components, and the stated counts move to 139 requirements, 143 test cases and 124 per commit. The tests are `test/no-recovery-switch-seal.test.ts` and `test/no-recovery-switch-mailed-paths.test.ts`; each case was checked to fail with the line it holds removed.
 **Price.** ENUM now holds a requirement whose subject is an account's own setting rather than whether an account exists; the property it states is that the two cannot be told apart.
+
+<a id="e-3741"></a>
+
+### Three places outside this feature's files do not know the switch yet
+`E-3741` · no-recovery-switch · hand-off, revisit after 3.0.0
+
+**Context.** The files this feature may change were fixed before it started (`CLAUDE.md` §5). Building it found three places outside them that read the sealed state and should know the switch, besides the automatic link E-3738 names.
+**Rejected.** Editing them, which §5 forbids; leaving them unrecorded.
+**Reason.** (a) `oneTimeToken.resolve` in `src/core/token/resolution.ts` names account and purpose only for a token a redemption would act on (S-TOKEN-7), and checks the address, the generation and `disabled`. A link minted before the switch went on has left its generation and resolves to `null`; a link minted in the window between a request's lookup and the switch resolves to its account although its redemption refuses it with `recovery_disabled_on_token_redemption`. The fix is `!recoveryIsDisabledFor(read)` for the two purposes `password_reset` and `magic_link`. (b) `maintenance.resealSecurityState` in `src/core/auth/security-state-maintenance.ts` returns the `SealedSecurityState` it ratified, "darunter ob das Konto gesperrt ist", and has no field for the switch, so an administrator resealing after a writer cleared it does not see that the reseal ratified recovery being on. The fix is a `recoveryDisabled` field. (c) `DOCUMENTATION.md` counts 25 codes in its server-call section and in *Error codes*, whose table lacks `passkey_limit_reached` and `identity_limit_reached` as well as `recovery_disabled`.
+**Price.** Until a follow-up, (a) answers a resolve inconsistently with its redemption inside a window a request must hit, and (b) leaves the reseal's report one component short.
