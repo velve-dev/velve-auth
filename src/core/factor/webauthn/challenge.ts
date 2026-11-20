@@ -1,4 +1,6 @@
+import type { Actor, ConsumedRecoveryChallenge } from "../../db/actor.js";
 import type { Driver } from "../../db/driver.js";
+import { toEntityId } from "../../db/entity-id.js";
 import { qualifiedTableName } from "../../db/identifier.js";
 import { decodeBase64Url } from "../../keys/base64url.js";
 import type { KeyProvider } from "../../keys/provider.js";
@@ -17,7 +19,7 @@ import {
 	toSecretToken,
 } from "../../token/index.js";
 
-export const WEBAUTHN_CHALLENGE_PURPOSES = ["register", "authenticate"] as const;
+export const WEBAUTHN_CHALLENGE_PURPOSES = ["register", "authenticate", "recover"] as const;
 
 export type WebAuthnChallengePurpose = (typeof WEBAUTHN_CHALLENGE_PURPOSES)[number];
 
@@ -43,6 +45,16 @@ export interface WebAuthnChallengeConsumption {
 export interface WebAuthnChallenges {
 	issue(request: WebAuthnChallengeRequest): Promise<IssuedWebAuthnChallenge>;
 	consume(attempt: WebAuthnChallengeConsumption): Promise<boolean>;
+	//a recovery registration has no session and learns its account from the row it removes (E-3765)
+	consumeNamingItsOwner(attempt: {
+		readonly purpose: "recover";
+		readonly challengeToken: string;
+	}): Promise<ConsumedRecoveryChallenge | null>;
+	//a cancelled recovery leaves no challenge a second start issued to finish later (E-3781)
+	withdrawEveryChallengeOf(input: {
+		readonly actor: Actor;
+		readonly purpose: "recover";
+	}): Promise<void>;
 }
 
 export interface WebAuthnChallengeRepositoryOptions {
@@ -86,7 +98,7 @@ function occasionOfCeremony(
 	purpose: WebAuthnChallengePurpose,
 	userId: string | null,
 ): TokenBindingOccasion {
-	if (purpose === "register") {
+	if (purpose === "register" || purpose === "recover") {
 		return "change";
 	}
 	return userId === null ? "sign_in" : "factor_check";
@@ -108,6 +120,37 @@ WHERE challenge_sha256 = $1
   AND user_id IS NOT DISTINCT FROM $3::uuid
   AND expires_at > now()
 RETURNING user_id, token_mac, token_mac_key_version`;
+
+	const consumeNamingItsOwnerStatement = `DELETE FROM ${table}
+/* no owner predicate: S-OWNER-2, the predicate is the secret itself */
+WHERE challenge_sha256 = $1
+  AND purpose = $2
+  AND user_id IS NOT NULL
+  AND expires_at > now()
+RETURNING user_id, token_mac, token_mac_key_version`;
+
+	const withdrawStatement = `DELETE FROM ${table} WHERE user_id = $1 AND purpose = $2`;
+
+	async function boundRow(
+		challengeSha256: Uint8Array,
+		purpose: WebAuthnChallengePurpose,
+		row: ConsumedChallengeRow,
+		occasion: TokenBindingOccasion,
+	): Promise<boolean> {
+		const verdict = await checkTokenBinding(
+			options.keys,
+			challengeBinding(challengeSha256, purpose, row.user_id),
+			{ tokenMac: row.token_mac, tokenMacKeyVersion: row.token_mac_key_version },
+		);
+		if (verdict !== "valid") {
+			reportRefusedTokenRow(options.reportTokenBindingRefusal, {
+				userId: row.user_id,
+				occasion,
+				verdict,
+			});
+		}
+		return verdict === "valid";
+	}
 
 	return {
 		async issue({ purpose, userId }) {
@@ -136,19 +179,27 @@ RETURNING user_id, token_mac, token_mac_key_version`;
 			if (row === undefined) {
 				return false;
 			}
-			const verdict = await checkTokenBinding(
-				options.keys,
-				challengeBinding(challengeSha256, purpose, row.user_id),
-				{ tokenMac: row.token_mac, tokenMacKeyVersion: row.token_mac_key_version },
+			return boundRow(challengeSha256, purpose, row, occasionOfCeremony(purpose, userId));
+		},
+
+		async consumeNamingItsOwner({ purpose, challengeToken }) {
+			const challengeSha256 = hashSecretToken(toSecretToken(challengeToken));
+			const [row] = await options.driver.transaction((tx) =>
+				tx.query<ConsumedChallengeRow>(consumeNamingItsOwnerStatement, [challengeSha256, purpose]),
 			);
-			if (verdict !== "valid") {
-				reportRefusedTokenRow(options.reportTokenBindingRefusal, {
-					userId: row.user_id,
-					occasion: occasionOfCeremony(purpose, userId),
-					verdict,
-				});
+			if (row === undefined || row.user_id === null) {
+				return null;
 			}
-			return verdict === "valid";
+			if (
+				!(await boundRow(challengeSha256, purpose, row, occasionOfCeremony(purpose, row.user_id)))
+			) {
+				return null;
+			}
+			return { userId: toEntityId<"user">(row.user_id) } as ConsumedRecoveryChallenge;
+		},
+
+		async withdrawEveryChallengeOf({ actor, purpose }) {
+			await options.driver.query(withdrawStatement, [actor, purpose]);
 		},
 	};
 }

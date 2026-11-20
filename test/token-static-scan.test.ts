@@ -189,7 +189,7 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 		expect(consume).toContain("/* no owner predicate: S-TOKEN-4 */");
 	});
 
-	it("carries the marker on no other statement of this repository, and is one of eighteen overall", () => {
+	it("carries the marker on no other statement of this repository, and is one of nineteen overall", () => {
 		const carrying = sources.filter((source) => /no owner predicate/.test(source.text));
 		const markers = sources.flatMap((source) => source.text.match(/no owner predicate/g) ?? []);
 
@@ -211,11 +211,12 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 		const declaring = statements.filter((statement) => /no owner predicate/.test(statement));
 
 		//the maintenance step lists every account and counts every seal row by key version (E-3177)
-		expect(markers, perFile).toHaveLength(18);
+		//a recovery registration learns its account from the challenge it removes (E-3765)
+		expect(markers, perFile).toHaveLength(19);
 		expect(
 			carrying.map((source) => source.path),
 			perFile,
-		).toHaveLength(10);
+		).toHaveLength(11);
 		expect(declaring, listing(declaring)).toHaveLength(1);
 	});
 });
@@ -256,7 +257,8 @@ describe("nothing reads the row before removing it (S-RACE-2)", () => {
 				"(SELECT COALESCE( (SELECT CASE $3::text WHEN 'email_verify' THEN st.email_verify_generation " +
 				"WHEN 'password_reset' THEN st.password_reset_generation " +
 				"WHEN 'email_change' THEN st.email_change_generation " +
-				"WHEN 'magic_link' THEN st.magic_link_generation END " +
+				"WHEN 'magic_link' THEN st.magic_link_generation " +
+				"WHEN 'passkey_recovery' THEN st.passkey_recovery_generation END " +
 				"FROM velve.security_state st WHERE st.user_id = owner.id), 1) " +
 				"FROM velve.user owner WHERE owner.id = $1)::text AS token_generation",
 		]);

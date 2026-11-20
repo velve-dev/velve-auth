@@ -42,9 +42,9 @@ describe("the mounted table against 3.15 D.3", () => {
 	it("serves every row the widest configuration declares, and no row D.3 does not", () => {
 		const widest = widestVelveAuth();
 
-		expect(everyRowDeclaredByD3()).toHaveLength(47);
+		expect(everyRowDeclaredByD3()).toHaveLength(52);
 		expect(servedAddresses(widest.routes)).toStrictEqual(
-			declaredAddresses({ mode: "username_email", webauthn: true }),
+			declaredAddresses({ mode: "username_email", webauthn: true, passkeyRecovery: true }),
 		);
 	});
 
@@ -57,7 +57,7 @@ describe("the mounted table against 3.15 D.3", () => {
 		const routes = widestVelveAuth().routes;
 		const exempt = routes.filter((route) => route.originCheck !== "checked");
 
-		expect(routes).toHaveLength(47);
+		expect(routes).toHaveLength(52);
 		expect(exempt.map((route) => route.name)).toStrictEqual([
 			"signIn.oauth.callback",
 			"signIn.oauth.callbackFormPost",
@@ -69,6 +69,16 @@ describe("the mounted table against 3.15 D.3", () => {
 		expect(declaredAddresses({ mode: "email", webauthn: true })).toHaveLength(45);
 		expect(declaredAddresses({ mode: "username", webauthn: true })).toHaveLength(39);
 		expect(declaredAddresses({ mode: "username_email", webauthn: false })).toHaveLength(47 - 9);
+		//webauthn.recovery adds the five recovery rows in the two modes with an address (E-3761)
+		expect(
+			declaredAddresses({ mode: "username_email", webauthn: true, passkeyRecovery: true }),
+		).toHaveLength(52);
+		expect(
+			declaredAddresses({ mode: "email", webauthn: true, passkeyRecovery: true }),
+		).toHaveLength(50);
+		expect(
+			declaredAddresses({ mode: "username", webauthn: true, passkeyRecovery: true }),
+		).toHaveLength(39);
 	});
 });
 
@@ -102,7 +112,7 @@ describe("every row the table serves is reachable as the server method its name 
 		const widest = widestVelveAuth() as unknown as Record<string, unknown>;
 		const served = widest.routes as readonly AnyRoute[];
 
-		expect(served).toHaveLength(47);
+		expect(served).toHaveLength(52);
 		expect(Object.keys(NAMED_DIFFERENTLY_IN_B)).toHaveLength(2);
 		expect(
 			served

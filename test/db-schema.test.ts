@@ -61,7 +61,7 @@ async function userOwnedTableNames(): Promise<string[]> {
 }
 
 describe("the shipped schema", () => {
-	it("creates the seventeen tables of architecture 3.17 and 3.18", async () => {
+	it("creates the eighteen tables of architecture 3.17 and 3.18", async () => {
 		const rows = await connection.query<{ table_name: string }>(
 			"SELECT table_name FROM information_schema.tables WHERE table_schema = $1 ORDER BY table_name",
 			[schema],
@@ -72,6 +72,7 @@ describe("the shipped schema", () => {
 			"import_mapping",
 			"oauth_flow",
 			"one_time_token",
+			"passkey_recovery",
 			"password_credential",
 			"password_reset_required",
 			"pending_authentication",
@@ -251,7 +252,7 @@ describe("deleting a user (S-TOKEN-5)", () => {
 		);
 
 		const owned = await userOwnedTableNames();
-		expect(owned).toHaveLength(14);
+		expect(owned).toHaveLength(15);
 
 		await connection.query(`DELETE FROM ${schema}.user WHERE id = $1`, [userId]);
 

@@ -17,6 +17,7 @@ import { asOneReadingOfTheAnchor, securityStateAnchorPortsOf } from "./anchor-po
 import type {
 	EmailChangedEvent,
 	FrozenContext,
+	PasskeyRecoveryStartedEvent,
 	PluginHooks,
 	PluginMigration,
 	PluginRoute,
@@ -48,6 +49,7 @@ export interface PluginHookDispatcher {
 	/** a `transaction` runs every hook on that transaction's connection and not on the pool's */
 	beforeSessionRevoke(event: SessionRevokeEvent, transaction?: Driver): Promise<void>;
 	afterEmailChange(event: EmailChangedEvent): Promise<void>;
+	afterPasskeyRecoveryStart(event: PasskeyRecoveryStartedEvent): Promise<void>;
 }
 
 export interface PluginRuntime {
@@ -98,6 +100,7 @@ const HOOK_POINTS: readonly (keyof PluginHooks)[] = [
 	"afterUserCreate",
 	"beforeSessionRevoke",
 	"afterEmailChange",
+	"afterPasskeyRecoveryStart",
 ];
 
 //a plugin written as a class carries its methods on a prototype and must be read (E-901)
@@ -554,6 +557,7 @@ function dispatcher(
 						() => SILENT_REVOCATION,
 					),
 		afterEmailChange: (event) => run((hooks) => hooks.afterEmailChange, event),
+		afterPasskeyRecoveryStart: (event) => run((hooks) => hooks.afterPasskeyRecoveryStart, event),
 	};
 
 	//a revocation from a lent context is announced on the same transaction (E-2584)
@@ -580,6 +584,13 @@ function dispatcher(
 		beforeSessionRevoke: (event, lent) => onThePool.beforeSessionRevoke(event, lent ?? transaction),
 		afterEmailChange: (event) =>
 			runOnTheTransaction(transaction, (hooks) => hooks.afterEmailChange, event, announcedOn),
+		afterPasskeyRecoveryStart: (event) =>
+			runOnTheTransaction(
+				transaction,
+				(hooks) => hooks.afterPasskeyRecoveryStart,
+				event,
+				announcedOn,
+			),
 	});
 
 	return { onThePool, onTheTransaction };

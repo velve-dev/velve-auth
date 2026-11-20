@@ -82,6 +82,7 @@ import { WebAuthnCredential } from "../core/factor/webauthn/credential-repositor
 import { WebAuthnAuthenticationChallenge, WebAuthnRegistrationChallenge } from "../core/factor/webauthn/service.mjs";
 import { ChangedUser, RedeemResetResult, SetPasswordResult } from "../core/flows/results.mjs";
 import { OAuthRouteTable } from "../core/oauth/routes.mjs";
+import { FinishPasskeyRecoveryResult, PendingPasskeyRecovery } from "../core/recovery/flow.mjs";
 
 //#region src/client/routes.d.ts
 /** every route the library declares, whatever one instance's mode or configuration serves */
@@ -166,7 +167,16 @@ type VelveRouteTable = readonly [Route<"signOut", "/sign-out", {} & {}, void, "i
 } & {}, void, "account_disabled" | "freshness_required" | "invalid_input" | "last_sign_in_method" | "origin_not_allowed" | "rate_limited" | "session_required">, Route<"signIn.passkey.start", "/sign-in/passkey/start", {} & {}, WebAuthnAuthenticationChallenge, "invalid_input" | "origin_not_allowed" | "rate_limited">, Route<"signIn.passkey.finish", "/sign-in/passkey/finish", {
   challengeToken: string;
   response: Record<string, unknown>;
-} & {}, SignInResult, "invalid_input" | "origin_not_allowed" | "rate_limited" | "webauthn_challenge_invalid" | "webauthn_credential_rejected">];
+} & {}, SignInResult, "invalid_input" | "origin_not_allowed" | "rate_limited" | "webauthn_challenge_invalid" | "webauthn_credential_rejected">, Route<"passkeyRecovery.request", "/passkey-recovery/request", {
+  email: string;
+} & {}, void, "invalid_input" | "origin_not_allowed" | "rate_limited">, Route<"passkeyRecovery.start", "/passkey-recovery/start", {
+  recoveryCode: string;
+  token: string;
+} & {}, WebAuthnRegistrationChallenge, "invalid_input" | "origin_not_allowed" | "passkey_recovery_failed" | "rate_limited">, Route<"passkeyRecovery.finish", "/passkey-recovery/finish", {
+  challengeToken: string;
+  label: string;
+  response: Record<string, unknown>;
+} & {}, FinishPasskeyRecoveryResult, "invalid_input" | "origin_not_allowed" | "passkey_recovery_failed" | "rate_limited">, Route<"passkeyRecovery.pending", "/passkey-recovery", {} & {}, PendingPasskeyRecovery | null, "account_disabled" | "origin_not_allowed" | "rate_limited" | "session_required">, Route<"passkeyRecovery.cancel", "/passkey-recovery/cancel", {} & {}, void, "account_disabled" | "origin_not_allowed" | "rate_limited" | "session_required">];
 /** what a call needs from its own route row, with no handler reachable from it */
 interface ClientRoute {
   readonly method: HttpMethod;
@@ -362,6 +372,26 @@ declare const VELVE_CLIENT_ROUTES: readonly [{
   readonly method: "POST";
   readonly name: "signIn.passkey.finish";
   readonly path: "/sign-in/passkey/finish";
+}, {
+  readonly method: "POST";
+  readonly name: "passkeyRecovery.request";
+  readonly path: "/passkey-recovery/request";
+}, {
+  readonly method: "POST";
+  readonly name: "passkeyRecovery.start";
+  readonly path: "/passkey-recovery/start";
+}, {
+  readonly method: "POST";
+  readonly name: "passkeyRecovery.finish";
+  readonly path: "/passkey-recovery/finish";
+}, {
+  readonly method: "GET";
+  readonly name: "passkeyRecovery.pending";
+  readonly path: "/passkey-recovery";
+}, {
+  readonly method: "POST";
+  readonly name: "passkeyRecovery.cancel";
+  readonly path: "/passkey-recovery/cancel";
 }];
 //#endregion
 export {
@@ -413,6 +443,7 @@ import { SessionMetadataMode } from "../session/metadata.mjs";
 import { IdentityConfigurationInput } from "../identity/configuration.mjs";
 import { OAuthConfig } from "../oauth/config.mjs";
 import { PasswordConfig } from "../password/config.mjs";
+import { PasskeyRecoveryConfig } from "../recovery/config.mjs";
 import { SecurityStateAlarm } from "../security-state/alarm.mjs";
 import { LimitsConfig } from "../security-state/limits.mjs";
 
@@ -456,11 +487,13 @@ interface TotpConfig {
 }
 interface WebAuthnConfig {
   readonly origins: readonly string[];
+  /** turns the recovery to a new passkey on, which is off while this is absent */
+  readonly recovery?: PasskeyRecoveryConfig;
   readonly relyingPartyId: string;
   readonly relyingPartyName: string;
   readonly userVerification: "preferred" | "required";
 }
-/** four kinds answer the four one-time-token purposes, two are the enumeration cover and the last tells the previous address of a change */
+/** five kinds answer the five one-time-token purposes, two are the enumeration cover and three tell an address what happened to its account */
 type EmailMessage = {
   expiresAt: Date;
   kind: "email_verification";
@@ -487,15 +520,30 @@ type EmailMessage = {
   token: string;
   userId: string;
 } | {
+  expiresAt: Date;
+  kind: "passkey_recovery";
+  to: string;
+  token: string;
+  userId: string;
+} | {
   kind: "sign_up_attempt_on_existing_account";
   to: string;
   userId: string;
 } | {
   kind: "request_for_unknown_address";
-  requested: "magic_link" | "password_reset";
+  requested: "magic_link" | "passkey_recovery" | "password_reset";
   to: string;
 } | {
   kind: "email_change_notice";
+  to: string;
+  userId: string;
+} | {
+  activatesAt: Date;
+  kind: "passkey_recovery_started";
+  to: string;
+  userId: string;
+} | {
+  kind: "passkey_recovery_completed";
   to: string;
   userId: string;
 };
@@ -593,6 +641,7 @@ import { PendingToken } from "../factor/pending/token.mjs";
 import { ModeHasEmail, ModeHasUsername } from "./config.mjs";
 import { ResolvedSessionView, UsernameAvailabilityAnswer } from "./routes.mjs";
 import { OAuthSurface } from "../oauth/routes.mjs";
+import { PasskeyRecoverySurface } from "../recovery/routes.mjs";
 import { FactorSurface } from "../factor/routes.mjs";
 import { EmailFlowSurface } from "../flows/routes.mjs";
 import { PasswordSurface } from "../password/routes.mjs";
@@ -703,7 +752,7 @@ interface AuthInternals {
   readonly weakenings: readonly ChosenWeakening[];
 }
 /** what each feature's own seam module contributes to the surface, joined into one type */
-type SeamSurface<M extends IdentityMode> = OAuthSurface<M> & EmailFlowSurface<M> & PasswordSurface<M> & PluginSurface<M> & FactorSurface;
+type SeamSurface<M extends IdentityMode> = OAuthSurface<M> & EmailFlowSurface<M> & PasswordSurface<M> & PluginSurface<M> & FactorSurface & PasskeyRecoverySurface<M>;
 type VelveAuth<M extends IdentityMode> = AuthInternals & SeamSurface<M> & {
   signOut(input: ServerCallFields): Promise<void>;
   readonly pending: PendingNamespace;
@@ -888,6 +937,11 @@ interface SealedSecurityState {
     readonly subject: string;
   }[];
   readonly recoveryCodeCount: number;
+  /** the passkey a recovery to a new passkey holds back, by its credential id in base64url, and when it activates */
+  readonly passkeyRecovery: {
+    readonly activatesAt: Date;
+    readonly credentialId: string;
+  } | null;
 }
 type SecurityStateMaintenanceErrorCode = "security_state_account_failed" | "security_state_account_missing" | "security_state_anchor_unavailable" | "security_state_changed_during_reseal" | "security_state_envelope_unreadable" | "security_state_reason_missing" | "security_state_recovery_switch_unconfirmed" | "security_state_version_exhausted";
 /** a maintenance call refused, with a stable code and the account it was about where there is one */
@@ -921,7 +975,7 @@ export {
 
 //#region src/core/auth/startup.d.ts
 
-type StartupErrorCode = "email_callback_missing" | "keys_missing" | "keys_unusable" | "limits_unusable" | "oauth_provider_incomplete" | "origins_empty" | "plugin_anchor_incomplete" | "plugin_database_and_role_both_set" | "plugin_database_reaches_the_core" | "plugin_dependency_cycle" | "plugin_dependency_missing" | "plugin_error_code_not_namespaced" | "plugin_error_code_undeclared" | "plugin_field_unknown" | "plugin_id_duplicated" | "plugin_migration_table_not_an_identifier" | "plugin_migration_table_not_prefixed" | "plugin_rate_limit_rule_unmatched" | "plugin_route_conflict" | "plugin_route_exempts_the_origin_check" | "plugin_route_reads_a_core_cookie" | "plugin_route_without_address_rate_limit" | "plugin_table_prefix_conflict" | "rate_limit_bucket_unusable" | "recovery_code_shape_unusable" | "recovery_codes_required" | "route_name_segment_reserved" | "route_namespace_conflict" | "security_state_sealing_unknown";
+type StartupErrorCode = "email_callback_missing" | "keys_missing" | "keys_unusable" | "limits_unusable" | "oauth_provider_incomplete" | "origins_empty" | "passkey_recovery_unusable" | "plugin_anchor_incomplete" | "plugin_database_and_role_both_set" | "plugin_database_reaches_the_core" | "plugin_dependency_cycle" | "plugin_dependency_missing" | "plugin_error_code_not_namespaced" | "plugin_error_code_undeclared" | "plugin_field_unknown" | "plugin_id_duplicated" | "plugin_migration_table_not_an_identifier" | "plugin_migration_table_not_prefixed" | "plugin_rate_limit_rule_unmatched" | "plugin_route_conflict" | "plugin_route_exempts_the_origin_check" | "plugin_route_reads_a_core_cookie" | "plugin_route_without_address_rate_limit" | "plugin_table_prefix_conflict" | "rate_limit_bucket_unusable" | "recovery_code_shape_unusable" | "recovery_codes_required" | "route_name_segment_reserved" | "route_namespace_conflict" | "security_state_sealing_unknown";
 /** the two contributors a route conflict names in its start error */
 interface RouteConflict {
   readonly claimed: string;
@@ -1280,6 +1334,7 @@ import { SignInResult } from "../auth/results.mjs";
 import { TotpEnrollment } from "./totp/secret.mjs";
 import { WebAuthnCredential } from "./webauthn/credential-repository.mjs";
 import { WebAuthnAuthenticationChallenge, WebAuthnRegistrationChallenge } from "./webauthn/service.mjs";
+import "../recovery/routes.mjs";
 
 //#region src/core/factor/routes.d.ts
 
@@ -1654,7 +1709,7 @@ export {
 ## core/http/error-map.d.mts
 
 //#region src/core/http/error-map.d.ts
-type VelveErrorCode = "account_disabled" | "factor_already_enrolled" | "factor_not_enrolled" | "freshness_required" | "identity_already_linked" | "identity_limit_reached" | "internal_error" | "invalid_credentials" | "invalid_factor_code" | "invalid_input" | "invalid_pending_authentication" | "invalid_recovery_code" | "invalid_token" | "last_sign_in_method" | "oauth_flow_invalid" | "oauth_provider_error" | "origin_not_allowed" | "passkey_limit_reached" | "password_unacceptable" | "provider_not_configured" | "rate_limited" | "recovery_disabled" | "session_required" | "too_many_factor_attempts" | "username_invalid" | "username_taken" | "webauthn_challenge_invalid" | "webauthn_credential_rejected";
+type VelveErrorCode = "account_disabled" | "factor_already_enrolled" | "factor_not_enrolled" | "freshness_required" | "identity_already_linked" | "identity_limit_reached" | "internal_error" | "invalid_credentials" | "invalid_factor_code" | "invalid_input" | "invalid_pending_authentication" | "invalid_recovery_code" | "invalid_token" | "last_sign_in_method" | "oauth_flow_invalid" | "oauth_provider_error" | "origin_not_allowed" | "passkey_limit_reached" | "passkey_recovery_failed" | "password_unacceptable" | "provider_not_configured" | "rate_limited" | "recovery_disabled" | "session_required" | "too_many_factor_attempts" | "username_invalid" | "username_taken" | "webauthn_challenge_invalid" | "webauthn_credential_rejected";
 /** an error code a plugin contributes, which begins with that plugin's id */
 type PluginErrorCode = `${string}.${string}`;
 type AnyErrorCode = VelveErrorCode | PluginErrorCode;
@@ -2159,7 +2214,7 @@ import { SecurityStateFloor, SecurityStateSealedEvent } from "../security-state/
 import { RouteDeclaration } from "../http/route.mjs";
 
 //#region src/core/plugin/config.d.ts
-type RevokeReason = "email_verified" | "identity_linked" | "password_changed" | "password_reset" | "revoked_by_user" | "sign_out";
+type RevokeReason = "email_verified" | "identity_linked" | "passkey_recovery" | "password_changed" | "password_reset" | "revoked_by_user" | "sign_out";
 interface SignInEvent {
   readonly ipAddress: string | null;
   readonly method: "magic_link" | "oauth" | "passkey" | "password";
@@ -2188,6 +2243,10 @@ interface UserCreatedEvent extends UserCreateEvent {
 }
 /** an address change that has committed, which names the account and never an address */
 interface EmailChangedEvent {
+  readonly userId: string;
+}
+/** a recovery to a new passkey that began its waiting period, which names the account and nothing else */
+interface PasskeyRecoveryStartedEvent {
   readonly userId: string;
 }
 interface SessionRevokeEvent {
@@ -2225,9 +2284,10 @@ interface FrozenContext {
   };
   log(level: "error" | "info" | "warn", message: string, fields?: Readonly<Record<string, unknown>>): void;
 }
-/** the eight hook points, where a hook refuses by throwing and cannot replace the response */
+/** the nine hook points, where a hook refuses by throwing and cannot replace the response */
 interface PluginHooks {
   afterEmailChange?: (event: EmailChangedEvent, context: FrozenContext) => Promise<void>;
+  afterPasskeyRecoveryStart?: (event: PasskeyRecoveryStartedEvent, context: FrozenContext) => Promise<void>;
   afterSessionCreate?: (event: SessionCreatedEvent, context: FrozenContext) => Promise<void>;
   afterSignIn?: (event: SignInCompletedEvent, context: FrozenContext) => Promise<void>;
   afterUserCreate?: (event: UserCreatedEvent, context: FrozenContext) => Promise<void>;
@@ -2272,6 +2332,7 @@ export {
 	EmailChangedEvent,
 	FrozenContext,
 	FrozenRepositories,
+	PasskeyRecoveryStartedEvent,
 	PluginActor,
 	PluginHooks,
 	PluginMigration,
@@ -2299,6 +2360,97 @@ type PluginSurface<M extends IdentityMode> = M extends IdentityMode ? Record<nev
 //#endregion
 export {
 	PluginSurface,
+};
+
+## core/recovery/activation.d.mts
+
+import "../factor/webauthn/service.mjs";
+import "./repository.mjs";
+
+## core/recovery/config.d.mts
+
+//#region src/core/recovery/config.d.ts
+/** what the waiting period of one recovery to a new passkey is asked with */
+interface PasskeyRecoveryContext {
+  readonly userId: string;
+}
+/** turns the recovery to a new passkey on and says how long its new passkey waits before it signs in */
+interface PasskeyRecoveryConfig {
+  /** seconds from the registration of the new passkey until it replaces every other way in, read on that request */
+  readonly waitingPeriodInSeconds: (context: PasskeyRecoveryContext) => number;
+}
+/** the longest waiting period the library holds a new passkey back for */
+declare const LONGEST_PASSKEY_RECOVERY_WAIT_IN_SECONDS: number;
+//#endregion
+export {
+	LONGEST_PASSKEY_RECOVERY_WAIT_IN_SECONDS,
+	PasskeyRecoveryConfig,
+	PasskeyRecoveryContext,
+};
+
+## core/recovery/flow.d.mts
+
+import "../factor/webauthn/service.mjs";
+import "./activation.mjs";
+import "@simplewebauthn/server";
+
+//#region src/core/recovery/flow.d.ts
+
+/** what the registration that ends a recovery answers, with the activation time while the new passkey waits */
+type FinishPasskeyRecoveryResult = {
+  readonly activatesAt: Date;
+  readonly status: "pending";
+} | {
+  readonly status: "completed";
+};
+/** a recovery to a new passkey that waits for its activation time, as a session of its account sees it */
+interface PendingPasskeyRecovery {
+  readonly activatesAt: Date;
+}
+//#endregion
+export {
+	FinishPasskeyRecoveryResult,
+	PendingPasskeyRecovery,
+};
+
+## core/recovery/repository.d.mts
+
+import "../factor/webauthn/service.mjs";
+
+## core/recovery/routes.d.mts
+
+import { IdentityMode } from "../db/migrations/identity-mode.mjs";
+import { ServerCallFields } from "../http/route.mjs";
+import { WebAuthnRegistrationChallenge } from "../factor/webauthn/service.mjs";
+import "./activation.mjs";
+import { FinishPasskeyRecoveryResult, PendingPasskeyRecovery } from "./flow.mjs";
+
+//#region src/core/recovery/routes.d.ts
+/** the recovery to a new passkey: the address, the mailed link with one recovery code, the new passkey, and the notice */
+interface PasskeyRecoveryNamespace {
+  request(input: {
+    email: string;
+  } & ServerCallFields): Promise<void>;
+  start(input: {
+    recoveryCode: string;
+    token: string;
+  } & ServerCallFields): Promise<WebAuthnRegistrationChallenge>;
+  finish(input: {
+    challengeToken: string;
+    label: string;
+    response: Record<string, unknown>;
+  } & ServerCallFields): Promise<FinishPasskeyRecoveryResult>;
+  pending(input: ServerCallFields): Promise<PendingPasskeyRecovery | null>;
+  cancel(input: ServerCallFields): Promise<void>;
+}
+/** the `passkeyRecovery` namespace, present at run time only where `webauthn.recovery` is configured */
+type PasskeyRecoverySurface<M extends IdentityMode> = M extends "email" | "username_email" ? {
+  readonly passkeyRecovery: PasskeyRecoveryNamespace;
+} : unknown;
+//#endregion
+export {
+	PasskeyRecoveryNamespace,
+	PasskeyRecoverySurface,
 };
 
 ## core/security-state/alarm.d.mts
@@ -2406,7 +2558,7 @@ export {
 ## core/token/purpose.d.mts
 
 //#region src/core/token/purpose.d.ts
-declare const ONE_TIME_TOKEN_PURPOSES: readonly ["email_verify", "password_reset", "email_change", "magic_link"];
+declare const ONE_TIME_TOKEN_PURPOSES: readonly ["email_verify", "password_reset", "email_change", "magic_link", "passkey_recovery"];
 type OneTimeTokenPurpose = (typeof ONE_TIME_TOKEN_PURPOSES)[number];
 //#endregion
 export {
@@ -2448,7 +2600,7 @@ import { CookieAttributes, CookieInstruction } from "./core/http/cookies.mjs";
 import { Clock } from "./core/http/environment.mjs";
 import { AnyErrorCode, PluginErrorCode, PluginErrorDefinition, VelveError, VelveErrorCode, registerPluginErrorCodes, resolveErrorCode } from "./core/http/error-map.mjs";
 import { SecurityStateFloor, SecurityStateSealedEvent } from "./core/security-state/anchor.mjs";
-import { EmailChangedEvent, FrozenContext, FrozenRepositories, PluginActor, PluginHooks, PluginMigration, PluginRoute, RevokeReason, SecurityStateAnchor, SessionCreateEvent, SessionCreatedEvent, SessionRevokeEvent, SignInCompletedEvent, SignInEvent, UserCreateEvent, UserCreatedEvent, VelvePlugin } from "./core/plugin/config.mjs";
+import { EmailChangedEvent, FrozenContext, FrozenRepositories, PasskeyRecoveryStartedEvent, PluginActor, PluginHooks, PluginMigration, PluginRoute, RevokeReason, SecurityStateAnchor, SessionCreateEvent, SessionCreatedEvent, SessionRevokeEvent, SignInCompletedEvent, SignInEvent, UserCreateEvent, UserCreatedEvent, VelvePlugin } from "./core/plugin/config.mjs";
 import { AnyRoute, CallerRequirement, OriginRequirement } from "./core/http/route.mjs";
 import { PendingToken } from "./core/factor/pending/token.mjs";
 import { SessionToken } from "./core/session/token.mjs";
@@ -2458,6 +2610,7 @@ import { OneTimeTokenPurpose } from "./core/token/purpose.mjs";
 import { UsernameRules } from "./core/identity/configuration.mjs";
 import { rootKeyProvider } from "./core/keys/root-key-provider.mjs";
 import { GenericProviderConfig, KnownProvider, OAuthConfig, OAuthPrompt, OAuthResponseMode, ProviderCredentials } from "./core/oauth/config.mjs";
+import { LONGEST_PASSKEY_RECOVERY_WAIT_IN_SECONDS, PasskeyRecoveryConfig, PasskeyRecoveryContext } from "./core/recovery/config.mjs";
 import { SecurityStateAlarm } from "./core/security-state/alarm.mjs";
 import { LimitsConfig } from "./core/security-state/limits.mjs";
 import { BaseConfig, EmailConfig, EmailMessage, IdentityConfig, IdentityFields, ModeHasEmail, ModeHasUsername, OnlyWhen, RateAlert, RateLimitConfig, RecoveryCodesConfig, RecoveryCodesRequirement, SecurityStateConfig, SignInLookup, TotpConfig, VelveAuthConfig, WebAuthnConfig } from "./core/auth/config.mjs";
@@ -2467,6 +2620,8 @@ import { WebAuthnCredential } from "./core/factor/webauthn/credential-repository
 import { WebAuthnAuthenticationChallenge, WebAuthnRegistrationChallenge } from "./core/factor/webauthn/service.mjs";
 import { ChangedUser, EmailNamespace, MagicLinkNamespace, MailedPasswordNamespace, RecoveryPasswordNamespace, RedeemResetResult, SetPasswordResult, SignUpNamespace } from "./core/flows/results.mjs";
 import { OAuthCallbackOutcome } from "./core/oauth/service.mjs";
+import { FinishPasskeyRecoveryResult, PendingPasskeyRecovery } from "./core/recovery/flow.mjs";
+import { PasskeyRecoveryNamespace } from "./core/recovery/routes.mjs";
 import { AuthenticatorResponse, RecoveryNamespace, SignInPasskeyNamespace, TotpNamespace, WebAuthnNamespace } from "./core/factor/routes.mjs";
 import { EmailFlowSurface } from "./core/flows/routes.mjs";
 import { ResolvedOneTimeToken } from "./core/token/resolution.mjs";
@@ -2503,6 +2658,7 @@ export {
 	type EmailMessage,
 	EmailNamespace,
 	type EntityId,
+	type FinishPasskeyRecoveryResult,
 	FrozenContext,
 	FrozenRepositories,
 	GenericProviderConfig,
@@ -2514,6 +2670,7 @@ export {
 	type ImportSource,
 	type KeyProvider,
 	KnownProvider,
+	LONGEST_PASSKEY_RECOVERY_WAIT_IN_SECONDS,
 	type LimitsConfig,
 	MagicLinkNamespace,
 	MailedPasswordNamespace,
@@ -2531,8 +2688,13 @@ export {
 	type OriginRequirement,
 	type OwnedRowRepository,
 	type OwnedRowRepositoryOptions,
+	type PasskeyRecoveryConfig,
+	type PasskeyRecoveryContext,
+	type PasskeyRecoveryNamespace,
+	PasskeyRecoveryStartedEvent,
 	type PendingAuthentication,
 	type PendingNamespace,
+	type PendingPasskeyRecovery,
 	type PendingToken,
 	PluginActor,
 	type PluginErrorCode,

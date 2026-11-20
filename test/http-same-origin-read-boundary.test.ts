@@ -32,6 +32,7 @@ const READING_ROUTES = [
 	"factor.recovery.remaining",
 	"identity.list",
 	"pending.read",
+	"passkeyRecovery.pending",
 ];
 
 const EXEMPT_ROUTES = ["signIn.oauth.callback", "signIn.oauth.callbackFormPost"];

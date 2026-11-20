@@ -7,6 +7,7 @@ import type { KeyProvider } from "../keys/provider.js";
 import type { OAuthConfig } from "../oauth/config.js";
 import type { PasswordConfig } from "../password/config.js";
 import type { VelvePlugin } from "../plugin/config.js";
+import type { PasskeyRecoveryConfig } from "../recovery/config.js";
 import type { SecurityStateAlarm } from "../security-state/alarm.js";
 import type { LimitsConfig } from "../security-state/limits.js";
 import type { SessionConfig } from "../session/config.js";
@@ -57,9 +58,11 @@ export interface WebAuthnConfig {
 	readonly relyingPartyName: string;
 	readonly origins: readonly string[];
 	readonly userVerification: "required" | "preferred";
+	/** turns the recovery to a new passkey on, which is off while this is absent */
+	readonly recovery?: PasskeyRecoveryConfig;
 }
 
-/** four kinds answer the four one-time-token purposes, two are the enumeration cover and the last tells the previous address of a change */
+/** five kinds answer the five one-time-token purposes, two are the enumeration cover and three tell an address what happened to its account */
 export type EmailMessage =
 	| { kind: "email_verification"; to: string; userId: string; token: string; expiresAt: Date }
 	| { kind: "password_reset"; to: string; userId: string; token: string; expiresAt: Date }
@@ -72,9 +75,16 @@ export type EmailMessage =
 			previousEmail: string;
 	  }
 	| { kind: "magic_link"; to: string; userId: string; token: string; expiresAt: Date }
+	| { kind: "passkey_recovery"; to: string; userId: string; token: string; expiresAt: Date }
 	| { kind: "sign_up_attempt_on_existing_account"; to: string; userId: string }
-	| { kind: "request_for_unknown_address"; to: string; requested: "password_reset" | "magic_link" }
-	| { kind: "email_change_notice"; to: string; userId: string };
+	| {
+			kind: "request_for_unknown_address";
+			to: string;
+			requested: "password_reset" | "magic_link" | "passkey_recovery";
+	  }
+	| { kind: "email_change_notice"; to: string; userId: string }
+	| { kind: "passkey_recovery_started"; to: string; userId: string; activatesAt: Date }
+	| { kind: "passkey_recovery_completed"; to: string; userId: string };
 
 export interface EmailConfig {
 	send: (message: EmailMessage) => Promise<void>;

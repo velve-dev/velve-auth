@@ -78,7 +78,7 @@ export type OneTimeTokenErrorCode =
 //messages are fixed per code so nothing the caller passed reaches an error string (E-263)
 const MESSAGE_BY_ERROR_CODE: Readonly<Record<OneTimeTokenErrorCode, string>> = {
 	one_time_token_owner_unknown: "The account the token would belong to does not exist.",
-	one_time_token_purpose_unknown: "The purpose is not one of the four one-time token purposes.",
+	one_time_token_purpose_unknown: "The purpose is not one of the five one-time token purposes.",
 	one_time_token_not_written: "The insert reported no row.",
 };
 
@@ -162,7 +162,8 @@ export function createOneTimeTokenRepository(
 			WHEN 'email_verify' THEN st.email_verify_generation
 			WHEN 'password_reset' THEN st.password_reset_generation
 			WHEN 'email_change' THEN st.email_change_generation
-			WHEN 'magic_link' THEN st.magic_link_generation END
+			WHEN 'magic_link' THEN st.magic_link_generation
+			WHEN 'passkey_recovery' THEN st.passkey_recovery_generation END
 		 FROM ${schema}.security_state st WHERE st.user_id = owner.id), 1)
 	 FROM ${schema}.user owner WHERE owner.id = $1)::text AS token_generation`;
 

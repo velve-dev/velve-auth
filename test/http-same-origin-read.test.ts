@@ -36,6 +36,7 @@ const READING_ROUTES = [
 	"factor.recovery.remaining",
 	"identity.list",
 	"pending.read",
+	"passkeyRecovery.pending",
 ];
 
 const QUERY_BY_ROUTE: Readonly<Record<string, string>> = {
@@ -166,7 +167,7 @@ describe("every reading GET of the widest mount", () => {
 		return `${filled}${QUERY_BY_ROUTE[route.name] ?? ""}`;
 	}
 
-	it("is exactly the seven reading routes S-CSRF-4 names", () => {
+	it("is exactly the eight reading routes S-CSRF-4 names", () => {
 		expect(reading.map((route) => route.name).sort()).toStrictEqual([...READING_ROUTES].sort());
 	});
 

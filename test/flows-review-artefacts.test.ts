@@ -175,6 +175,7 @@ describe("3.7: the deadline is fixed per purpose and is not a setting", () => {
 			password_reset: 3_600,
 			email_change: 3_600,
 			magic_link: 600,
+			passkey_recovery: 900,
 		});
 	});
 

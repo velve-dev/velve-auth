@@ -96,6 +96,8 @@ describe("no password reaches the table without saying which session stored it (
 			"flows/credential.ts",
 			"identity/sign-in-methods.ts",
 			"password/credential.ts",
+			//the activation of a recovery removes the password and writes none (E-3769)
+			"recovery/repository.ts",
 			"security-state/read.ts",
 		]);
 	});

@@ -159,7 +159,8 @@ describe("what a dump of the schema holds (S-REST-1, T-REST-1)", () => {
 	/**
 	 * The requirement counts 24 values in three encodings. Eight of the twenty-four can be created
 	 * on this branch — the password, its PHC string, four one-time tokens, the pending token and
-	 * the session token — and the other sixteen belong to modules other wave-3 features build: the
+	 * the session token — and a ninth, the link of the recovery to a new passkey, came with its
+	 * fifth purpose (E-3762); the other sixteen belong to modules other wave-3 features build: the
 	 * TOTP secret, the ten recovery codes, the WebAuthn challenge, the OAuth `state`, the PKCE
 	 * verifier and the two foreign provider tokens. The count below is stated, not implied.
 	 */
@@ -170,7 +171,7 @@ describe("what a dump of the schema holds (S-REST-1, T-REST-1)", () => {
 		expect(["pg_dump", "every column as text"]).toContain(howTheDumpWasTaken);
 	});
 
-	// Eight values across seven rows: the password and its PHC string are two secrets in one row.
+	// Nine values across eight rows: the password and its PHC string are two secrets in one row.
 	it("holds every artefact this branch can create, so the search is not searching an empty schema", async () => {
 		const [rows] = await connection.query<{ present: number }>(
 			`SELECT (SELECT count(*) FROM ${schema}.session)
@@ -180,18 +181,18 @@ describe("what a dump of the schema holds (S-REST-1, T-REST-1)", () => {
 			[],
 		);
 
-		expect(plaintexts).toHaveLength(8);
-		expect(Number(rows?.present ?? 0)).toBe(7);
+		expect(plaintexts).toHaveLength(9);
+		expect(Number(rows?.present ?? 0)).toBe(8);
 	});
 
-	it("contains none of them, in any of the three encodings: 24 searches, 0 hits", () => {
+	it("contains none of them, in any of the three encodings: 27 searches, 0 hits", () => {
 		const hits = plaintexts.flatMap((secret) =>
 			encodingsOf(secret.value)
 				.filter((encoded) => dump.includes(encoded))
 				.map((encoded) => `${secret.name} as ${encoded.slice(0, 12)}…`),
 		);
 
-		expect(plaintexts.length * 3).toBe(24);
+		expect(plaintexts.length * 3).toBe(27);
 		expect(hits).toStrictEqual([]);
 	});
 

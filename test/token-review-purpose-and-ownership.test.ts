@@ -53,7 +53,7 @@ async function countRows(userId: string, purpose: OneTimeTokenPurpose): Promise<
 // T-TOKEN-2 asks for the whole cross matrix, so this walks all sixteen and none of the
 // twelve off-diagonal attempts is allowed to consume the row it was refused.
 describe("a token of one purpose is nothing at another (S-TOKEN-1, S-TOKEN-2)", () => {
-	it("refuses all twelve off-diagonal combinations and consumes none of them", async () => {
+	it("refuses all twenty off-diagonal combinations and consumes none of them", async () => {
 		const refused: string[] = [];
 		const accepted: string[] = [];
 
@@ -85,7 +85,7 @@ describe("a token of one purpose is nothing at another (S-TOKEN-1, S-TOKEN-2)", 
 		expect(accepted).toStrictEqual(
 			ONE_TIME_TOKEN_PURPOSES.map((purpose) => `${purpose} as ${purpose}`),
 		);
-		expect(refused).toHaveLength(12);
+		expect(refused).toHaveLength(20);
 	});
 
 	it("answers every off-diagonal attempt exactly as it answers a token nobody minted", async () => {

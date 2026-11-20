@@ -18847,3 +18847,233 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Refusing at redemption any link minted while the switch was on, which needs the mint time against the switch's history, which nothing stores.
 **Reason.** Turning the switch off now draws new `password_reset` and `magic_link` generations as well, so a link from the time the switch was on binds a generation the account has left. `oneTimeToken.resolve` follows, answering `null` for it (E-3742), and `test/no-recovery-switch-resolve.test.ts` says so.
 **Price.** A link mailed in the moment the switch goes back off is retired with the rest and has to be requested again; every call of either method now writes a seal.
+
+<a id="e-3760"></a>
+
+### The recovery to a new passkey is four steps built from what exists
+`E-3760` · passkey-recovery · flow, settled
+
+**Context.** Change 6 of 3.0.0 asks for a way back into an account that signs in with passkeys only and ends in a new passkey without a password: the address, the mailed code, one recovery code, then the registration of a new passkey, two factors in all. The maintainer ruled that with a waiting period the completion is the activation at its end, and that "every other credential" is the password, TOTP, every other passkey, the remaining recovery codes and the linked identities. The orchestrator fixed the mailed code as an ordinary one-time token, at most one pending recovery per account, a uniform request, the existing WebAuthn ceremony bound to the recovery, a lazy activation and sealed state.
+**Rejected.** (a) One step that takes link, code and attestation together, so nothing is spent unless all three hold: the code is checked only after the authenticator has created a credential, and a typo leaves a passkey on the device that the account never accepts. (b) A start that checks the code without spending it and a finish that spends it, which needs the code sent twice and gives two places where a code is judged. (c) Issuing a session at the end of the recovery, which would be a second sign-in path beside `signIn.passkey`.
+**Reason.** `passkeyRecovery.request` mails the link, `passkeyRecovery.start` spends the link and one code and issues a registration challenge, and `passkeyRecovery.finish` registers the new passkey and holds it back for the waiting period, so the code is judged before the authenticator is asked for anything and is spent by the one `DELETE … RETURNING` that already decides recovery codes (S-RACE-7). The new passkey signs in through `signIn.passkey` like any other, which keeps one sign-in path and the hooks it already runs. The recovery uses the one-time token mechanism, the recovery code repository, the WebAuthn service, `sealChange`, the plugin runtime, the mailer and the rate limiter rather than a mechanism of its own. This follows NIST SP 800-63B §6.1.2.3 (replacement of a lost authenticator requires the subscriber to prove possession of the remaining authenticators or go through recovery) and the OWASP Forgot Password Cheat Sheet (a side channel plus a second factor, no account state revealed).
+**Price.** Whoever gives up between start and finish has spent a recovery code and must ask for a new link. The application renders two forms and one WebAuthn ceremony, where a single form would have been simpler for it.
+
+<a id="e-3761"></a>
+
+### The recovery is off unless webauthn.recovery names its waiting period
+`E-3761` · passkey-recovery · configuration, settled
+
+**Context.** Every new behaviour of 3.0.0 is off unless configured, and the recovery needs WebAuthn for its last step and an address and a send callback for its first. The library's optional features come and go with their routes: without `webauthn` the nine passkey rows are absent rather than refusing (E-1242).
+**Rejected.** (a) A top-level `passkeyRecovery` option beside `webauthn`, which would let a configuration turn the recovery on without WebAuthn and need a second start check for that. (b) Mounting the routes and answering `invalid_input` when the feature is off, which E-1242 already refused for WebAuthn. (c) Silently mounting nothing in mode `username`, where a configured recovery could never run.
+**Reason.** The option is `webauthn.recovery: { waitingPeriodInSeconds }`, so the recovery exists only where WebAuthn does, and its five routes are contributed by the factor routes together with the WebAuthn service they share. They mount only when `webauthn.recovery` is set, `email` is configured and the mode has an address; the namespace is `passkeyRecovery`, a twenty-first of 3.15 B, typed only for the two modes with an address. A configuration the start cannot run — no function, or mode `username` — refuses with `passkey_recovery_unusable`, as a configured feature the start cannot honour does elsewhere (S-DEFAULT-4).
+**Price.** A twenty-first namespace a plugin may not take, and one more start error code.
+
+<a id="e-3762"></a>
+
+### The mailed code is a one-time token of a fifth purpose that lives fifteen minutes
+`E-3762` · passkey-recovery · one-time tokens, settled
+
+**Context.** The orchestrator ruled the mailed code an ordinary one-time token of at least 256 bits with its own purpose and a short lifetime, rendered as a link and routable with `oneTimeToken.resolve`. A purpose needs its own generation in the seal row so that a redeemed link a writer plays back with its MAC is refused (S-INTEG-9, E-3522).
+**Rejected.** (a) Reusing `password_reset` or `magic_link`, which would let one purpose's link be presented at the other step and tie the recovery's retirement to theirs. (b) A short numeric code, which the orchestrator ruled out. (c) The hour a reset lives, longer than the step needs.
+**Reason.** `ONE_TIME_TOKEN_PURPOSES` gains `passkey_recovery` with 15 minutes, which covers opening the mail, finding a recovery code and starting the registration; the start itself is a second step with its own five-minute challenge. The seal row gains `passkey_recovery_generation`, the mint reads it in the statement every request runs, a redemption checks it, `oneTimeToken.resolve` resolves the link like every other, and the no-recovery switch retires and refuses it with the reset and magic links. OWASP's Forgot Password Cheat Sheet asks for single-use, short-lived, random tokens; the mechanism already gives the first and the third.
+**Price.** Every test that enumerated four purposes now enumerates five, and `test/token-resolution-review-oracle.test.ts` keeps its four by name because its mount configures no recovery, which `test/passkey-recovery-integrity.test.ts` covers instead.
+
+<a id="e-3763"></a>
+
+### The new generation and the held passkey are appended to the encoding only when present
+`E-3763` · passkey-recovery · storage format, frozen
+
+**Context.** The seal's encoding lists the generations of the four purposes in place and ends with the no-recovery switch, which is appended only while it is on (E-3731). A fifth purpose placed among the four, or a held passkey encoded as an always-present field, would change the encoding of every account and so break every seal written by 2.x and by the earlier 3.0.0 changes.
+**Rejected.** (a) Adding the fifth generation to the list of purposes in place, which breaks every seal at once. (b) Resealing the estate in migration 7, which needs the root key the migration does not have. (c) Encoding the absent recovery as the absent marker, which again changes every encoding.
+**Reason.** The four purposes of 2.0.0 keep their place in a fixed list, and after the switch's field come two optional fields: the `passkey_recovery` generation only while it differs from its first value 1, and while a recovery waits, a record of `activates_at` in whole microseconds, `credential_id` and `public_key`. The three trailing fields have distinct type bytes and the list before them carries its count, so no two states share an encoding (S-INTEG-2), and an account that never redeemed a recovery link and holds no recovery keeps the encoding and the seal it had. `activates_at` is read by the one state statement as microseconds of the database's own value, so the seal binds exactly what the row holds.
+**Price.** The encoding now has three optional trailing fields whose order is frozen; a fourth must go after them.
+
+<a id="e-3764"></a>
+
+### The waiting period is asked once and clamped to zero to thirty days
+`E-3764` · passkey-recovery · waiting period, settled
+
+**Context.** The requirement passes the waiting period as a function read per request and clamped to bounds of the library, and allows zero. The function belongs to the application and can answer anything a JavaScript caller can return.
+**Rejected.** (a) A fixed number, which the requirement rules out. (b) Throwing on an answer outside the bounds, which would fail a recovery the user has already spent a code on for a fault of the configuration. (c) Treating a `NaN` or a non-number as zero, which would make a broken function remove the waiting period that protects the owner.
+**Reason.** The function is asked once, on the request that registers the new passkey, with `{ userId }`, because that is when the waiting period begins and the account is known. Its answer is rounded up to whole seconds and clamped to 0 and 2,592,000 (30 days, `LONGEST_PASSKEY_RECOVERY_WAIT_IN_SECONDS`); `Infinity` clamps to 30 days, and an answer that is not a number, or `NaN`, waits the longest. A function that throws fails the finish with `internal_error` before anything is written. Thirty days is longer than any delay the maintainer's model needs and short enough that a recovery cannot be parked indefinitely; failing to the longest wait follows the fail-safe default of OWASP ASVS V1.4.
+**Price.** A caller who wants longer than thirty days cannot have it, and one whose function returns a string gets thirty days rather than an error.
+
+<a id="e-3765"></a>
+
+### The registration challenge of a recovery names its account and is removed by its hash
+`E-3765` · passkey-recovery · challenge, settled
+
+**Context.** The finish has no session, and the existing consumption of a WebAuthn challenge names the owner it expects in its predicate. The orchestrator asked for a challenge bound to the recovery and not to a session.
+**Rejected.** (a) A second secret returned by the start and presented at the finish to find the account, which adds a token where the challenge already is a 256-bit secret only the caller holds. (b) Creating the recovery row at the start in a registering state, which leaves a half-built recovery that blocks the next one until it expires. (c) Reading the challenge row before removing it to learn the owner, which S-RACE-2 forbids.
+**Reason.** The start issues a challenge of the new ceremony `recover` for the account in the same transaction that spends the link and the code, and the finish removes it with `consumeNamingItsOwner`, a `DELETE … RETURNING` addressed by the challenge hash alone that hands back a `ConsumedRecoveryChallenge`, the proof the finish acts under. The row's token MAC binds the ceremony and the owner (S-INTEG-9), so a session's registration challenge cannot finish a recovery and a writer cannot plant one. The statement carries the marker `S-OWNER-2, the predicate is the secret itself`, and `test/owner-predicate-proof.test.ts`, `test/token-static-scan.test.ts`, `test/owner-actor-census.test.ts`, `test/owner-proof-brand-proof.test.ts` and `test/brand-invariants.test.ts` name it.
+**Price.** A consumed recover challenge binds no generation; a writer who plays its row back helps only whoever still holds the challenge, which is the caller who began the recovery (3.18, *The limits*).
+
+<a id="e-3766"></a>
+
+### Every registration goes through one ceremony, and the recovery's asks for user verification
+`E-3766` · passkey-recovery · WebAuthn, settled
+
+**Context.** Changes 7 and 8 will make every registration require a discoverable credential and honour an AAGUID allowlist, the recovery's included. The registration in a session asks for the user verification `webauthn.userVerification` names, which may be `"preferred"`.
+**Rejected.** (a) A second copy of the options and the verification for the recovery, which the next two changes would have to find and change twice. (b) Taking the configured user verification for the recovery too.
+**Reason.** The WebAuthn service builds the options in `registrationOptionsFor` and verifies an attestation in `verifiedRegistration`; `register` and the new `recovery` both call them, so a later rule hooks in at one place. The recovery asks for and requires user verification whatever the setting says, because the passkey it registers replaces every other way in and is the account's only factor afterwards (WebAuthn Level 3 §7.1 step 15, OWASP ASVS V2 at level 3 for an account at stake). The options exclude the account's own passkeys, so an authenticator that still holds one does not overwrite it with a passkey that will wait.
+**Price.** A recovery on an authenticator that cannot verify the user fails, and an application whose registrations accept `"preferred"` sees a stricter recovery.
+
+<a id="e-3767"></a>
+
+### The held back passkey lives in its own table and never in the credentials
+`E-3767` · passkey-recovery · storage, settled
+
+**Context.** The new passkey must not sign in or count as a factor before its activation. Every passkey path — the discoverable sign-in, the second factor, the list, the rename, the removal, L-13's count and the seal's list of passkeys — reads `velve.webauthn_credential`.
+**Rejected.** A column `usable_from` on `velve.webauthn_credential`, which every one of those paths would have to filter and one forgotten filter would let the passkey in early.
+**Reason.** The passkey waits in `velve.passkey_recovery`, one row per account keyed by `user_id`, with the columns a credential row has and `activates_at`; no path that reads credentials can see it. The activation moves it with one statement that deletes the row and inserts the credential. A credential ID is unique in each table, the hold refuses an ID a credential already has, and a registration in a session refuses an ID a recovery holds, so the move cannot collide on its own account's ID or on one another registration took the usual way.
+**Price.** An eighteenth table. Two registrations that present the same credential ID to the two tables at the same moment can still both succeed, and the activation then fails with an internal error; that needs a client that chooses its credential ID, which only the authenticator of the recovering party does.
+
+<a id="e-3768"></a>
+
+### A due recovery is activated at its first use, under the lock, by the database clock
+`E-3768` · passkey-recovery · activation, settled
+
+**Context.** The orchestrator asked for a lazy activation at the first use after the waiting period, in one transaction under the account lock, re-checking that the recovery was not cancelled, and for an offer through `maintenance.sweep()` or a maintenance method if that is the library's pattern.
+**Rejected.** (a) Activating in `maintenance.sweep()`, which deletes expired rows without keys, seals or mails and would turn into a second activation path with its own failures. (b) An explicit maintenance method, which adds a call the application must schedule while an unactivated recovery harms nobody: its passkey signs nobody in. (c) Comparing `activates_at` with the server clock, which a skewed server would move.
+**Reason.** A passkey sign-in that finds no credential asks whether a due recovery holds the presented credential ID, activates it under the account lock and looks again; the cancel activates a due recovery before it cancels. Both run the same lookup whether or not anything is due, so an unknown passkey and one still waiting answer alike. Due is decided by `activates_at <= now()` in the one state statement, and the activation proceeds only when the verified read still holds the recovery, the account is not disabled and the switch is off. The lookup by credential ID takes no proof, since a sign-in presents the credential before anything proves whose it is, and is named in `test/owner-actor-census.test.ts` as a credential under verification. A broken state refuses the sign-in as a rejected passkey.
+**Price.** Until the first use after the waiting period the old credentials and sessions stay valid, and the confirmation mail goes out only then.
+
+<a id="e-3769"></a>
+
+### An activation leaves the new passkey as the only way in and ends everything mailed or pending
+`E-3769` · passkey-recovery · activation, settled
+
+**Context.** The maintainer ruled that the account afterwards holds only the new passkey and that the application has the user generate new recovery codes.
+**Rejected.** (a) Keeping the account's other passkeys, which would leave whatever way in the recovery is meant to replace. (b) Deleting the outstanding links, which would reach `velve.one_time_token` after the account lock and break the order §7 states (E-1616).
+**Reason.** In one sealing transaction it announces every session to `beforeSessionRevoke` with the new reason `passkey_recovery` before any row goes (E-758), deletes every session, the password and `password_reset_required`, the TOTP secret with its used steps, every passkey, every recovery code and every identity, moves the held passkey into the credentials, draws a new epoch, and draws new generations for every one-time token purpose and the attempt generation, so no link and no pending authentication of the old state comes back. L-13 holds, since the new passkey is the remaining sign-in method. `test/flows-password-credential-writers.test.ts` names the repository as a removal that writes no password.
+**Price.** A pending address change or verification link is retired with the rest and has to be requested again.
+
+<a id="e-3770"></a>
+
+### A waiting period of zero replaces every way in inside the registration's transaction
+`E-3770` · passkey-recovery · activation, settled
+
+**Context.** A delay of zero makes the flow immediate, and the activation must be one transaction under the account lock.
+**Rejected.** Holding the passkey and activating it in a second transaction, which leaves a moment in which a recovery is held that nobody can cancel and a second commit that can fail after the first.
+**Reason.** With zero the registration's own sealing change does what the activation does and writes the new passkey through the credential repository, so the two outcomes are one change each. It answers `{ status: "completed" }` and mails only `passkey_recovery_completed`; no notice of a pending recovery goes out and `afterPasskeyRecoveryStart` does not run, since nothing is pending.
+**Price.** An application that wants to hear of every recovery through a hook hears nothing from the plugin point when the waiting period is zero.
+
+<a id="e-3771"></a>
+
+### The address is told when a recovery starts and when it completes, from under the lock
+`E-3771` · passkey-recovery · mail, settled
+
+**Context.** The orchestrator recommended a notice at the start, since the legitimate owner may still control the mailbox, and required the confirmation on completion.
+**Rejected.** Mailing only the completion, which tells the owner after the fact.
+**Reason.** `passkey_recovery_started` carries `activatesAt`, and `passkey_recovery_completed` only the account; neither carries a token or a link. Each goes to the address the sealing change read under the account lock, after the commit. A send that throws fails the answer and leaves the committed change standing, as the address change notice does (E-3713).
+**Price.** A failed send loses the notice while the recovery stands; the plugin point is the second channel.
+
+<a id="e-3772"></a>
+
+### The start's account bucket counts the attempts made with one link
+`E-3772` · passkey-recovery · rate limiting, settled
+
+**Context.** The request is limited per account bucket and per address bucket like a reset request. The start learns its account only by spending the link, after the limiter must have run.
+**Rejected.** (a) Keying the start's account bucket by the account, which needs the link spent first and a refusal that rolls it back. (b) No account bucket on the start, which leaves the codes tried with one link limited only by the address bucket.
+**Reason.** The request keys its account bucket by the normalised address. The start keys it by the presented link, which names one account and is HMACed before it reaches `velve.rate_bucket` (S-RATE-7), so the guesses at a recovery code made with one link are bounded. The finish spends a single-use challenge and has the address bucket only.
+**Price.** An attacker who mails himself new links gets a fresh start bucket each time, bounded by the request's buckets on the address.
+
+<a id="e-3773"></a>
+
+### afterPasskeyRecoveryStart names the account and nothing else and runs after the notice
+`E-3773` · passkey-recovery · plugin, settled
+
+**Context.** The notice of a pending recovery must reach the application through a plugin point, not by mail alone, with only the account id.
+**Rejected.** Carrying `activatesAt` or the address in the event, which the orchestrator ruled out and which an application reads from `passkeyRecovery.pending` anyway.
+**Reason.** The ninth hook point runs after the commit and after the notice to the address, like `afterEmailChange` (E-3714): a refusing hook cannot keep the address from being told, and a failed notice still lets the hook run before the answer fails.
+**Price.** A hook that throws fails the finish's answer while the recovery stands.
+
+<a id="e-3774"></a>
+
+### Turning recovery off cancels a waiting recovery and retires its links
+`E-3774` · passkey-recovery · no-recovery switch, settled
+
+**Context.** The switch of change 5 must refuse the recovery exactly like an unknown address at the request and like any other failure at the later steps; the orchestrator asked what turning the switch on during a pending recovery does.
+**Rejected.** Leaving a waiting recovery in place and refusing only its activation, which keeps a recovery the owner has turned off waiting to be noticed.
+**Reason.** `LINKS_INTO_THE_ACCOUNT` gains `passkey_recovery`, so the request takes the unknown branch, the start refuses, the links are retired on and off and `oneTimeToken.resolve` answers `null` for them. Turning the switch on also removes a waiting recovery in the same sealing transaction, and a reseal that ends with the switch on removes it too.
+**Price.** Turning recovery on again does not restore a recovery the switch cancelled; it has to be started anew.
+
+<a id="e-3775"></a>
+
+### Reading a pending recovery changes no row, even past its activation time
+`E-3775` · passkey-recovery · reading route, settled
+
+**Context.** The orchestrator asked for activation at any read of the pending recovery. A GET with an origin check is a reading route, and S-CSRF-4 binds that no state-changing operation is reachable through GET; T-CSRF-4 counts zero row changes by reading routes.
+**Rejected.** (a) Activating in the GET, which the specification forbids, and the specification wins over the brief. (b) Making the read a POST so that it may write, which hides a change behind the call an application makes to show the recovery.
+**Reason.** `GET /passkey-recovery` reports the recovery as long as it is held, with an `activatesAt` that may lie in the past, and becomes the eighth reading route of S-CSRF-4; the activation happens at the next passkey sign-in or cancel. The date it answers is the driver's value of the row whose microseconds the verified read sealed, because the core constructs no date (E-598), and the reseal reports the held passkey's date the same way.
+**Price.** A session that reads a due recovery is not yet signed out, and the owner who cancels then is signed out by the activation the cancel triggers.
+
+<a id="e-3776"></a>
+
+### Every failing step after the request answers passkey_recovery_failed and spends nothing
+`E-3776` · passkey-recovery · errors, settled
+
+**Context.** No step may reveal whether an address exists, whether a recovery code was right or whether the switch is on, and every failing later step must give one stable answer.
+**Rejected.** (a) The answers each path already has — `invalid_token`, `invalid_recovery_code`, `webauthn_credential_rejected` — which tell which factor failed. (b) Spending the link on a wrong code, which costs a legitimate user a new mail for a typo while 160-bit codes leave nothing to guess.
+**Reason.** One new visible code, `passkey_recovery_failed` (400), covers the link, the code, the account's state, a waiting recovery, the challenge, the attestation and a broken state; `asAFailedRecoveryStep` in the error map turns the inner reason of a failed step into one of six recovery reasons, so the decision stays in `src/core/http/error-map.ts`. A failing start rolls back and spends neither link nor code. The refusals for a disabled account, the switch and a waiting recovery come after the code is consumed so they cost what a wrong code costs (S-TIM-6). Only the log carries the inner reason.
+**Price.** A user who mistyped the code learns only that the step failed, and the timing still tells a spent link from a live one, as on every path that presents a token (3.18, *Outwards*).
+
+<a id="e-3777"></a>
+
+### Cancelling a recovery needs a fresh session
+`E-3777` · passkey-recovery · sessions, settled
+
+**Context.** The orchestrator asked for a session and freshness if the library has such a rule for sensitive changes, and it has: changes of credentials require a session younger than the freshness window.
+**Rejected.** Any session, which lets a stale stolen session cancel a legitimate recovery over and over.
+**Reason.** `POST /passkey-recovery/cancel` declares `freshness: "required"`; the owner who still holds a credential signs in again and cancels. Reading the recovery needs any session of the account.
+**Price.** An owner whose sessions are old signs in once more before cancelling.
+
+<a id="e-3778"></a>
+
+### The tests outside the feature that enumerate what the recovery adds were brought into step
+`E-3778` · passkey-recovery · tests, settled
+
+**Context.** The brief allows existing tests to change only where they enumerate migrations, sealed components, routes, hook points, mail kinds, error codes, token purposes or surface methods. Some enumerations the recovery reaches are of tables, proof brands and statements without an owner predicate.
+**Rejected.** Leaving them failing, or hiding the new table and statements from them.
+**Reason.** Besides the plan, purpose, hook, namespace, route and code counts, five tests name what the recovery adds because they enumerate it by construction: the owner census and the owner predicate scan (the table, the recover challenge's consumption and the due lookup), the brand census and the proof brand scan (`ConsumedRecoveryChallenge`, `DuePasskeyRecovery`), and the password writer scan (the removal). The widest mounts in `test/client-fixtures.ts` and `test/widest-mount-fixtures.ts` configure `webauthn.recovery`, so every matrix over the route table reaches the five rows.
+**Price.** The reviewer reads more files outside the feature than the brief names, each listed in the report.
+
+<a id="e-3779"></a>
+
+### An activation time a writer made infinite is a broken state, not an unreadable one
+`E-3779` · passkey-recovery · storage format, settled
+
+**Context.** The independent review set `passkey_recovery.activates_at` to `-infinity` by SQL. The one state statement turned a non-finite time into a null count of microseconds, the reader refused the document as unreadable, and every path of the account answered 500 without an alarm, while E-3763 and S-INTEG-12 promise that a writer who moves the time breaks the state and raises the alarm.
+**Rejected.** (a) A `CHECK (isfinite(activates_at))` constraint, which the writer can drop and which leaves the reader's 500 in place. (b) Reading a non-finite time as the absence of a recovery, which would let a writer hide a held passkey from the seal.
+**Reason.** The state statement reads `infinity` as 9007199254740991 and `-infinity` as -9007199254740991 microseconds, values no change of the library writes, so the seal computed over the stored time fails to verify: every check refuses with `seal_mismatch` and the alarm, and the passkey sign-in that finds the recovery due answers `webauthn_credential_rejected` like an unknown passkey. The read of the driver's date for the pending recovery and the reseal's report skip a non-finite row, since the driver hands back no date for it.
+**Price.** A reseal of an account whose held time a writer made infinite ratifies that time and reports no held recovery, which the operator learns only from the alarm that came before it.
+
+<a id="e-3780"></a>
+
+### Any session of the account cancels a recovery, fresh or not
+`E-3780` · passkey-recovery · sessions, settled
+
+**Context.** E-3777 required a fresh session to cancel. The orchestrator ruled on the maintainer's words "any session of the account still signed in can see that a recovery is pending and cancel it" and asked for them to be followed literally: the owner whose passkey an attacker is replacing may have no way to sign in again, and a fresh session would require exactly that.
+**Rejected.** Keeping the freshness E-3777 chose, whose reason — a stale stolen session could cancel a legitimate recovery again and again — is a denial of a recovery, while freshness denies the owner the one protection the waiting period exists for.
+**Reason.** `POST /passkey-recovery/cancel` declares `freshness: "not_required"` and keeps the origin check and the address bucket of a state-changing route. B.9 lists it without freshness, so the count of methods freshness gates stays seventeen.
+**Price.** Whoever holds any session of the account, however old, can cancel every recovery that is started, so a legitimate recovery succeeds only once such a session has ended or expired.
+
+<a id="e-3781"></a>
+
+### A cancel voids every recover challenge of the account
+`E-3781` · passkey-recovery · challenge, settled
+
+**Context.** The orchestrator found that two starts made before a cancel leave a second recover challenge that finishes a new recovery after it, so a cancel did not end what the mailbox and two codes had begun.
+**Rejected.** (a) Binding recover challenges to a generation of the seal, which needs a new column for a row that lives five minutes. (b) Deleting the challenges after the account lock, which would reach a table §7 orders before `velve.user`.
+**Reason.** The cancel deletes every `recover` challenge of the account by a statement with the owner predicate, in the transaction that then takes the account lock and removes the held passkey, so a registration begun before the cancel answers `passkey_recovery_failed`. A start that commits after the cancel's delete is a new recovery with its own link and code.
+**Price.** A cancel with nothing pending still writes, deleting open challenges.
+
+<a id="e-3782"></a>
+
+### The recover challenge is spent in the transaction that asks the waiting period
+`E-3782` · passkey-recovery · flow, settled
+
+**Context.** E-3764 said a function that throws fails the finish before anything is written, and the documentation repeated it, but the finish spent the recover challenge in a transaction of its own before asking the function, so a throw cost the challenge and with it the recovery code its start had spent. The review's lifecycle test retries the same registration after a throwing function and found it refused.
+**Rejected.** Asking the function before the challenge is consumed, which needs the account and so a read of the challenge row before its removal (S-RACE-2).
+**Reason.** The finish now consumes the challenge, verifies the attestation, asks the function and writes the held passkey in one transaction, so a throw, a refused attestation or a refused account rolls the challenge back with everything else; E-3764's sentence is true from here on.
+**Price.** A challenge whose attestation was refused can be presented again within its five minutes, which helps only whoever holds the challenge.

@@ -331,8 +331,9 @@ describe("L-4, S-CACHE-3: account_disabled and where it may appear", () => {
 		// (E-734); `flows/routes.ts` is that contract for the two `/email/*` rows with that caller
 		// (E-607), `oauth/routes.ts` for the three `identity` rows (E-564), `password/routes.ts`
 		// for `password.set` and `password.change` (E-1187) and `factor/routes.ts` for the eleven
-		// factor rows with that caller (E-1242). Nothing in any of them raises it, which is what
-		// the first expectation holds.
+		// factor rows with that caller (E-1242), and `recovery/routes.ts` for the two
+		// `/passkey-recovery` rows with that caller (E-3761). Nothing in any of them raises it,
+		// which is what the first expectation holds.
 		expect(naming).toEqual([
 			"auth/routes.ts",
 			"factor/routes.ts",
@@ -340,6 +341,7 @@ describe("L-4, S-CACHE-3: account_disabled and where it may appear", () => {
 			"http/error-map.ts",
 			"oauth/routes.ts",
 			"password/routes.ts",
+			"recovery/routes.ts",
 			"session/service.ts",
 		]);
 	});

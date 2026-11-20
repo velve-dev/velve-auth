@@ -39,18 +39,18 @@ describe("the advisory lock in the migration runner (E-08)", () => {
 				);
 
 				const claimed = reports.flatMap((report) => report.appliedVersions).sort();
-				expect(claimed).toEqual([1, 2, 3, 4, 5, 6]);
+				expect(claimed).toEqual([1, 2, 3, 4, 5, 6, 7]);
 				expect(reports.map((report) => report.currentVersion)).toEqual(
-					Array.from({ length: RUNNERS }, () => 6),
+					Array.from({ length: RUNNERS }, () => 7),
 				);
-				expect((await ledgerRows(schema)).map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6]);
+				expect((await ledgerRows(schema)).map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7]);
 
 				const [tables] = await observer.query<{ present: number }>(
 					`SELECT count(*)::int AS present FROM information_schema.tables
 					 WHERE table_schema = $1 AND table_type = 'BASE TABLE'`,
 					[schema],
 				);
-				expect(tables?.present).toBe(17);
+				expect(tables?.present).toBe(18);
 			} finally {
 				await Promise.all(connections.map((connection) => connection.close()));
 				await dropSchema(observer, schema);
@@ -73,8 +73,8 @@ describe("the advisory lock in the migration runner (E-08)", () => {
 			);
 
 			expect(reports.map((report) => report.appliedVersions)).toEqual([
-				[1, 2, 3, 4, 5, 6],
-				[1, 2, 3, 4, 5, 6],
+				[1, 2, 3, 4, 5, 6, 7],
+				[1, 2, 3, 4, 5, 6, 7],
 			]);
 		} finally {
 			await Promise.all(connections.map((connection) => connection.close()));

@@ -5,6 +5,7 @@ import { isStorableKeyVersion } from "../keys/key-version.js";
 import { isKeyShaped, keyTakesMac, sameKeyFingerprintOf } from "../keys/mac.js";
 import { type IntegrityKeyPurpose, isIntegrityPurpose } from "../keys/purpose.js";
 import { type GenericProviderConfig, KNOWN_PROVIDERS } from "../oauth/config.js";
+import { isUsablePasskeyRecoveryConfig } from "../recovery/config.js";
 import { resolveLimits } from "../security-state/limits.js";
 import type { BaseConfig } from "./config.js";
 import { isStartableSecurityState } from "./security-state.js";
@@ -38,7 +39,8 @@ type StartupErrorCode =
 	| "route_namespace_conflict"
 	| "route_name_segment_reserved"
 	| "security_state_sealing_unknown"
-	| "limits_unusable";
+	| "limits_unusable"
+	| "passkey_recovery_unusable";
 
 const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> = {
 	keys_missing: "keys is required: every purpose key is derived from a root key of 32 bytes",
@@ -95,6 +97,8 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		'securityState.sealing must be "required" or "migrating"; any other value leaves unsaid whether an account must carry a seal',
 	limits_unusable:
 		"limits.passkeysPerAccount and limits.identitiesPerAccount must each be a whole number of at least 1, since every check of the seal reads and encodes them all",
+	passkey_recovery_unusable:
+		'webauthn.recovery must be an object carrying the function waitingPeriodInSeconds, and it needs the identity mode "email" or "username_email", since the recovery begins at an address',
 };
 
 /** the two contributors a route conflict names in its start error */
@@ -254,6 +258,21 @@ export function assertConfigurationIsStartable<M extends IdentityMode>(
 	assertPluginSqlHasOneDestination(config);
 	assertSealingModeIsKnown(config.securityState);
 	assertLimitsAreUsable(config.limits);
+	assertPasskeyRecoveryIsUsable(config.identity.mode, config.webauthn);
+}
+
+//a recovery the start cannot run must refuse the start rather than mount routes that always fail (E-3761)
+function assertPasskeyRecoveryIsUsable(mode: IdentityMode, webauthn: unknown): void {
+	const recovery =
+		typeof webauthn === "object" && webauthn !== null
+			? (webauthn as { recovery?: unknown }).recovery
+			: undefined;
+	if (recovery === undefined) {
+		return;
+	}
+	if (mode === "username" || !isUsablePasskeyRecoveryConfig(recovery)) {
+		throw new VelveStartupError("passkey_recovery_unusable");
+	}
 }
 
 //a limit that is no count of at least one would refuse every registration or none (S-INTEG-10)

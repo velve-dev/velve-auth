@@ -36,6 +36,7 @@ const READING_ROUTES = [
 	"factor.recovery.remaining",
 	"identity.list",
 	"pending.read",
+	"passkeyRecovery.pending",
 ];
 
 const EXEMPT_ROUTES = ["signIn.oauth.callback", "signIn.oauth.callbackFormPost"];
@@ -64,6 +65,8 @@ beforeAll(async () => {
 				relyingPartyName: "Velve Auth tests",
 				origins: [TEST_ORIGIN],
 				userVerification: "required",
+				//the five recovery rows are served only where webauthn.recovery is configured (E-3761)
+				recovery: { waitingPeriodInSeconds: () => 0 },
 			},
 		},
 	);
@@ -191,7 +194,7 @@ describe("T-CSRF-1 over every row of 3.15 D.3, on both paths", () => {
 		const exempt = mounted.auth.routes.filter((route) => route.originCheck !== "checked");
 
 		expect(mounted.auth.routes).toHaveLength(
-			rowsServedUnder({ mode: "username_email", webauthn: true }).length,
+			rowsServedUnder({ mode: "username_email", webauthn: true, passkeyRecovery: true }).length,
 		);
 		expect(exempt.map((route) => route.name).sort()).toStrictEqual([...EXEMPT_ROUTES].sort());
 	});

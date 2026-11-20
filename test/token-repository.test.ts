@@ -113,7 +113,8 @@ describe("the parameters the repository sends", () => {
 				"(SELECT COALESCE( (SELECT CASE $3::text WHEN 'email_verify' THEN st.email_verify_generation " +
 				"WHEN 'password_reset' THEN st.password_reset_generation " +
 				"WHEN 'email_change' THEN st.email_change_generation " +
-				"WHEN 'magic_link' THEN st.magic_link_generation END " +
+				"WHEN 'magic_link' THEN st.magic_link_generation " +
+				"WHEN 'passkey_recovery' THEN st.passkey_recovery_generation END " +
 				"FROM velve.security_state st WHERE st.user_id = owner.id), 1) " +
 				"FROM velve.user owner WHERE owner.id = $1)::text AS token_generation",
 		);

@@ -3,6 +3,7 @@ export const ONE_TIME_TOKEN_PURPOSES = [
 	"password_reset",
 	"email_change",
 	"magic_link",
+	"passkey_recovery",
 ] as const;
 
 export type OneTimeTokenPurpose = (typeof ONE_TIME_TOKEN_PURPOSES)[number];
@@ -16,6 +17,8 @@ export const ONE_TIME_TOKEN_LIFETIME_SECONDS: Readonly<Record<OneTimeTokenPurpos
 	password_reset: HOUR_IN_SECONDS,
 	email_change: HOUR_IN_SECONDS,
 	magic_link: 10 * 60,
+	//the link only opens a recovery that still needs a code and a new passkey (E-3762)
+	passkey_recovery: 15 * 60,
 };
 
 /** who an artefact is for, and a request naming no account still says what it is about */

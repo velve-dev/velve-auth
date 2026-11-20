@@ -113,14 +113,14 @@ function readTransports(value: string | null): readonly string[] {
 	return parsed.filter((entry): entry is string => typeof entry === "string");
 }
 
-function readBytes(value: unknown): Uint8Array<ArrayBuffer> {
+export function readBytes(value: unknown): Uint8Array<ArrayBuffer> {
 	if (value instanceof Uint8Array) {
 		return Uint8Array.from(value);
 	}
 	throw new TypeError("the driver did not hand back a bytea column as bytes");
 }
 
-function readDate(value: unknown): Date {
+export function readDate(value: unknown): Date {
 	if (value instanceof Date) {
 		return value;
 	}
@@ -163,7 +163,7 @@ function storedCredential(row: CredentialRow): StoredWebAuthnCredential {
 }
 
 //drivers name the sql state either code or sql state so both are read
-function isUniqueViolation(cause: unknown): boolean {
+export function isUniqueViolation(cause: unknown): boolean {
 	if (typeof cause !== "object" || cause === null) {
 		return false;
 	}
@@ -182,11 +182,16 @@ export function createWebAuthnCredentialRepository(options: {
 	backup_eligible, backup_state, user_verified_at_registration, label,
 	created_at, last_used_at`;
 
+	//a credential a pending recovery holds is refused like one already registered (E-3767)
 	const insertStatement = `INSERT INTO ${table}
 	(user_id, credential_id, public_key, sign_count, transports, aaguid,
 	 backup_eligible, backup_state, user_verified_at_registration, label)
-VALUES ($1, $2, $3, $4, ARRAY(SELECT jsonb_array_elements_text($5::jsonb)), $6::uuid,
-	$7, $8, $9, $10)
+SELECT $1::uuid, $2::bytea, $3::bytea, $4::bigint,
+	ARRAY(SELECT jsonb_array_elements_text($5::jsonb)), $6::uuid,
+	$7::boolean, $8::boolean, $9::boolean, $10::text
+WHERE NOT EXISTS (
+	SELECT 1 FROM ${qualifiedTableName(options.schema, "passkey_recovery")} held
+	WHERE held.credential_id = $2)
 RETURNING ${SELECTED_COLUMNS}`;
 
 	//the owner sits in the predicate so another account's row is out of reach (S-OWNER-2)
@@ -235,7 +240,7 @@ RETURNING ${SELECTED_COLUMNS}`;
 				throw cause;
 			});
 			if (row === null) {
-				throw new Error("the insert of a webauthn credential reported no row");
+				throw new DuplicateWebAuthnCredentialError();
 			}
 			return presentedCredential(row);
 		},

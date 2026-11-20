@@ -16,6 +16,8 @@ const WEBAUTHN = {
 	relyingPartyName: "Velve Auth tests",
 	origins: [TEST_ORIGIN],
 	userVerification: "required",
+	//the five recovery rows are served only where webauthn.recovery is configured (E-3761)
+	recovery: { waitingPeriodInSeconds: () => 0 },
 } as const;
 
 const GENEROUS = { capacity: 100_000, refillPerSecond: 100_000 };

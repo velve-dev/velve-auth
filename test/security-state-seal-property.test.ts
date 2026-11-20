@@ -54,6 +54,7 @@ function randomState(random: Random): SecurityState {
 			password_reset: 1 + integerBelow(random, 1000),
 			email_change: 1 + integerBelow(random, 1000),
 			magic_link: 1 + integerBelow(random, 1000),
+			passkey_recovery: 1 + integerBelow(random, 1000),
 		},
 		tokenLast: random() < 0.5 ? null : digestBytes(random),
 		email: random() < 0.2 ? null : `${asciiText(random, 1, 6)}@example`,
@@ -89,6 +90,14 @@ function randomState(random: Random): SecurityState {
 			keyVersion: 1 + integerBelow(random, 3),
 			codeHmac: digestBytes(random),
 		})),
+		passkeyRecovery:
+			random() < 0.5
+				? null
+				: {
+						activatesAtMicros: 1 + integerBelow(random, 1_000_000),
+						credentialId: asciiBytes(random, 2, 6),
+						publicKey: asciiBytes(random, 2, 6),
+					},
 	};
 }
 
@@ -204,12 +213,42 @@ function generationMutated(base: SecurityState, random: Random, field: number): 
 	}
 }
 
+//a held back passkey and its generation follow the switch and are mutated like any other field (E-3763)
+function passkeyRecoveryMutated(base: SecurityState, random: Random, field: number): SecurityState {
+	if (field === 21) {
+		return {
+			...base,
+			tokenGenerations: {
+				...base.tokenGenerations,
+				passkey_recovery: base.tokenGenerations.passkey_recovery + 1,
+			},
+		};
+	}
+	return {
+		...base,
+		passkeyRecovery:
+			base.passkeyRecovery === null
+				? {
+						activatesAtMicros: 1 + integerBelow(random, 1_000_000),
+						credentialId: asciiBytes(random, 2, 6),
+						publicKey: asciiBytes(random, 2, 6),
+					}
+				: {
+						...base.passkeyRecovery,
+						activatesAtMicros: base.passkeyRecovery.activatesAtMicros + 1,
+					},
+	};
+}
+
 //the no-recovery switch is the last field of the encoding and is mutated like any other (E-3731)
 function fieldAfterTheComponentsMutated(
 	base: SecurityState,
 	random: Random,
 	field: number,
 ): SecurityState {
+	if (field >= 21) {
+		return passkeyRecoveryMutated(base, random, field);
+	}
 	return field === 20
 		? { ...base, recoveryDisabled: !base.recoveryDisabled }
 		: generationMutated(base, random, field);
@@ -217,7 +256,7 @@ function fieldAfterTheComponentsMutated(
 
 //a mutated state must differ from its base in exactly one field
 function singleFieldMutated(base: SecurityState, random: Random): SecurityState {
-	const field = integerBelow(random, 21);
+	const field = integerBelow(random, 23);
 	if (field >= 14) {
 		return fieldAfterTheComponentsMutated(base, random, field);
 	}

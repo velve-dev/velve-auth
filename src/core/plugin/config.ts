@@ -13,7 +13,8 @@ export type RevokeReason =
 	| "password_changed"
 	| "password_reset"
 	| "identity_linked"
-	| "email_verified";
+	| "email_verified"
+	| "passkey_recovery";
 
 export interface SignInEvent {
 	readonly method: "password" | "passkey" | "oauth" | "magic_link";
@@ -49,6 +50,11 @@ export interface UserCreatedEvent extends UserCreateEvent {
 
 /** an address change that has committed, which names the account and never an address */
 export interface EmailChangedEvent {
+	readonly userId: string;
+}
+
+/** a recovery to a new passkey that began its waiting period, which names the account and nothing else */
+export interface PasskeyRecoveryStartedEvent {
 	readonly userId: string;
 }
 
@@ -89,7 +95,7 @@ export interface FrozenContext {
 	): void;
 }
 
-/** the eight hook points, where a hook refuses by throwing and cannot replace the response */
+/** the nine hook points, where a hook refuses by throwing and cannot replace the response */
 export interface PluginHooks {
 	beforeSignIn?: (event: SignInEvent, context: FrozenContext) => Promise<void>;
 	afterSignIn?: (event: SignInCompletedEvent, context: FrozenContext) => Promise<void>;
@@ -99,6 +105,10 @@ export interface PluginHooks {
 	afterUserCreate?: (event: UserCreatedEvent, context: FrozenContext) => Promise<void>;
 	beforeSessionRevoke?: (event: SessionRevokeEvent, context: FrozenContext) => Promise<void>;
 	afterEmailChange?: (event: EmailChangedEvent, context: FrozenContext) => Promise<void>;
+	afterPasskeyRecoveryStart?: (
+		event: PasskeyRecoveryStartedEvent,
+		context: FrozenContext,
+	) => Promise<void>;
 }
 
 export interface PluginMigration<Id extends string> {

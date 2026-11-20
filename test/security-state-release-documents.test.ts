@@ -51,7 +51,7 @@ describe("F.1 lists every inner cause the error map merges, in both languages", 
 		const text = read(file);
 		const start = text.search(/##### F\.1 /);
 		const table = text.slice(start, text.indexOf("\n---", start));
-		expect(inner.length).toBe(9);
+		expect(inner.length).toBe(10);
 		expect(inner.filter((code) => !table.includes(code))).toStrictEqual([]);
 	});
 });

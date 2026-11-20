@@ -6,7 +6,9 @@ import type {
 	Actor,
 	ConsumedOAuthFlow,
 	ConsumedPendingReset,
+	ConsumedRecoveryChallenge,
 	ConsumedRecoveryCode,
+	DuePasskeyRecovery,
 	RedeemedOneTimeToken,
 	ResolvedSession,
 } from "../src/core/db/actor.js";
@@ -80,8 +82,22 @@ const BRAND_MARKERS: ReadonlyMap<
 		{ asserts: "ConsumedPendingReset", note: "a hand-built row is not a removed pending reset" },
 	],
 	[
+		"core/db/actor.ts:consumedRecoveryChallengeBrand",
+		{
+			asserts: "ConsumedRecoveryChallenge",
+			note: "a hand-built row is not a removed recovery challenge (E-3765)",
+		},
+	],
+	[
 		"core/db/actor.ts:consumedRecoveryCodeBrand",
 		{ asserts: "ConsumedRecoveryCode", note: "a hand-built row is not a redeemed code" },
+	],
+	[
+		"core/db/actor.ts:duePasskeyRecoveryBrand",
+		{
+			asserts: "DuePasskeyRecovery",
+			note: "a hand-built row is not a recovery found due (E-3768)",
+		},
 	],
 	[
 		"core/db/actor.ts:redeemedOneTimeTokenBrand",
@@ -163,10 +179,20 @@ const BRAND_REFUSES_ITS_BASE: {
 		{ readonly userId: UserId },
 		"ConsumedPendingReset"
 	>;
+	readonly ConsumedRecoveryChallenge: BaseIsRefusedBy<
+		ConsumedRecoveryChallenge,
+		{ readonly userId: UserId },
+		"ConsumedRecoveryChallenge"
+	>;
 	readonly ConsumedRecoveryCode: BaseIsRefusedBy<
 		ConsumedRecoveryCode,
 		{ readonly userId: UserId },
 		"ConsumedRecoveryCode"
+	>;
+	readonly DuePasskeyRecovery: BaseIsRefusedBy<
+		DuePasskeyRecovery,
+		{ readonly userId: UserId },
+		"DuePasskeyRecovery"
 	>;
 	readonly DerivedKey: BaseIsRefusedBy<DerivedKey, Uint8Array<ArrayBuffer>, "DerivedKey">;
 	readonly OAuthFlowPointer: BaseIsRefusedBy<
@@ -194,8 +220,10 @@ const BRAND_REFUSES_ITS_BASE: {
 	Actor: true,
 	ConsumedOAuthFlow: true,
 	ConsumedPendingReset: true,
+	ConsumedRecoveryChallenge: true,
 	ConsumedRecoveryCode: true,
 	DerivedKey: true,
+	DuePasskeyRecovery: true,
 	OAuthFlowPointer: true,
 	PendingToken: true,
 	RedeemedOneTimeToken: true,

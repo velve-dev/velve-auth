@@ -24,6 +24,11 @@ import {
 	tellAfterSignIn,
 } from "../plugin/sign-in.js";
 import {
+	activateDueRecoveryOfCredential,
+	type PasskeyRecoveryActivation,
+} from "../recovery/activation.js";
+import { type PasskeyRecoveryRouteTable, passkeyRecoveryRoutes } from "../recovery/routes.js";
+import {
 	type PendingResolution,
 	toPendingToken,
 	verifyUnderPendingAttemptLimit,
@@ -643,7 +648,17 @@ export type FactorRouteTable = readonly [
 	...ReturnType<typeof recoveryRoutes>,
 	...ReturnType<typeof webAuthnRoutes>,
 	...ReturnType<typeof passkeyRoutes>,
+	...PasskeyRecoveryRouteTable,
 ];
+
+//the recovery needs an address to mail and a send callback, so mode username never mounts it (E-3761)
+function passkeyRecoveryActivationOf(services: RouteServices): PasskeyRecoveryActivation | null {
+	return services.webauthn?.recovery === undefined ||
+		services.email === undefined ||
+		services.identity.mode === "username"
+		? null
+		: { flow: { services, semaphore: services.kdfSemaphore }, email: services.email };
+}
 
 //without webauthn configured its routes do not exist (E-1242)
 export function factorRoutes(services: RouteServices): readonly AnyRoute[] {
@@ -669,6 +684,7 @@ export function factorRoutes(services: RouteServices): readonly AnyRoute[] {
 	if (services.webauthn === undefined) {
 		return alwaysMounted;
 	}
+	const activation = passkeyRecoveryActivationOf(services);
 	const webauthn: WebAuthnService = createWebAuthnService({
 		driver: services.driver,
 		schema: services.schema,
@@ -676,10 +692,17 @@ export function factorRoutes(services: RouteServices): readonly AnyRoute[] {
 		webauthn: services.webauthn,
 		securityState: services.securityState,
 		reportTokenBindingRefusal: services.reportTokenBindingRefusal,
+		...(activation === null
+			? {}
+			: {
+					activateDuePasskeyRecovery: (credentialId: Uint8Array<ArrayBuffer>) =>
+						activateDueRecoveryOfCredential(activation, credentialId),
+				}),
 	});
 	return [
 		...alwaysMounted,
 		...webAuthnRoutes(services, webauthn),
 		...passkeyRoutes(services, webauthn),
+		...passkeyRecoveryRoutes(activation, { webauthn, config: services.webauthn.recovery }),
 	];
 }
