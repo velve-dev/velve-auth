@@ -43,7 +43,9 @@ describe("the advisory lock in the migration runner (E-08)", () => {
 				expect(reports.map((report) => report.currentVersion)).toEqual(
 					Array.from({ length: RUNNERS }, () => 8),
 				);
-				expect((await ledgerRows(schema)).map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+				expect((await ledgerRows(schema)).map((row) => row.version)).toEqual([
+					1, 2, 3, 4, 5, 6, 7, 8,
+				]);
 
 				const [tables] = await observer.query<{ present: number }>(
 					`SELECT count(*)::int AS present FROM information_schema.tables
