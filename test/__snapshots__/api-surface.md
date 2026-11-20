@@ -640,6 +640,14 @@ interface UserNamespaceInEveryMode {
   enable(input: {
     userId: string;
   }): Promise<void>;
+  /** turns every way into the account that does not use one of its own credentials off and deletes its recovery codes */
+  disableRecovery(input: {
+    userId: string;
+  }): Promise<void>;
+  /** turns the mailed paths and recovery codes that disableRecovery turned off on again */
+  enableRecovery(input: {
+    userId: string;
+  }): Promise<void>;
   delete(input: {
     userId: string;
   }): Promise<void>;
@@ -958,6 +966,8 @@ interface User {
   readonly hasPassword: boolean;
   readonly id: string;
   readonly importedFrom: ImportSource | null;
+  /** when the account turned every way back in that does not use one of its own credentials off, or null while it has not */
+  readonly recoveryDisabledAt: Date | null;
   readonly updatedAt: Date;
   readonly username: string | null;
 }
@@ -1640,7 +1650,7 @@ export {
 ## core/http/error-map.d.mts
 
 //#region src/core/http/error-map.d.ts
-type VelveErrorCode = "account_disabled" | "factor_already_enrolled" | "factor_not_enrolled" | "freshness_required" | "identity_already_linked" | "identity_limit_reached" | "internal_error" | "invalid_credentials" | "invalid_factor_code" | "invalid_input" | "invalid_pending_authentication" | "invalid_recovery_code" | "invalid_token" | "last_sign_in_method" | "oauth_flow_invalid" | "oauth_provider_error" | "origin_not_allowed" | "passkey_limit_reached" | "password_unacceptable" | "provider_not_configured" | "rate_limited" | "session_required" | "too_many_factor_attempts" | "username_invalid" | "username_taken" | "webauthn_challenge_invalid" | "webauthn_credential_rejected";
+type VelveErrorCode = "account_disabled" | "factor_already_enrolled" | "factor_not_enrolled" | "freshness_required" | "identity_already_linked" | "identity_limit_reached" | "internal_error" | "invalid_credentials" | "invalid_factor_code" | "invalid_input" | "invalid_pending_authentication" | "invalid_recovery_code" | "invalid_token" | "last_sign_in_method" | "oauth_flow_invalid" | "oauth_provider_error" | "origin_not_allowed" | "passkey_limit_reached" | "password_unacceptable" | "provider_not_configured" | "rate_limited" | "recovery_disabled" | "session_required" | "too_many_factor_attempts" | "username_invalid" | "username_taken" | "webauthn_challenge_invalid" | "webauthn_credential_rejected";
 /** an error code a plugin contributes, which begins with that plugin's id */
 type PluginErrorCode = `${string}.${string}`;
 type AnyErrorCode = VelveErrorCode | PluginErrorCode;
