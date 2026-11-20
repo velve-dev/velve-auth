@@ -1622,7 +1622,7 @@ route that declares it like any other input, and ignored by one that does not; a
 
 The method throws where the client returns a result (3.15 E), and it throws
 exactly what a request would have answered: a `VelveError` carrying one of the
-32 codes, mapped and logged by the same code as the HTTP path. An application
+33 codes, mapped and logged by the same code as the HTTP path. An application
 that catches it and forwards `error.code` into its own response publishes
 nothing the HTTP answer would not have published.
 
@@ -1745,7 +1745,7 @@ the second.
 
 ### Error codes
 
-Every failure of the core carries one of 32 stable codes. The status, the
+Every failure of the core carries one of 33 stable codes. The status, the
 message and the mapping from internal reason to visible code live in
 `src/core/http/error-map.ts`, and no other module decides what a caller sees. A
 plugin adds codes of its own without widening that union; they are described
@@ -1769,6 +1769,7 @@ under [A plugin's own codes](#a-plugins-own-codes) below.
 | `identity_limit_reached` | 409 | `recovery_disabled` | 409 |
 | `passkey_recovery_failed` | 400 | `webauthn_credential_not_discoverable` | 400 |
 | `proof_of_work_required` | 400 | `authenticator_not_allowed` | 403 |
+| `identity_link_required` | 409 | | |
 
 This table is the whole of `VelveErrorCode`. It does not list a plugin's codes,
 which are not part of that union and are resolved separately.
@@ -5583,15 +5584,16 @@ configurable: `(provider, subject)` is the only linking key and the e-mail
 address is never one.
 
 It follows Email flows because the linking rule cites it rather than restating
-it. `S-LINK-4` belongs to that chapter, and the three conditions `S-LINK-2` puts
-on an automatic link read `email_verified_at` on the local row — the state those
-flows produce.
+it. `S-LINK-4` belongs to that chapter, and `email_verified_at` on the local row —
+the state those flows produce — is the one column `trustedProviders` decides for an
+account a provider sign-up creates.
 
 Built. The authorisation-code flow with PKCE S256 — not optional, and with no
 branch that downgrades it — a `state` that lives in the database while the
 cookie holds only a pointer to it, a `nonce` under OIDC, the `iss` check of
 RFC 9207, and the ID token verified against the provider's JWKS under a list of
-asymmetric algorithms that does not contain `none`. Fourteen providers are built
+asymmetric algorithms that does not contain `none`, with its `iss` compared with an
+issuer the configuration names — or, for `microsoft`, the one its own `tid` names. Fourteen providers are built
 in and any other is a set of endpoints and a subject claim in your
 configuration; no discovery document is ever fetched, so an endpoint the library
 calls is one you wrote down.
@@ -5615,12 +5617,13 @@ whose own session was revoked or signed out while it was outstanding is refused
 rather than handing back a fresh one.
 
 **The linking rule is the part that does not bend.** `(provider, subject)` is
-the only key; the e-mail address is an attribute and never a link. An identity
-is joined to an existing account automatically only when the provider reports
-the address verified **and** the local account is verified **and** the provider
-stands in `trustedProviders` — three conditions, no switch that removes one. The
-library invents no address for a provider that reports none, and creates no
-account it cannot name.
+the only key; the e-mail address is an attribute and never a link. An identity is
+never joined to an existing account automatically: a sign-in through a new
+identity whose address an existing account carries answers
+`identity_link_required` and writes nothing, and the person links the provider
+from inside a session of that account. No option changes that. The library
+invents no address for a provider that reports none, and creates no account it
+cannot name.
 
 ### Configuring providers
 
@@ -5650,7 +5653,7 @@ const auth = createVelveAuth({
 |---|---|---|---|
 | `callbackBaseUrl` | `string` | — required | The absolute URL the callback route answers on. The provider id is appended to it, so the value above sends `google` to `https://api.example.com/sign-in/oauth/callback/google`. That URL is what you register with the provider, and it is what the token request sends as `redirect_uri`. |
 | `providers` | object | — required | One entry per provider, keyed by its id. |
-| `trustedProviders` | `readonly string[]` | — required | The providers whose `email_verified` claim you accept as proof of address ownership. It is the third of the three conditions an automatic link needs. An empty list switches automatic linking off entirely. |
+| `trustedProviders` | `readonly string[]` | — required | The providers whose `email_verified` claim you accept as proof of address ownership for an account a sign-in through them **creates**: that account's address is stored confirmed. It joins no identity to an existing account — since 3.0.0 nothing does (E-3895, E-3896). An empty list stores every such address unconfirmed. |
 | `storeTokens` | `boolean` | `false` | Whether the provider's tokens are stored, encrypted, on the identity row. |
 | `identifiersForNewAccount` | `(input) => NewAccountIdentifiers \| Promise<…>` | absent | Supplies the identifiers a provider cannot, for an account that does not exist yet. See below. |
 
@@ -5683,7 +5686,7 @@ Three things it is not:
   same `identity.username` policy as a username typed into a form. A value the
   policy refuses refuses the sign-in.
 - **Not a place to supply the address.** A provider's claim is what verifies an
-  address under `S-LINK-2`; an application asserting one here would be claiming a
+  address under E-558; an application asserting one here would be claiming a
   verification nobody performed. Only `username` is accepted.
 - **Not a default.** Return nothing and the refusal is exactly what it was before
   this seam existed. The library does not derive a username from an address —
@@ -5707,7 +5710,7 @@ first two.
 | `authorizationEndpoint` | `string` | the descriptor's | Overrides the built-in endpoint — a self-hosted GitLab, for instance. |
 | `tokenEndpoint` | `string` | the descriptor's | |
 | `userInfoEndpoint` | `string` | the descriptor's | |
-| `issuer` | `string` | the descriptor's | Checked against the ID token's `iss` and against the callback's `iss` parameter. |
+| `issuer` | `string` | the descriptor's | Checked against the ID token's `iss` and against the callback's `iss` parameter. Required wherever there is a `jwksUri` and the descriptor names no issuer — every generic OIDC provider — and on `microsoft` it replaces the tenant rule below. |
 | `jwksUri` | `string` | the descriptor's | Its presence is what makes the provider an OIDC provider for this library: a `nonce` is minted and the ID token is verified. |
 | `prompt` | `"select_account" \| "consent" \| "login" \| "none"` | absent | Passed through as `prompt`. |
 | `responseMode` | `"query" \| "form_post"` | `"query"`, `"form_post"` for `apple` | How the provider hands the code back. |
@@ -5719,6 +5722,14 @@ start with `VelveStartupError("oauth_provider_incomplete")`. `subjectClaim` has
 no default on purpose — `"sub"` is convenient and, in the one case where it is
 wrong, an account-takeover bug. A dot reaches into a nested claim, as in
 `bot.owner.user.id`.
+
+A provider whose `jwksUri` — its own or the descriptor's — stands without an
+issuer refuses the start with `VelveStartupError("oauth_provider_issuer_missing")`.
+An ID token whose `iss` is compared with nothing proves only that some issuer
+holding a key in that set signed it (OpenID Connect Core 3.1.3.7, E-3898). Take the
+value from the `issuer` field of the provider's own discovery document; the library
+never fetches that document. **This refusal is new in 3.0.0**: a generic provider
+that started on 2.x with a `jwksUri` and no `issuer` needs one added.
 
 The types behind this, all exported from `@velve/auth`:
 
@@ -5755,22 +5766,28 @@ Three of them behave in ways worth knowing before you configure them.
   the e-mail scope is asked for. The provider then posts the code to the
   callback path instead of redirecting to it. See *The `form_post` callback*
   below for what that changes.
-- **`microsoft`** carries no issuer, because Entra ID's `iss` names the tenant
-  and a fixed value would refuse every real token. The ID token's signature,
-  audience and nonce are still checked. If you need the issuer bound as well,
-  configure Entra as an id of your own with your tenant's `issuer`.
+- **`microsoft`** carries no fixed issuer, because Entra ID's `iss` names the
+  tenant and a fixed value would refuse every real token. Its ID token must carry
+  a `tid` claim that is a GUID, and its `iss` must be exactly
+  `https://login.microsoftonline.com/{tid}/v2.0` with that `tid` — the check
+  Microsoft documents for a multi-tenant token (E-3899). Any tenant passes it,
+  personal accounts included; to admit one tenant only, configure `microsoft`
+  with that tenant's `issuer`, which replaces the rule. An Azure AD B2C tenant,
+  whose issuer lives on `b2clogin.com`, needs its `issuer` configured the same
+  way.
 - **`github`** reports no verification state for an address, so
-  `providerEmailVerified` is `false` for every GitHub identity and GitHub can
-  never produce an automatic link, whatever `trustedProviders` says. Four other
-  built-in providers carry no verified-email claim either — `facebook`,
-  `microsoft`, `notion` and `spotify` — and the same follows for them.
+  `providerEmailVerified` is `false` for every GitHub identity and an account a
+  GitHub sign-in creates stores its address unconfirmed, whatever
+  `trustedProviders` says. Four other built-in providers carry no verified-email
+  claim either — `facebook`, `microsoft`, `notion` and `spotify` — and the same
+  follows for them.
 
 The verification claim is read as the JSON boolean `true` and as nothing else. A
 provider that reports the flag as the string `"true"` or the number `1` — Zoom's
-`verified` is numeric — counts as **not** verified, and its identities cannot
-produce an automatic link. That is the safe direction of the only mistake this
-reader can make, and it is the reason `zoom` behaves like the five above in
-practice.
+`verified` is numeric — counts as **not** verified, and the account its sign-in
+creates stores its address unconfirmed. That is the safe direction of the only
+mistake this reader can make, and it is the reason `zoom` behaves like the five
+above in practice.
 
 ### The routes and the methods
 
@@ -5942,18 +5959,21 @@ to one the provider did not state (E-2875).
    existed are the same answer.
 4. Checks `iss` where the provider sent one. Against the configured issuer where
    there is one; against the `iss` claim of the verified ID token where the
-   provider has none — which is `microsoft`, whose issuer names the tenant. An
-   `iss` that arrives where neither can answer it is refused rather than passed
-   over.
+   provider has none — which is `microsoft`, whose issuer names the tenant and
+   whose token's `iss` step 6 has already held to its `tid`. An `iss` that arrives
+   where neither can answer it is refused rather than passed over.
 5. Decrypts the PKCE verifier and exchanges the code at the token endpoint. The
    request carries a ten-second deadline, and a 3xx answer is refused rather
    than followed.
 6. Reads the account's claims: from the ID token where the provider has a JWKS,
-   otherwise from the userinfo endpoint. A flow that minted a nonce and received
-   no ID token fails rather than continuing unchecked.
-7. Resolves the identity by `(provider, subject)` and applies the linking rule.
-   For a link flow this is deferred to step 8, so that the identity row and the
-   session replacement commit together.
+   otherwise from the userinfo endpoint. The ID token's signature, audience,
+   expiry, `iss` and nonce are all checked. A flow that minted a nonce and
+   received no ID token fails rather than continuing unchecked.
+7. Resolves the identity by `(provider, subject)` and applies the linking rule:
+   a new identity whose address an existing account carries ends here with
+   `identity_link_required`, before anything is written. For a link flow this is
+   deferred to step 8, so that the identity row and the session replacement
+   commit together.
 8. Issues a session — or, where the account has a second factor enrolled, a
    pending authentication instead — and answers 302 to the stored path. A link
    flow writes the identity and replaces the session named on the flow row in a
@@ -5985,8 +6005,9 @@ caller and carries its own reason in the log line: `state_not_found`,
 `pkce_mismatch`, `nonce_mismatch`, `issuer_mismatch`,
 `id_token_signature_invalid`. A link refused at step 8 answers the same code,
 logging `link_session_gone` for the first five rows above and
-`user_disabled_on_oauth_flow` for the last. A provider that answers wrongly is
-`oauth_provider_error` (502).
+`user_disabled_on_oauth_flow` for the last. A sign-in through a new identity
+whose address an existing account carries answers `identity_link_required` (409).
+A provider that answers wrongly is `oauth_provider_error` (502).
 
 ### The linking rule
 
@@ -5994,22 +6015,36 @@ logging `link_session_gone` for the first five rows above and
 it is never a linking key.
 
 An identity that already exists signs its account in. An identity that does not
-exist yet is joined to an **existing** account only when **all three** of these
-hold:
+exist yet is **never joined to an existing account by the sign-in** (`S-LINK-2`,
+E-3895). Where no account carries its address, a **new account** is created. Where
+one does, the callback answers
 
-1. the provider reports the address verified, **and**
-2. the local account carries `email_verified_at`, **and**
-3. the provider stands in `trustedProviders`.
+| Code | Status | Message |
+|---|---|---|
+| `identity_link_required` | 409 | An account already uses this address; sign in to it and link the provider from there. |
 
-There is no option that removes one of the three and no order in which two of
-them suffice. Better Auth read the second condition never — that is
-CVE-2026-53516 (CVSS 8.3) — and after its fix the conditions are still not all
-mandatory there.
+and writes nothing: no identity, no session, no pending authentication, no
+account. That holds whatever the provider reports about the address, whether the
+account confirmed it, whether the provider stands in `trustedProviders`, whether
+the account has a second factor and whether it has turned recovery off. The
+person links the provider from inside a session of that account with
+`identity.link.start`, which needs a fresh session and therefore everything the
+account's own sign-in asks for.
 
-Where the three do not all hold, a **new account** is created instead, or the
-user links the identity explicitly from inside an existing session. Where a new
-account cannot be created — because the address already belongs to another
-account — the flow ends with `oauth_flow_invalid` and links nothing.
+**What the code reveals.** It tells whoever holds the provider identity that some
+account carries the address. The sign-in told them that before 3.0.0 as well — it
+created no account then and ended with `oauth_flow_invalid` (E-560) — so the code
+makes the same bit readable rather than adding one. A sign-up through a provider
+that loses the address to a concurrent sign-up answers the same code (E-3897).
+
+**Migrating from 2.x.** Up to 2.x an identity was joined automatically when the
+provider reported the address verified, the local account had confirmed it and
+the provider stood in `trustedProviders`. That is gone and no option brings it
+back. Handle `identity_link_required` on the page your callback leads to with a
+message such as *"An account with this address already exists. Sign in to it and
+link this provider from your account settings."*, and offer
+`identity.link.start` there. An identity that 2.x joined automatically stays
+linked and keeps signing in, because it is found by `(provider, subject)`.
 
 A new account's address is taken from the provider and normalised. It is marked
 verified only where the provider reported it verified **and** the provider is
@@ -6222,6 +6257,7 @@ nothing else would tell you.
 | `recovery_codes_required` | the mode is `"username"` and `recoveryCodes` is absent (S-DEFAULT-4) |
 | `recovery_code_shape_unusable` | `recoveryCodes.count` or `recoveryCodes.groupSize` is not a positive whole number (A.8, E-1741) |
 | `oauth_provider_incomplete` | a provider id that is not one of the fourteen built in carries no `authorizationEndpoint`, `tokenEndpoint` and `subjectClaim` |
+| `oauth_provider_issuer_missing` | a provider has a `jwksUri` and no issuer to compare its ID tokens' `iss` with — every generic OIDC provider configured without `issuer` (E-3898) |
 | `rate_limit_bucket_unusable` | `rateLimit.perIpAddress` or `rateLimit.perAccount` is given and is not a bucket whose `capacity` and `refillPerSecond` are finite numbers of at least zero — `"none"` from a JavaScript configuration included, which would take every core route out of that bucket (S-DEFAULT-3, E-2215) |
 | `plugin_id_duplicated` | two plugins claim the same `id` |
 | `plugin_dependency_missing` | a `dependsOn` names a plugin that is not configured |
@@ -8106,7 +8142,7 @@ if (!answer.ok) {
 
 The `switch` is exhaustive and the compiler checks it, because `answer.error.code`
 is narrowed to the codes **that route** declares and not to the union of all
-32.
+33.
 
 A call returns a result rather than throwing, and the asymmetry with the server
 is on purpose: on the server a call sits in a request handler with a central
@@ -8229,7 +8265,7 @@ try {
 ```
 
 `VelveError` rebuilds its message from its own copy of the error table rather
-than from the wire. For the thirty-two core codes the two are the same table and
+than from the wire. For the thirty-three core codes the two are the same table and
 the strings are identical; for a code this build of the package does not know,
 `unwrap` throws with `internal_error`'s message and the response's status is
 lost. The un-unwrapped path always keeps what the server said, in
@@ -11263,14 +11299,11 @@ TOTP and passkeys as second factors, `email.requestVerification` and
 `email.requestChange` and their redemptions — confirming or changing the address
 issues no session and sets no credential, so neither is a way in (E-3738).
 
-**Not covered in this version.** The automatic linking of a new identity through
-the confirmed address of a trusted provider (`trustedForAutomaticLinking`,
-S-LINK-2) does not ask the switch. On an account with a second factor it still
-leads only to the pending authentication; on an account without one it signs in.
-An application that relies on the switch either keeps such accounts on a second
-factor or does not mark a provider as trusted for automatic linking (E-3738). The
-gap closes when automatic linking by address is removed, which this release's
-security review provides for (E-3743).
+**Linking by address does not reach it either.** A new provider identity is never
+joined to an account through its address, trusted provider or not: the sign-in
+answers `identity_link_required` and writes nothing (S-LINK-2, E-3895). The gap
+earlier drafts of this release noted here (E-3738) is closed with that, and the
+switch needs no question of its own on that path.
 
 ### `recovery_disabled`
 
