@@ -35,7 +35,7 @@ import {
 import { componentsAfter } from "../../security-state/sealing.js";
 import type { TokenBindingRefusalReport } from "../../token/binding.js";
 import type { PendingResolution } from "../pending/index.js";
-import { attestedAaguidOf } from "./attestation.js";
+import { attestedAaguidOf, refuseAnAttestationTheVerifierWouldFetchFor } from "./attestation.js";
 import {
 	createWebAuthnChallenges,
 	WEBAUTHN_CHALLENGE_LIFETIME_SECONDS,
@@ -337,7 +337,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 		return { publicKeyOptions, challengeToken };
 	}
 
-	//attestation is asked for only where a list needs it or the application asks for every account (E-3841)
+	//an account without a list must be asked for no attestation unless the application asks for every account (E-3841)
 	function attestationRequestedFor(allowlist: readonly string[] | null): "direct" | "none" {
 		const attestation = settings.attestation;
 		return attestation !== null && (attestation.requestForEveryAccount || allowlist !== null)
@@ -391,6 +391,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 		readonly userVerification: RegistrationUserVerification;
 	}): Promise<RegisteredWebAuthnCredential> {
 		assertOriginIsExpected(input.response.response.clientDataJSON, settings.origins);
+		refuseAnAttestationTheVerifierWouldFetchFor(input.response.response.attestationObject);
 		const verification = await verifiedOrRejected(() =>
 			verifyRegistrationResponse({
 				response: input.response,
@@ -463,7 +464,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 			});
 			throw new ConcealedError(input.refusal);
 		}
-		//a passkey outside the list answers as an unknown one before any signature is checked (S-INTEG-13)
+		//a refusal for the list must come before the signature check and move no counter (S-INTEG-13)
 		if (!satisfiesTheAllowlist(check.read.authenticatorAllowlist, sealed.attestedAaguid)) {
 			throw new ConcealedError("authenticator_not_allowed_on_assertion");
 		}

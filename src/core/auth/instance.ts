@@ -392,7 +392,7 @@ async function switchRecoveryUnderTheSeal(
 	} catch {}
 }
 
-//the list is audited through the operator's log once it has committed and is never stored apart from the seal (E-3849)
+//a limit must reach the operator's log only once it has committed (E-3849)
 async function limitAuthenticatorsUnderTheSeal(
 	securityState: SecurityStateRuntime,
 	operatorLog: HttpEnvironment["log"],

@@ -38,7 +38,7 @@ function refuseLeavingNoUsableSignInMethod(
 	}
 }
 
-//setting or lifting the list is one sealed change and a held back passkey outside it is withdrawn with it (S-INTEG-13)
+//a held back passkey the new list refuses must leave in the same sealed change (S-INTEG-13)
 export async function setAuthenticatorAllowlist(
 	runtime: SecurityStateRuntime,
 	input: {
