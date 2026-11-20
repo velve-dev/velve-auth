@@ -108,12 +108,14 @@ import { VELVE_AUTH_VERSION } from "@velve/auth";
 ### Published versions
 
 Two earlier prereleases are still on the registry and are **not** what you want:
-`1.0.0-next.1` and `1.0.0-next.2` under the `next` tag. They are kept because npm
-does not allow a version to be withdrawn once anyone might depend on it, and
-because `1.0.0-next.1` is why `latest` behaved oddly before this release — npm
+`1.0.0-next.1` and `1.0.0-next.2`, which the `next` tag named until 3.0.0. They are
+kept because npm does not allow a version to be withdrawn once anyone might depend
+on it, and because `1.0.0-next.1` is why `latest` behaved oddly before this release — npm
 points `latest` at a package's very first publish whatever `--tag` says, so it
 sat on a prerelease until `1.0.0` took it. A `^1.0.0` range never matched either
-of them, because a range does not match a prerelease.
+of them, because a range does not match a prerelease. No dist-tag is left on a
+version older than `latest`: the check run after every publish refuses one, so
+`@velve/auth@<tag>` never installs a version behind the current release.
 
 Every version up to and including `1.1.0` was published from GitHub Actions and
 carries an npm provenance attestation tying it to a commit and a workflow run of

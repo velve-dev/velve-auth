@@ -10,6 +10,39 @@ const VERSION_OVERRIDE = process.argv[4];
 const DEADLINE_MS = Number(process.env.VELVE_REGISTRY_DEADLINE_MS ?? 180_000);
 const POLL_MS = Number(process.env.VELVE_REGISTRY_POLL_MS ?? 5_000);
 const PRERELEASE = /-/;
+const SEMANTIC = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
+
+function compareIdentifiers(x, y) {
+	const [numericX, numericY] = [/^\d+$/.test(x), /^\d+$/.test(y)];
+	if (numericX && numericY) return Math.sign(Number(x) - Number(y));
+	if (numericX !== numericY) return numericX ? -1 : 1;
+	return x === y ? 0 : x < y ? -1 : 1;
+}
+
+function comparePrereleases(left, right) {
+	if (left === undefined || right === undefined) {
+		return left === right ? 0 : left === undefined ? 1 : -1;
+	}
+	const [x, y] = [left.split("."), right.split(".")];
+	for (let index = 0; index < Math.min(x.length, y.length); index += 1) {
+		const order = compareIdentifiers(x[index], y[index]);
+		if (order !== 0) return order;
+	}
+	return Math.sign(x.length - y.length);
+}
+
+/** Precedence as semver.org section 11 states it: the three numbers, then a release above any of
+ * its prereleases, then the prerelease identifiers one by one, numbers below words. Anything that
+ * is not a semantic version compares as unknown and is reported rather than ranked. */
+function compareVersions(left, right) {
+	const [a, b] = [SEMANTIC.exec(left), SEMANTIC.exec(right)];
+	if (a === null || b === null) return undefined;
+	for (let index = 1; index <= 3; index += 1) {
+		const difference = Math.sign(Number(a[index]) - Number(b[index]));
+		if (difference !== 0) return difference;
+	}
+	return comparePrereleases(a[4], b[4]);
+}
 
 /** An unauthenticated read of a scoped package that does not exist answers 401 and not 404,
  * because the registry will not say whether a private one is there. Both mean absent here. */
@@ -139,6 +172,25 @@ if (distTags !== null) {
 			`latest points at ${distTags.latest}, which is a prerelease, so a bare install of ${name} resolves to one.`,
 		);
 	}
+	/** A tag the publish never moves stays where it was left, and `npm install <name>@<tag>` keeps
+	 * installing that version after every fix since: `next` named 1.0.0-next.2 long after 2.0.1
+	 * held `latest` (E-3890). Only the maintainer can move or remove it, so the finding names the
+	 * command rather than leaving the reader to look it up. */
+	if (typeof distTags.latest === "string") {
+		for (const [tag, tagged] of Object.entries(distTags)) {
+			if (tag === "latest") continue;
+			const order = compareVersions(String(tagged), distTags.latest);
+			if (order === undefined) {
+				findings.push(
+					`The dist-tag ${tag} points at ${String(tagged)}, which cannot be compared with latest (${distTags.latest}).`,
+				);
+			} else if (order < 0) {
+				findings.push(
+					`The dist-tag ${tag} points at ${String(tagged)}, which is older than latest (${distTags.latest}), so ${name}@${tag} installs it; remove the tag with npm dist-tag rm ${name} ${tag}.`,
+				);
+			}
+		}
+	}
 }
 
 /** No attestation is asked for. A publish from the maintainer's machine cannot carry a provenance
@@ -153,5 +205,5 @@ if (findings.length > 0) {
 }
 
 console.log(
-	`published version: ${REGISTRY} resolves ${name}@${version}, ${DIST_TAG} points at it, and latest names no prerelease`,
+	`published version: ${REGISTRY} resolves ${name}@${version}, ${DIST_TAG} points at it, latest names no prerelease, and no dist-tag names a version older than latest`,
 );

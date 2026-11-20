@@ -84,8 +84,10 @@ describe("latest naming any prerelease is the finding, not latest naming this on
 		expect(await refusalFrom(check(url, "next", "1.0.0-next.1"))).toContain(STUCK);
 	});
 
+	/** The registry this case first held left `next` on 1.0.0-next.2 below a stable `latest`, which
+	 * is the state E-3890 refuses; a `next` ahead of `latest` keeps what the case is about. */
 	it("passes a stable release that takes latest", async () => {
-		const url = await registryWhere("1.0.0", { next: "1.0.0-next.2", latest: "1.0.0" });
+		const url = await registryWhere("1.0.0", { next: "1.1.0-next.1", latest: "1.0.0" });
 
 		const { stdout } = await check(url, "latest", "1.0.0");
 
@@ -111,7 +113,7 @@ describe("latest naming any prerelease is the finding, not latest naming this on
 describe("a version published without a provenance attestation", () => {
 	it("passes, without asking the registry for an attestation", async () => {
 		attestationReads.length = 0;
-		const url = await registryWhere("1.2.0", { next: "1.0.0-next.2", latest: "1.2.0" });
+		const url = await registryWhere("1.2.0", { next: "1.3.0-next.1", latest: "1.2.0" });
 
 		const { stdout } = await check(url, "latest", "1.2.0");
 
