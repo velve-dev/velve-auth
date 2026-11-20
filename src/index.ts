@@ -93,6 +93,7 @@ export type {
 	WebAuthnNamespace,
 } from "./core/factor/routes.js";
 export type { TotpEnrollment } from "./core/factor/totp/index.js";
+export type { WebAuthnAttestationConfig } from "./core/factor/webauthn/config.js";
 export type { WebAuthnCredential } from "./core/factor/webauthn/credential-repository.js";
 export type {
 	WebAuthnAuthenticationChallenge,

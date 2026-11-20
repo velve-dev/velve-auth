@@ -19,6 +19,8 @@ export interface WebAuthnCredential {
 	readonly isBackupEligible: boolean;
 	readonly isCurrentlyBackedUp: boolean;
 	readonly wasUserVerifiedAtRegistration: boolean;
+	/** whether the attestation chain verified against the configured roots at registration */
+	readonly attestationVerified: boolean;
 	readonly createdAt: Date;
 	readonly lastUsedAt: Date | null;
 }
@@ -43,6 +45,7 @@ export interface WebAuthnCredentialInsert {
 	readonly isBackupEligible: boolean;
 	readonly isCurrentlyBackedUp: boolean;
 	readonly wasUserVerifiedAtRegistration: boolean;
+	readonly attestationVerified: boolean;
 	readonly label: string;
 }
 
@@ -96,6 +99,7 @@ interface CredentialRow {
 	readonly backup_eligible: boolean;
 	readonly backup_state: boolean;
 	readonly user_verified_at_registration: boolean;
+	readonly attestation_verified: boolean;
 	readonly label: string | null;
 	readonly created_at: unknown;
 	readonly last_used_at: unknown;
@@ -145,6 +149,7 @@ function presentedCredential(row: CredentialRow): WebAuthnCredential {
 		isBackupEligible: row.backup_eligible,
 		isCurrentlyBackedUp: row.backup_state,
 		wasUserVerifiedAtRegistration: row.user_verified_at_registration,
+		attestationVerified: row.attestation_verified,
 		createdAt: readDate(row.created_at),
 		lastUsedAt: readOptionalDate(row.last_used_at),
 	};
@@ -179,16 +184,17 @@ export function createWebAuthnCredentialRepository(options: {
 
 	const SELECTED_COLUMNS = `id, user_id, credential_id, public_key, sign_count,
 	to_jsonb(coalesce(transports, '{}'))::text AS transports, aaguid::text AS aaguid,
-	backup_eligible, backup_state, user_verified_at_registration, label,
+	backup_eligible, backup_state, user_verified_at_registration,
+	attestation_verified AND aaguid IS NOT NULL AS attestation_verified, label,
 	created_at, last_used_at`;
 
 	//a credential a pending recovery holds is refused like one already registered (E-3767)
 	const insertStatement = `INSERT INTO ${table}
 	(user_id, credential_id, public_key, sign_count, transports, aaguid,
-	 backup_eligible, backup_state, user_verified_at_registration, label)
+	 backup_eligible, backup_state, user_verified_at_registration, label, attestation_verified)
 SELECT $1::uuid, $2::bytea, $3::bytea, $4::bigint,
 	ARRAY(SELECT jsonb_array_elements_text($5::jsonb)), $6::uuid,
-	$7::boolean, $8::boolean, $9::boolean, $10::text
+	$7::boolean, $8::boolean, $9::boolean, $10::text, $11::boolean
 WHERE NOT EXISTS (
 	SELECT 1 FROM ${qualifiedTableName(options.schema, "passkey_recovery")} held
 	WHERE held.credential_id = $2)
@@ -233,6 +239,7 @@ RETURNING ${SELECTED_COLUMNS}`;
 				input.isCurrentlyBackedUp,
 				input.wasUserVerifiedAtRegistration,
 				input.label,
+				input.attestationVerified,
 			]).catch((cause: unknown) => {
 				if (isUniqueViolation(cause)) {
 					throw new DuplicateWebAuthnCredentialError();

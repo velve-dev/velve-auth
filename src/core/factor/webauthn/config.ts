@@ -1,5 +1,16 @@
+import { convertCertBufferToPEM } from "@simplewebauthn/server/helpers";
+import { certificateBytesOf, namesARevocationList } from "./attestation.js";
+
 /** the user verification a registration may ask for, where `"discouraged"` is never an option */
 export type RegistrationUserVerification = "required" | "preferred";
+
+/** the roots an attestation chain must end in, which turns verified attestation and the authenticator allowlist on */
+export interface WebAuthnAttestationConfig {
+	/** each root certificate as PEM text or as DER bytes */
+	readonly trustedRoots: readonly (string | Uint8Array)[];
+	/** asks every registration for attestation and not only one for an account with an allowlist */
+	readonly requestForEveryAccount?: boolean;
+}
 
 export interface WebAuthnConfig {
 	readonly relyingPartyId: string;
@@ -7,6 +18,13 @@ export interface WebAuthnConfig {
 	readonly origins: readonly string[];
 	readonly userVerification?: RegistrationUserVerification;
 	readonly requireDiscoverableCredential?: boolean;
+	readonly attestation?: WebAuthnAttestationConfig;
+}
+
+/** the checked attestation settings, with every root as PEM text */
+export interface WebAuthnAttestationSettings {
+	readonly trustedRoots: readonly string[];
+	readonly requestForEveryAccount: boolean;
 }
 
 export interface WebAuthnSettings {
@@ -15,6 +33,7 @@ export interface WebAuthnSettings {
 	readonly origins: readonly string[];
 	readonly registrationUserVerification: RegistrationUserVerification;
 	readonly requireDiscoverableCredential: boolean;
+	readonly attestation: WebAuthnAttestationSettings | null;
 }
 
 export const DEFAULT_REGISTRATION_USER_VERIFICATION: RegistrationUserVerification = "required";
@@ -27,7 +46,12 @@ export type WebAuthnConfigErrorCode =
 	| "origin_empty"
 	| "origin_carries_more_than_an_origin"
 	| "require_discoverable_credential_not_a_boolean"
-	| "discoverable_credential_without_user_verification";
+	| "discoverable_credential_without_user_verification"
+	| "attestation_not_an_object"
+	| "attestation_roots_empty"
+	| "attestation_root_unreadable"
+	| "attestation_root_names_a_revocation_list"
+	| "attestation_request_for_every_account_not_a_boolean";
 
 const MESSAGE_BY_ERROR_CODE: Readonly<Record<WebAuthnConfigErrorCode, string>> = {
 	relying_party_id_empty: "webauthn.relyingPartyId is empty.",
@@ -42,6 +66,14 @@ const MESSAGE_BY_ERROR_CODE: Readonly<Record<WebAuthnConfigErrorCode, string>> =
 		"webauthn.requireDiscoverableCredential is true, false or absent.",
 	discoverable_credential_without_user_verification:
 		'webauthn.requireDiscoverableCredential asks for user verification, so webauthn.userVerification cannot be "preferred".',
+	attestation_not_an_object: "webauthn.attestation is an object carrying trustedRoots, or absent.",
+	attestation_roots_empty: "webauthn.attestation.trustedRoots names no root certificate.",
+	attestation_root_unreadable:
+		"An entry of webauthn.attestation.trustedRoots is no X.509 certificate in PEM text or DER bytes.",
+	attestation_root_names_a_revocation_list:
+		"An entry of webauthn.attestation.trustedRoots names a CRL distribution point, which verifying a chain would fetch.",
+	attestation_request_for_every_account_not_a_boolean:
+		"webauthn.attestation.requestForEveryAccount is true, false or absent.",
 };
 
 export class InvalidWebAuthnConfigError extends Error {
@@ -107,6 +139,48 @@ function assertUserVerificationAllows(
 	return userVerification;
 }
 
+//a switch a caller misspelled must not read as off (S-DEFAULT-8)
+function requestedForEveryAccount(attestation: WebAuthnAttestationConfig): boolean {
+	const requested: unknown = attestation.requestForEveryAccount;
+	if (requested === undefined) {
+		return false;
+	}
+	if (typeof requested !== "boolean") {
+		throw new InvalidWebAuthnConfigError("attestation_request_for_every_account_not_a_boolean");
+	}
+	return requested;
+}
+
+//a root nobody could parse is refused at the start and never reaches a chain verification (E-3843)
+function trustedRootOf(root: unknown): string {
+	const certificate = certificateBytesOf(root);
+	if (certificate === null) {
+		throw new InvalidWebAuthnConfigError("attestation_root_unreadable");
+	}
+	if (namesARevocationList(certificate)) {
+		throw new InvalidWebAuthnConfigError("attestation_root_names_a_revocation_list");
+	}
+	return convertCertBufferToPEM(certificate);
+}
+
+function attestationSettingsOf(config: WebAuthnConfig): WebAuthnAttestationSettings | null {
+	const attestation: unknown = config.attestation;
+	if (attestation === undefined) {
+		return null;
+	}
+	if (typeof attestation !== "object" || attestation === null) {
+		throw new InvalidWebAuthnConfigError("attestation_not_an_object");
+	}
+	const roots: unknown = (attestation as WebAuthnAttestationConfig).trustedRoots;
+	if (!Array.isArray(roots) || roots.length === 0) {
+		throw new InvalidWebAuthnConfigError("attestation_roots_empty");
+	}
+	return {
+		trustedRoots: roots.map(trustedRootOf),
+		requestForEveryAccount: requestedForEveryAccount(attestation as WebAuthnAttestationConfig),
+	};
+}
+
 export function webAuthnSettingsOf(config: WebAuthnConfig): WebAuthnSettings {
 	if (config.relyingPartyName === "") {
 		throw new InvalidWebAuthnConfigError("relying_party_name_empty");
@@ -124,5 +198,6 @@ export function webAuthnSettingsOf(config: WebAuthnConfig): WebAuthnSettings {
 			config.userVerification ?? DEFAULT_REGISTRATION_USER_VERIFICATION,
 		),
 		requireDiscoverableCredential,
+		attestation: attestationSettingsOf(config),
 	};
 }

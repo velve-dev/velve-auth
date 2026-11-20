@@ -18,6 +18,8 @@ interface SealedTotp {
 interface SealedPasskey {
 	readonly credentialId: Uint8Array;
 	readonly publicKey: Uint8Array;
+	/** the AAGUID of a passkey whose attestation chain verified, absent or null for every other passkey */
+	readonly attestedAaguid?: string | null;
 }
 
 /** one identity as the seal covers it */
@@ -38,6 +40,8 @@ interface SealedPasskeyRecovery {
 	readonly activatesAtMicros: number;
 	readonly credentialId: Uint8Array;
 	readonly publicKey: Uint8Array;
+	/** the AAGUID of a held back passkey whose attestation chain verified, absent or null otherwise */
+	readonly attestedAaguid?: string | null;
 }
 
 /** every way into an account the seal covers, without the seal row's own version and epoch */
@@ -55,6 +59,8 @@ export interface SealedComponents {
 	readonly recoveryCodes: readonly SealedRecoveryCode[];
 	/** the recovery to a new passkey that waits for its activation time, or null while none does */
 	readonly passkeyRecovery: SealedPasskeyRecovery | null;
+	/** the AAGUIDs a passkey must be attested as to sign the account in, absent or null while no list is set */
+	readonly authenticatorAllowlist?: readonly string[] | null;
 }
 
 /** the token generation of each one-time token purpose, so a redemption leaves the links of the other purposes alone */
@@ -244,6 +250,19 @@ function passkeyRecoveryGenerationField(generation: number): readonly Uint8Array
 		: [integerField(generation)];
 }
 
+//a passkey without a verified attestation keeps the record and so the seal it had before migration 8 (E-3846)
+function attestedAaguidField(attestedAaguid: string | null | undefined): readonly Uint8Array[] {
+	return attestedAaguid === null || attestedAaguid === undefined ? [] : [uuidField(attestedAaguid)];
+}
+
+function passkeyField(passkey: SealedPasskey): Uint8Array {
+	return recordField([
+		bytesField(passkey.credentialId),
+		bytesField(passkey.publicKey),
+		...attestedAaguidField(passkey.attestedAaguid),
+	]);
+}
+
 function passkeyRecoveryField(recovery: SealedPasskeyRecovery | null): readonly Uint8Array[] {
 	return recovery === null
 		? []
@@ -252,8 +271,16 @@ function passkeyRecoveryField(recovery: SealedPasskeyRecovery | null): readonly 
 					integerField(recovery.activatesAtMicros),
 					bytesField(recovery.credentialId),
 					bytesField(recovery.publicKey),
+					...attestedAaguidField(recovery.attestedAaguid),
 				]),
 			];
+}
+
+//an account without a list keeps the encoding and so the seal it had before migration 8 (E-3846)
+function authenticatorAllowlistField(
+	allowlist: readonly string[] | null | undefined,
+): readonly Uint8Array[] {
+	return allowlist === null || allowlist === undefined ? [] : [listField(allowlist.map(uuidField))];
 }
 
 //no two different states may share an encoding (S-INTEG-2)
@@ -275,11 +302,7 @@ export function encodeSecurityState(state: SecurityState): Uint8Array<ArrayBuffe
 		passwordField(state.password),
 		booleanField(state.passwordResetRequired),
 		totpField(state.totp),
-		listField(
-			state.passkeys.map((passkey) =>
-				recordField([bytesField(passkey.credentialId), bytesField(passkey.publicKey)]),
-			),
-		),
+		listField(state.passkeys.map(passkeyField)),
 		listField(
 			state.identities.map((identity) =>
 				recordField([textField(identity.provider), textField(identity.subject)]),
@@ -293,5 +316,6 @@ export function encodeSecurityState(state: SecurityState): Uint8Array<ArrayBuffe
 		...recoveryDisabledField(state.recoveryDisabled),
 		...passkeyRecoveryGenerationField(state.tokenGenerations.passkey_recovery),
 		...passkeyRecoveryField(state.passkeyRecovery),
+		...authenticatorAllowlistField(state.authenticatorAllowlist),
 	]);
 }

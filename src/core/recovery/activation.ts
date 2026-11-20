@@ -6,13 +6,16 @@ import {
 	createWebAuthnCredentialRepository,
 	DuplicateWebAuthnCredentialError,
 } from "../factor/webauthn/credential-repository.js";
-import type { RegisteredWebAuthnCredential } from "../factor/webauthn/service.js";
+import {
+	attestedAaguidOfRegistered,
+	type RegisteredWebAuthnCredential,
+} from "../factor/webauthn/service.js";
 import { sendOrUndo } from "../flows/artefact.js";
 import { type FlowEnvironment, mailerOf } from "../flows/environment.js";
 import { ConcealedError } from "../http/error-map.js";
 import { equalsInConstantTime } from "../keys/constant-time.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
-import type { SecurityStateRead } from "../security-state/read.js";
+import { type SecurityStateRead, satisfiesTheAllowlist } from "../security-state/read.js";
 import { sealChange } from "../security-state/runtime.js";
 import {
 	componentsAfter,
@@ -35,8 +38,15 @@ export const EVERY_WAY_IN_THAT_WAS_MAILED_OR_PENDING: GenerationMoves = {
 	retirePending: true,
 };
 
+//a held back passkey outside the account's list never becomes a way in (S-INTEG-13)
 function isActivatable(read: SecurityStateRead): boolean {
-	return read.passkeyRecovery?.due === true && !read.disabled && !read.recoveryDisabled;
+	const held = read.passkeyRecovery;
+	return (
+		held?.due === true &&
+		!read.disabled &&
+		!read.recoveryDisabled &&
+		satisfiesTheAllowlist(read.authenticatorAllowlist, held.attestedAaguid)
+	);
 }
 
 function isTheSealedPasskey(read: SecurityStateRead, moved: MovedPasskey): boolean {
@@ -108,6 +118,7 @@ export async function insertRecoveredPasskey(
 		credentialId: input.credential.credentialId,
 		publicKey: input.credential.publicKey,
 		signCount: input.credential.signCount,
+		attestedAaguid: attestedAaguidOfRegistered(input.credential),
 	};
 }
 

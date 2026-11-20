@@ -22,7 +22,11 @@ import { decodeBase64Url, encodeBase64Url } from "../../keys/base64url.js";
 import { equalsInConstantTime } from "../../keys/constant-time.js";
 import type { KeyProvider } from "../../keys/provider.js";
 import { assertBelowCredentialLimit } from "../../security-state/limits.js";
-import { type SecurityStateRead, sealedComponentsOf } from "../../security-state/read.js";
+import {
+	type SecurityStateRead,
+	satisfiesTheAllowlist,
+	sealedComponentsOf,
+} from "../../security-state/read.js";
 import {
 	checkAccount,
 	type SecurityStateRuntime,
@@ -31,6 +35,7 @@ import {
 import { componentsAfter } from "../../security-state/sealing.js";
 import type { TokenBindingRefusalReport } from "../../token/binding.js";
 import type { PendingResolution } from "../pending/index.js";
+import { attestedAaguidOf } from "./attestation.js";
 import {
 	createWebAuthnChallenges,
 	WEBAUTHN_CHALLENGE_LIFETIME_SECONDS,
@@ -80,6 +85,8 @@ export interface RegisteredWebAuthnCredential {
 	readonly isBackupEligible: boolean;
 	readonly isCurrentlyBackedUp: boolean;
 	readonly wasUserVerifiedAtRegistration: boolean;
+	/** whether the attestation chain verified against the configured roots, which only a credential with an aaguid can */
+	readonly attestationVerified: boolean;
 }
 
 /** the account a recovery registration's challenge named and the credential the ceremony verified for it */
@@ -134,6 +141,7 @@ export interface WebAuthnService {
 			transaction: Driver;
 			actor: Actor;
 			userName: string;
+			authenticatorAllowlist: readonly string[] | null;
 		}): Promise<WebAuthnRegistrationChallenge>;
 		finish(input: {
 			transaction: Driver;
@@ -167,14 +175,52 @@ export interface WebAuthnServiceOptions {
 function passkeyOfTheRead(
 	read: SecurityStateRead,
 	stored: StoredWebAuthnCredential,
-): StoredWebAuthnCredential | null {
+): (StoredWebAuthnCredential & { readonly attestedAaguid: string | null }) | null {
 	const sealed = read.passkeys.find(
 		(passkey) =>
 			passkey.id === stored.id &&
 			equalsInConstantTime(passkey.credentialId, stored.credentialId) &&
 			equalsInConstantTime(passkey.publicKey, stored.publicKey),
 	);
-	return sealed === undefined ? null : { ...stored, publicKey: sealed.publicKey };
+	return sealed === undefined
+		? null
+		: { ...stored, publicKey: sealed.publicKey, attestedAaguid: sealed.attestedAaguid };
+}
+
+/** the AAGUID a registered credential is attested as, or null where its chain did not verify */
+export function attestedAaguidOfRegistered(
+	credential: RegisteredWebAuthnCredential,
+): string | null {
+	return credential.attestationVerified ? credential.aaguid : null;
+}
+
+//a list refuses every authenticator outside it and every one whose chain did not verify (S-INTEG-13)
+export function refuseAnAuthenticatorOutsideTheList(
+	read: SecurityStateRead,
+	credential: RegisteredWebAuthnCredential,
+): void {
+	if (!satisfiesTheAllowlist(read.authenticatorAllowlist, attestedAaguidOfRegistered(credential))) {
+		throw new ConcealedError("authenticator_not_allowed");
+	}
+}
+
+//no sign-in method the list leaves usable may be removed last (E-3850)
+function refuseRemovingTheLastUsablePasskey(read: SecurityStateRead, removedId: string): void {
+	const allowlist = read.authenticatorAllowlist;
+	if (allowlist === null) {
+		return;
+	}
+	const usable = read.passkeys.filter((passkey) =>
+		satisfiesTheAllowlist(allowlist, passkey.attestedAaguid),
+	);
+	const removesAUsableOne = usable.some((passkey) => passkey.id === removedId);
+	const othersRemain =
+		read.password !== null ||
+		read.identities.length > 0 ||
+		usable.some((passkey) => passkey.id !== removedId);
+	if (removesAUsableOne && !othersRemain) {
+		throw new VelveError("last_sign_in_method");
+	}
 }
 
 const DEFAULT_SCHEMA = "velve";
@@ -291,6 +337,23 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 		return { publicKeyOptions, challengeToken };
 	}
 
+	//attestation is asked for only where a list needs it or the application asks for every account (E-3841)
+	function attestationRequestedFor(allowlist: readonly string[] | null): "direct" | "none" {
+		const attestation = settings.attestation;
+		return attestation !== null && (attestation.requestForEveryAccount || allowlist !== null)
+			? "direct"
+			: "none";
+	}
+
+	//the list a registration in a session asks attestation for is read from the verified state (S-INTEG-4)
+	async function allowlistToRequestFor(actor: Actor): Promise<readonly string[] | null> {
+		if (settings.attestation === null || settings.attestation.requestForEveryAccount) {
+			return null;
+		}
+		const check = await checkAccount(options.securityState, actor, "change");
+		return check.kind === "usable" ? check.read.authenticatorAllowlist : null;
+	}
+
 	//every registration ceremony asks the authenticator through this one place (E-3766)
 	function registrationOptionsFor(input: {
 		readonly actor: Actor;
@@ -299,6 +362,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 		readonly challengeBytes: Uint8Array<ArrayBuffer>;
 		readonly enrolled: readonly StoredWebAuthnCredential[];
 		readonly userVerification: RegistrationUserVerification;
+		readonly authenticatorAllowlist: readonly string[] | null;
 	}): Promise<PublicKeyCredentialCreationOptionsJSON> {
 		return generateRegistrationOptions({
 			rpID: settings.relyingPartyId,
@@ -307,7 +371,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 			userID: utf8ToBytes(input.actor),
 			challenge: input.challengeBytes,
 			timeout: CEREMONY_TIMEOUT_MS,
-			attestationType: "none",
+			attestationType: attestationRequestedFor(input.authenticatorAllowlist),
 			excludeCredentials: input.enrolled.map(descriptorOf),
 			authenticatorSelection: {
 				//this is the only enrolment ceremony so it must require a resident key (E-483)
@@ -344,8 +408,19 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 		if (settings.requireDiscoverableCredential) {
 			assertClientReportsADiscoverableCredential(input.response);
 		}
-		const { credential, aaguid, userVerified, credentialBackedUp, credentialDeviceType } =
-			verification.registrationInfo;
+		const {
+			credential,
+			aaguid,
+			userVerified,
+			credentialBackedUp,
+			credentialDeviceType,
+			fmt,
+			attestationObject,
+		} = verification.registrationInfo;
+		const attestedAaguid = await attestedAaguidOf(
+			{ fmt, aaguid: aaguidOf(aaguid), attestationObject },
+			settings.attestation?.trustedRoots ?? null,
+		);
 		return {
 			credentialId: credentialIdBytes(credential.id),
 			publicKey: credential.publicKey,
@@ -355,6 +430,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 			isBackupEligible: credentialDeviceType === "multiDevice",
 			isCurrentlyBackedUp: credentialBackedUp,
 			wasUserVerifiedAtRegistration: userVerified,
+			attestationVerified: attestedAaguid !== null,
 		};
 	}
 
@@ -386,6 +462,10 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 				reason: "seal_mismatch",
 			});
 			throw new ConcealedError(input.refusal);
+		}
+		//a passkey outside the list answers as an unknown one before any signature is checked (S-INTEG-13)
+		if (!satisfiesTheAllowlist(check.read.authenticatorAllowlist, sealed.attestedAaguid)) {
+			throw new ConcealedError("authenticator_not_allowed_on_assertion");
 		}
 		const verified = await verifyAssertion({ ...input, stored: sealed });
 		return { ...verified, authorisedBy: check.authorisedBy };
@@ -460,6 +540,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 					challengeBytes,
 					enrolled,
 					userVerification: settings.registrationUserVerification,
+					authenticatorAllowlist: await allowlistToRequestFor(actor),
 					...(userDisplayName === undefined ? {} : { userDisplayName }),
 				});
 				return { publicKeyOptions, challengeToken };
@@ -477,6 +558,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 					epoch: "keep",
 					write: (tx, read) => {
 						assertBelowCredentialLimit(read, "passkey", options.securityState.limits);
+						refuseAnAuthenticatorOutsideTheList(read, registered);
 						return createWebAuthnCredentialRepository({ driver: tx, schema })
 							.insertCredential({ actor, ...registered, label })
 							.catch((cause: unknown) => {
@@ -492,7 +574,11 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 							...components,
 							passkeys: [
 								...components.passkeys,
-								{ credentialId: registered.credentialId, publicKey: registered.publicKey },
+								{
+									credentialId: registered.credentialId,
+									publicKey: registered.publicKey,
+									attestedAaguid: attestedAaguidOfRegistered(registered),
+								},
 							],
 						};
 					},
@@ -503,7 +589,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 
 		recovery: {
 			//the passkeys the account holds are excluded so the authenticator keeps one that still works (E-3766)
-			async start({ transaction, actor, userName }) {
+			async start({ transaction, actor, userName, authenticatorAllowlist }) {
 				const enrolled = await createWebAuthnCredentialRepository({
 					driver: transaction,
 					schema,
@@ -518,6 +604,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 					challengeBytes,
 					enrolled,
 					userVerification: "required",
+					authenticatorAllowlist,
 				});
 				return { publicKeyOptions, challengeToken };
 			},
@@ -614,13 +701,15 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 			//deletion goes through the one path that counts what is left first (E-460)
 			await sealChange(options.securityState, actor, {
 				epoch: "keep",
-				write: (tx) =>
-					removeSignInMethod({
+				write: (tx, read) => {
+					refuseRemovingTheLastUsablePasskey(read, credentialId);
+					return removeSignInMethod({
 						driver: tx,
 						schema,
 						actor,
 						removing: { method: "webauthn_credential", credentialId },
-					}),
+					});
+				},
 				after: (read) =>
 					componentsAfter(read, {
 						passkeys: read.passkeys.filter((passkey) => passkey.id !== credentialId),

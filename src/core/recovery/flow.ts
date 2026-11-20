@@ -7,10 +7,12 @@ import {
 import type { Driver } from "../db/driver.js";
 import { pepperRecoveryCode, pepperRecoveryCodeUnder } from "../factor/recovery/pepper.js";
 import { createRecoveryCodeRepository } from "../factor/recovery/repository.js";
-import type {
-	RegisteredWebAuthnCredential,
-	WebAuthnRegistrationChallenge,
-	WebAuthnService,
+import {
+	attestedAaguidOfRegistered,
+	type RegisteredWebAuthnCredential,
+	refuseAnAuthenticatorOutsideTheList,
+	type WebAuthnRegistrationChallenge,
+	type WebAuthnService,
 } from "../factor/webauthn/service.js";
 import {
 	mintArtefact,
@@ -203,6 +205,7 @@ export function startPasskeyRecovery(
 							transaction: tx,
 							actor,
 							userName: read.email ?? actor,
+							authenticatorAllowlist: read.authenticatorAllowlist,
 						});
 						return { spentCode, challenge };
 					},
@@ -256,6 +259,7 @@ async function registerUnderTheSeal(
 			moves: () => (immediate ? EVERY_WAY_IN_THAT_WAS_MAILED_OR_PENDING : {}),
 			write: async (tx, read): Promise<RegistrationWritten> => {
 				refuseUnlessTheAccountMayBeRecovered(read);
+				refuseAnAuthenticatorOutsideTheList(read, input.credential);
 				if (immediate) {
 					const moved = await replaceEveryWayIn(environment, tx, actor, () =>
 						insertRecoveredPasskey(tx, schema, { actor, ...input }),
@@ -279,6 +283,7 @@ async function registerUnderTheSeal(
 								activatesAtMicros: written.held.activatesAtMicros,
 								credentialId: input.credential.credentialId,
 								publicKey: input.credential.publicKey,
+								attestedAaguid: attestedAaguidOfRegistered(input.credential),
 								due: false,
 							},
 						}),
