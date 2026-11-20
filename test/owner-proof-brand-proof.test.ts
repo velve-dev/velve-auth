@@ -170,11 +170,17 @@ const MINTED_ONLY_IN: Readonly<Record<string, readonly string[]>> = {
 	ConsumedOAuthFlow: ["core/oauth/flow-repository.ts"],
 	ConsumedRecoveryCode: ["core/factor/recovery/repository.ts"],
 	ConsumedPendingReset: ["core/factor/pending/repository.ts"],
+	//a recovery registration learns its account from the challenge it removes (E-3765)
+	ConsumedRecoveryChallenge: ["core/factor/webauthn/challenge.ts"],
+	//a due recovery is activated for the account its own row names (E-3768)
+	DuePasskeyRecovery: ["core/recovery/repository.ts"],
 	UserId: [
 		"core/db/repositories/token.ts",
 		"core/factor/pending/repository.ts",
 		"core/factor/recovery/repository.ts",
+		"core/factor/webauthn/challenge.ts",
 		"core/oauth/flow-repository.ts",
+		"core/recovery/repository.ts",
 	],
 };
 
@@ -182,7 +188,9 @@ const EVERY_PROOF_TYPE = [
 	"Actor",
 	"ConsumedOAuthFlow",
 	"ConsumedPendingReset",
+	"ConsumedRecoveryChallenge",
 	"ConsumedRecoveryCode",
+	"DuePasskeyRecovery",
 	"OneTimeTokenRedemption",
 	"RedeemedOneTimeToken",
 	"ResolvedSession",
@@ -207,7 +215,9 @@ describe("T-OWNER-7: a proof of ownership is asserted only where it is produced 
 			"Actor",
 			"ConsumedOAuthFlow",
 			"ConsumedPendingReset",
+			"ConsumedRecoveryChallenge",
 			"ConsumedRecoveryCode",
+			"DuePasskeyRecovery",
 			"RedeemedOneTimeToken",
 			"ResolvedSession",
 		]);

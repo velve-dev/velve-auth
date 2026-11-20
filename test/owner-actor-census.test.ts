@@ -25,6 +25,7 @@ const OWNER_TABLE_DECISIONS: Readonly<Record<string, string>> = {
 	webauthn_credential: "src/core/factor/webauthn/credential-repository.ts",
 	webauthn_challenge: "src/core/factor/webauthn/challenge.ts",
 	oauth_flow: "src/core/oauth/flow-repository.ts",
+	passkey_recovery: "src/core/recovery/repository.ts",
 	import_mapping: "no repository: no module of the library reads or writes it",
 	password_reset_required: "src/core/security-state/read.ts",
 	//the session and pending repositories read the session epoch, the start probes key versions (E-3138, E-3191)
@@ -104,6 +105,9 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 		"consumed single-use row",
 	"src/core/factor/recovery/repository.ts#createRecoveryCodeRepository.consumeCode":
 		"consumed single-use row",
+	//a recovery registration learns its account from the challenge it removes (E-3765)
+	"src/core/factor/webauthn/challenge.ts#createWebAuthnChallenges.consumeNamingItsOwner":
+		"consumed single-use row",
 
 	"src/core/security-state/read.ts#securityStateReadStatement": "account the path already named",
 	"src/core/security-state/read.ts#readSecurityState": "account the path already named",
@@ -138,6 +142,9 @@ const EXCEPTIONS: Readonly<Record<string, ExceptionClass>> = {
 	"src/core/factor/webauthn/credential-repository.ts#createWebAuthnCredentialRepository.findCredentialByCredentialId":
 		"credential under verification",
 	"src/core/factor/webauthn/credential-repository.ts#createWebAuthnCredentialRepository.recordAssertion":
+		"credential under verification",
+	//a sign-in presents the passkey a due recovery holds before anything proves whose it is (E-3768)
+	"src/core/recovery/repository.ts#createPasskeyRecoveryRepository.findDueRecoveryOfCredential":
 		"credential under verification",
 
 	//the epoch and generation a new pending row binds are read for the account whose row the insert writes (E-3484)

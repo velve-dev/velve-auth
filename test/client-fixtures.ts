@@ -32,6 +32,8 @@ export function widestVelveAuth(): VelveAuth<"username_email"> {
 			relyingPartyName: "Velve Auth tests",
 			origins: [TEST_ORIGIN],
 			userVerification: "required",
+			//the five recovery rows are served only where webauthn.recovery is configured (E-3761)
+			recovery: { waitingPeriodInSeconds: () => 0 },
 		},
 	});
 }

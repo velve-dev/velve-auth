@@ -22,14 +22,14 @@ afterAll(async () => {
 /**
  * E-779: the list is a statement of 3.15 B and deliberately wider than the build, so it can only be
  * checked in one direction. That the surface never carries a namespace the list omits is checkable
- * here; that the list carries all twenty of 3.15 B is checkable only by reading it against 3.15 B.
+ * here; that the list carries all twenty-one of 3.15 B is checkable only by reading it against 3.15 B.
  */
 describe("the namespaces a plugin may not take (3.11, 3.15 B)", () => {
 	it("names every namespace the built instance carries", () => {
 		const carried = Object.keys(mounted.auth as unknown as Record<string, unknown>);
 		const reserved = new Set(SURFACE_NAMESPACES);
 
-		expect(SURFACE_NAMESPACES).toHaveLength(20);
+		expect(SURFACE_NAMESPACES).toHaveLength(21);
 		expect(carried.length).toBeGreaterThan(5);
 		expect(carried.filter((name) => !reserved.has(name))).toStrictEqual([]);
 	});
@@ -64,12 +64,14 @@ describe("the namespaces a plugin may not take (3.11, 3.15 B)", () => {
 	 * of `password`, contributing `signIn.magicLink` to the namespace the two share, and
 	 * `factor-routes` builds `factor` (E-1242). The one left is `username`, and it is absent from
 	 * this mount because the mount is in mode `email` rather than because nothing built it — which
-	 * is why the case below names it separately.
+	 * is why the case below names it separately. `passkeyRecovery` is absent from this mount because
+	 * it configures no `webauthn.recovery`, which turns the recovery on (E-3761).
 	 */
 	it("reserves more than the build carries, which is the point of it being a list", () => {
 		const carried = new Set(Object.keys(mounted.auth as unknown as Record<string, unknown>));
 
 		expect(SURFACE_NAMESPACES.filter((name) => !carried.has(name)).sort()).toStrictEqual([
+			"passkeyRecovery",
 			"username",
 		]);
 	});

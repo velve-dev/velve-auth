@@ -110,7 +110,7 @@ async function rowsOf(userId: string): Promise<string> {
 
 describe("T-OWNER-8: a foreign identifier and an invented one are one answer (S-OWNER-8)", () => {
 	it("finds the routes that take an object identifier in the widest table", () => {
-		expect(mount.auth.routes).toHaveLength(47);
+		expect(mount.auth.routes).toHaveLength(52);
 		expect(routesTakingAnId(mount.auth.routes).map((route) => route.name)).toStrictEqual([
 			"session.revoke",
 			"identity.unlink",

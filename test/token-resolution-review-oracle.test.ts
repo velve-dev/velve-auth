@@ -22,7 +22,9 @@ import { openTestConnection, type TestConnection } from "./db-postgres-connectio
 const PASSWORD = "correct-horse-battery-staple";
 const NEW_PASSWORD = "another-correct-horse-battery";
 const KEYS = testKeyProvider();
-const PURPOSES: readonly OneTimeTokenPurpose[] = [
+//the recovery link is resolved where its routes are mounted, in test/passkey-recovery-surface.test.ts (E-3762)
+type PurposeMountedHere = Exclude<OneTimeTokenPurpose, "passkey_recovery">;
+const PURPOSES: readonly PurposeMountedHere[] = [
 	"email_verify",
 	"password_reset",
 	"email_change",
@@ -83,7 +85,7 @@ async function newAccount(): Promise<Account> {
 }
 
 /** mails a link of the purpose and answers its token, with where an address change was sent */
-async function linkOf(account: Account, purpose: OneTimeTokenPurpose): Promise<string> {
+async function linkOf(account: Account, purpose: PurposeMountedHere): Promise<string> {
 	switch (purpose) {
 		case "email_verify":
 			return lastTokenMailed("email_verification", account.email);
@@ -102,7 +104,7 @@ async function linkOf(account: Account, purpose: OneTimeTokenPurpose): Promise<s
 }
 
 /** redeems the link through its route and answers whether it took effect */
-async function redeemed(purpose: OneTimeTokenPurpose, token: string): Promise<boolean> {
+async function redeemed(purpose: PurposeMountedHere, token: string): Promise<boolean> {
 	const path = {
 		email_verify: "/email/redeem-verification",
 		password_reset: "/password/redeem-reset",

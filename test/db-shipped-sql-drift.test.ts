@@ -4,6 +4,7 @@ import { migrationChecksum } from "../src/core/db/migration.js";
 import { identityModeMigration } from "../src/core/db/migrations/identity-mode.js";
 import { coreMigrations } from "../src/core/db/migrations/index.js";
 import { initialSchema } from "../src/core/db/migrations/initial-schema.js";
+import { passkeyRecoverySchema } from "../src/core/db/migrations/passkey-recovery.js";
 import { pendingPasswordResetSchema } from "../src/core/db/migrations/pending-password-reset.js";
 import { recoveryDisabledSchema } from "../src/core/db/migrations/recovery-disabled.js";
 import { securityStateSchema } from "../src/core/db/migrations/security-state.js";
@@ -30,6 +31,7 @@ const everyShippedMigration = [
 	tokenMacSchema,
 	pendingPasswordResetSchema,
 	recoveryDisabledSchema,
+	passkeyRecoverySchema,
 ];
 
 describe("the SQL the operator reads and the SQL the runner executes", () => {
@@ -43,6 +45,7 @@ describe("the SQL the operator reads and the SQL the runner executes", () => {
 			"0004_token_mac.sql",
 			"0005_pending_password_reset.sql",
 			"0006_recovery_disabled.sql",
+			"0007_passkey_recovery.sql",
 		]);
 	});
 
@@ -67,6 +70,7 @@ describe("the SQL the operator reads and the SQL the runner executes", () => {
 			["0004_token_mac.sql", tokenMacSchema.sql],
 			["0005_pending_password_reset.sql", pendingPasswordResetSchema.sql],
 			["0006_recovery_disabled.sql", recoveryDisabledSchema.sql],
+			["0007_passkey_recovery.sql", passkeyRecoverySchema.sql],
 		];
 
 		for (const [name, embedded] of pairs) {
@@ -86,7 +90,7 @@ describe("the SQL the operator reads and the SQL the runner executes", () => {
 
 	it("ships a plan whose version numbers are the file prefixes", () => {
 		expect(coreMigrations("email").map((migration) => migration.version)).toEqual([
-			1, 2, 3, 4, 5, 6,
+			1, 2, 3, 4, 5, 6, 7,
 		]);
 		expect(coreMigrations("username").map((migration) => migration.name)).toEqual([
 			"initial_schema",
@@ -95,6 +99,7 @@ describe("the SQL the operator reads and the SQL the runner executes", () => {
 			"token_mac",
 			"pending_password_reset",
 			"recovery_disabled",
+			"passkey_recovery",
 		]);
 	});
 });

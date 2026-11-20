@@ -130,7 +130,7 @@ describe("T-REDIR-7: JSON only, and no input reflected (S-REDIR-7)", () => {
 	}, 60_000);
 
 	it("sends a canary into every input of every route the widest table serves", () => {
-		expect(answers).toHaveLength(47);
+		expect(answers).toHaveLength(52);
 		expect(
 			(mount.auth.routes as readonly DeclaredRoute[]).flatMap((r) => r.input.fields).length,
 		).toBeGreaterThan(30);

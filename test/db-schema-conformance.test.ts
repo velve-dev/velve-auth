@@ -47,6 +47,18 @@ const SPECIFIED_COLUMNS: readonly string[] = [
 	"one_time_token.token_mac_key_version integer NOT NULL",
 	"one_time_token.token_sha256 bytea NOT NULL",
 	"one_time_token.user_id uuid",
+	"passkey_recovery.aaguid uuid",
+	"passkey_recovery.activates_at timestamp with time zone NOT NULL",
+	"passkey_recovery.backup_eligible boolean NOT NULL",
+	"passkey_recovery.backup_state boolean NOT NULL",
+	"passkey_recovery.created_at timestamp with time zone NOT NULL DEFAULT",
+	"passkey_recovery.credential_id bytea NOT NULL",
+	"passkey_recovery.label text",
+	"passkey_recovery.public_key bytea NOT NULL",
+	"passkey_recovery.sign_count bigint NOT NULL DEFAULT",
+	"passkey_recovery.transports text[]",
+	"passkey_recovery.user_id uuid NOT NULL",
+	"passkey_recovery.user_verified_at_registration boolean NOT NULL",
 	"password_credential.created_at timestamp with time zone NOT NULL DEFAULT",
 	"password_credential.key_version integer NOT NULL DEFAULT",
 	"password_credential.phc bytea NOT NULL",
@@ -91,6 +103,7 @@ const SPECIFIED_COLUMNS: readonly string[] = [
 	"security_state.email_verify_generation bigint NOT NULL DEFAULT",
 	"security_state.key_version integer NOT NULL",
 	"security_state.magic_link_generation bigint NOT NULL DEFAULT",
+	"security_state.passkey_recovery_generation bigint NOT NULL DEFAULT",
 	"security_state.password_reset_generation bigint NOT NULL DEFAULT",
 	"security_state.sealed_at timestamp with time zone NOT NULL DEFAULT",
 	"security_state.session_epoch bigint NOT NULL DEFAULT",
@@ -166,6 +179,8 @@ const SPECIFIED_INDEXES: readonly string[] = [
 	"CREATE INDEX one_time_token_sweep_idx ON SCHEMA.one_time_token USING btree (expires_at)",
 	"CREATE INDEX one_time_token_token_mac_key_version_idx ON SCHEMA.one_time_token USING btree (token_mac_key_version)",
 	"CREATE INDEX one_time_token_user_purpose_idx ON SCHEMA.one_time_token USING btree (user_id, purpose)",
+	"CREATE UNIQUE INDEX passkey_recovery_credential_id_unique ON SCHEMA.passkey_recovery USING btree (credential_id)",
+	"CREATE UNIQUE INDEX passkey_recovery_pkey ON SCHEMA.passkey_recovery USING btree (user_id)",
 	"CREATE UNIQUE INDEX password_credential_pkey ON SCHEMA.password_credential USING btree (user_id)",
 	"CREATE UNIQUE INDEX password_reset_required_pkey ON SCHEMA.password_reset_required USING btree (user_id)",
 	"CREATE UNIQUE INDEX pending_authentication_pkey ON SCHEMA.pending_authentication USING btree (token_sha256)",
@@ -195,7 +210,7 @@ const SPECIFIED_INDEXES: readonly string[] = [
 	"CREATE INDEX webauthn_credential_user_idx ON SCHEMA.webauthn_credential USING btree (user_id)",
 ];
 
-const SPECIFIED_TABLES = 17;
+const SPECIFIED_TABLES = 18;
 
 let migrated: MigratedSchema;
 
@@ -214,7 +229,7 @@ describe("the shipped migrations against architecture 3.2, 3.17 and 3.18", () =>
 		expect(initialSchema.sql).not.toMatch(/\bDROP\s+COLUMN\b/i);
 	});
 
-	it("leaves the schema with seventeen tables", async () => {
+	it("leaves the schema with eighteen tables", async () => {
 		const rows = await migrated.connection.query<{ present: number }>(
 			`SELECT count(*)::int AS present FROM information_schema.tables
 			 WHERE table_schema = $1 AND table_type = 'BASE TABLE'`,

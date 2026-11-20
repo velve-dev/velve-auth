@@ -81,7 +81,7 @@ describe("the resolve is a server method only (S-TOKEN-7)", () => {
 			readonly purpose: OneTimeTokenPurpose;
 		}>();
 		expectTypeOf<OneTimeTokenPurpose>().toEqualTypeOf<
-			"email_verify" | "password_reset" | "email_change" | "magic_link"
+			"email_verify" | "password_reset" | "email_change" | "magic_link" | "passkey_recovery"
 		>();
 	});
 });

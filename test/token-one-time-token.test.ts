@@ -134,11 +134,11 @@ describe("a purpose is part of the lookup, not a check afterwards (S-TOKEN-1, S-
 			}
 		}
 
-		expect(outcomes.filter((outcome) => outcome.ok)).toHaveLength(4);
+		expect(outcomes.filter((outcome) => outcome.ok)).toHaveLength(5);
 		expect(outcomes.filter((outcome) => outcome.ok).map((outcome) => outcome.minted)).toStrictEqual(
 			[...ONE_TIME_TOKEN_PURPOSES],
 		);
-		expect(outcomes.filter((outcome) => !outcome.ok)).toHaveLength(12);
+		expect(outcomes.filter((outcome) => !outcome.ok)).toHaveLength(20);
 	});
 
 	it("answers a token of the wrong purpose exactly as it answers an invented one", async () => {
@@ -230,6 +230,7 @@ describe("the deadlines of section 3.7", () => {
 			password_reset: 3_600,
 			email_change: 3_600,
 			magic_link: 600,
+			passkey_recovery: 900,
 		});
 	});
 

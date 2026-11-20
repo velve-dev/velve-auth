@@ -27,7 +27,13 @@ const EMPTY_STATE: SecurityState = {
 	sessionGeneration: 1,
 	attemptGeneration: 1,
 	attemptLast: null,
-	tokenGenerations: { email_verify: 1, password_reset: 1, email_change: 1, magic_link: 1 },
+	tokenGenerations: {
+		email_verify: 1,
+		password_reset: 1,
+		email_change: 1,
+		magic_link: 1,
+		passkey_recovery: 1,
+	},
 	tokenLast: null,
 	email: null,
 	emailVerified: false,
@@ -39,6 +45,7 @@ const EMPTY_STATE: SecurityState = {
 	passkeys: [],
 	identities: [],
 	recoveryCodes: [],
+	passkeyRecovery: null,
 };
 
 const FULL_STATE: SecurityState = {
@@ -49,7 +56,13 @@ const FULL_STATE: SecurityState = {
 	sessionGeneration: 5,
 	attemptGeneration: 6,
 	attemptLast: filled(32, 0x33),
-	tokenGenerations: { email_verify: 8, password_reset: 9, email_change: 10, magic_link: 11 },
+	tokenGenerations: {
+		email_verify: 8,
+		password_reset: 9,
+		email_change: 10,
+		magic_link: 11,
+		passkey_recovery: 12,
+	},
 	tokenLast: filled(32, 0x44),
 	email: "a@b.example",
 	emailVerified: true,
@@ -67,6 +80,11 @@ const FULL_STATE: SecurityState = {
 		{ keyVersion: 1, codeHmac: new Uint8Array([0x09]) },
 		{ keyVersion: 1, codeHmac: new Uint8Array([0x08]) },
 	],
+	passkeyRecovery: {
+		activatesAtMicros: 1_800_000_000_000_000,
+		credentialId: new Uint8Array([0xcc]),
+		publicKey: new Uint8Array([0x04, 0x05]),
+	},
 };
 
 function text(value: string): string {
@@ -125,6 +143,7 @@ describe("the canonical encoding of a security state, byte for byte", () => {
 			"0300000002" +
 			`0700000013${integer(1n)}${"020000000108"}` +
 			`0700000013${integer(1n)}${"020000000109"}`;
+		const passkeyRecovery = `070000001a${integer(1_800_000_000_000_000n)}${"0200000001cc"}${"02000000020405"}`;
 		const expected =
 			CONTEXT +
 			ACCOUNT +
@@ -148,7 +167,9 @@ describe("the canonical encoding of a security state, byte for byte", () => {
 			passkeys +
 			identities +
 			recoveryCodes +
-			TRUE;
+			TRUE +
+			integer(12n) +
+			passkeyRecovery;
 
 		expect(hex(encodeSecurityState(FULL_STATE))).toBe(expected);
 	});

@@ -85,10 +85,10 @@ describe("the webauthn configuration", () => {
 describe("the challenge purposes", () => {
 	/** The two purposes are the two ceremonies, and S-REPLAY-5 binds a challenge to the one it
 	 * was created under. A third would be a third ceremony. */
-	it("names the two ceremonies and no more", () => {
+	it("names the three ceremonies and no more", () => {
 		const purposes: readonly WebAuthnChallengePurpose[] = WEBAUTHN_CHALLENGE_PURPOSES;
 
-		expect(purposes).toEqual(["register", "authenticate"]);
+		expect(purposes).toEqual(["register", "authenticate", "recover"]);
 	});
 
 	it("builds its statements against the configured schema", () => {

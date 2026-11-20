@@ -207,6 +207,8 @@ const NAMED_EXCEPTIONS: readonly string[] = [
 	"core/auth/user.ts: S-OWNER-7, the caller is the application itself (B.3)",
 	"core/db/repositories/session.ts: S-OWNER-2, the predicate is the secret itself",
 	"core/db/repositories/token.ts: S-TOKEN-4",
+	//a recovery registration learns its account from the challenge it removes (E-3765)
+	"core/factor/webauthn/challenge.ts: S-OWNER-2, the predicate is the secret itself",
 	"core/factor/pending/repository.ts: S-OWNER-2, E-242, the predicate is the secret itself",
 	"core/factor/pending/repository.ts: S-OWNER-2, E-242, the predicate is the secret itself",
 	"core/flows/confirmation.ts: S-OWNER-2, velve.user is the owned row and id is its owner column",
