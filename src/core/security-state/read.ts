@@ -64,6 +64,7 @@ export interface SecurityStateRead {
 	readonly email: string | null;
 	readonly emailVerified: boolean;
 	readonly disabled: boolean;
+	readonly recoveryDisabled: boolean;
 	readonly password: ReadPassword | null;
 	readonly passwordResetRequired: boolean;
 	readonly totp: ReadTotp | null;
@@ -89,6 +90,7 @@ export function securityStateDocumentOf(schema: string, accountIdSql: string): s
   'email', account.email,
   'email_verified', account.email_verified_at IS NOT NULL,
   'disabled', account.disabled_at IS NOT NULL,
+  'recovery_disabled', account.recovery_disabled_at IS NOT NULL,
   'seal', CASE WHEN seal.user_id IS NULL THEN NULL ELSE jsonb_build_object(
     'version', seal.version::text,
     'digest', encode(seal.digest, 'hex'),
@@ -280,6 +282,7 @@ function stateOf(spelled: string): SecurityStateRead {
 		email: textOrNull(state.email, "address"),
 		emailVerified: flag(state.email_verified, "address verification"),
 		disabled: flag(state.disabled, "disabled state"),
+		recoveryDisabled: flag(state.recovery_disabled, "recovery switch"),
 		password: passwordOf(state.password),
 		passwordResetRequired: flag(state.password_reset_required, "reset requirement"),
 		totp: totpOf(state.totp),
@@ -342,6 +345,7 @@ export function sealedComponentsOf(read: SecurityStateRead): SealedComponents {
 		email: read.email,
 		emailVerified: read.emailVerified,
 		disabled: read.disabled,
+		recoveryDisabled: read.recoveryDisabled,
 		password:
 			read.password === null
 				? null
@@ -363,6 +367,11 @@ export function sealedComponentsOf(read: SecurityStateRead): SealedComponents {
 		identities: read.identities.map(({ provider, subject }) => ({ provider, subject })),
 		recoveryCodes: read.recoveryCodes.map(({ keyVersion, codeHmac }) => ({ keyVersion, codeHmac })),
 	};
+}
+
+//every path into an account that does not use one of its own credentials asks this of a verified read (S-INTEG-11)
+export function recoveryIsDisabledFor(read: SecurityStateRead): boolean {
+	return read.recoveryDisabled;
 }
 
 /** the state a stored seal was taken over, as the read reconstructs it */

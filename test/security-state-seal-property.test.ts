@@ -59,6 +59,7 @@ function randomState(random: Random): SecurityState {
 		email: random() < 0.2 ? null : `${asciiText(random, 1, 6)}@example`,
 		emailVerified: random() < 0.5,
 		disabled: random() < 0.5,
+		recoveryDisabled: random() < 0.5,
 		password:
 			random() < 0.3
 				? null
@@ -203,11 +204,22 @@ function generationMutated(base: SecurityState, random: Random, field: number): 
 	}
 }
 
+//the no-recovery switch is the last field of the encoding and is mutated like any other (E-3731)
+function fieldAfterTheComponentsMutated(
+	base: SecurityState,
+	random: Random,
+	field: number,
+): SecurityState {
+	return field === 20
+		? { ...base, recoveryDisabled: !base.recoveryDisabled }
+		: generationMutated(base, random, field);
+}
+
 //a mutated state must differ from its base in exactly one field
 function singleFieldMutated(base: SecurityState, random: Random): SecurityState {
-	const field = integerBelow(random, 20);
+	const field = integerBelow(random, 21);
 	if (field >= 14) {
-		return generationMutated(base, random, field);
+		return fieldAfterTheComponentsMutated(base, random, field);
 	}
 	switch (field) {
 		case 0:
@@ -314,6 +326,7 @@ function naivelyEncoded(state: SecurityState): string {
 	for (const code of state.recoveryCodes) {
 		parts.push(utf8.encode(String(code.keyVersion)), code.codeHmac);
 	}
+	parts.push(utf8.encode(state.recoveryDisabled ? "1" : "0"));
 	return parts.map((part) => Buffer.from(part).toString("hex")).join("");
 }
 

@@ -2,6 +2,7 @@ import { type Migration, PLUGIN_LEDGER_TABLE } from "../migration.js";
 import { type IdentityMode, identityModeMigration } from "./identity-mode.js";
 import { initialSchema } from "./initial-schema.js";
 import { pendingPasswordResetSchema } from "./pending-password-reset.js";
+import { recoveryDisabledSchema } from "./recovery-disabled.js";
 import { securityStateSchema } from "./security-state.js";
 import { tokenMacSchema } from "./token-mac.js";
 
@@ -12,6 +13,7 @@ export function coreMigrations(identityMode: IdentityMode): readonly Migration[]
 		securityStateSchema,
 		tokenMacSchema,
 		pendingPasswordResetSchema,
+		recoveryDisabledSchema,
 	];
 }
 

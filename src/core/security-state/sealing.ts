@@ -20,6 +20,7 @@ import {
 	FIRST_GENERATIONS,
 	type SealedComponents,
 	type SealedGenerations,
+	type TokenGenerations,
 } from "./encoding.js";
 import {
 	checkSecurityState,
@@ -54,6 +55,8 @@ export interface GenerationMoves {
 	/** a booking binds its row to the generation it moves to before the lock and so draws it itself */
 	readonly attempt?: { readonly last: Uint8Array; readonly to: number };
 	readonly token?: { readonly purpose: OneTimeTokenPurpose; readonly last: Uint8Array };
+	/** the purposes whose every outstanding one-time token the change retires, with no row that moved them */
+	readonly retire?: readonly OneTimeTokenPurpose[];
 }
 
 /** the version, session epoch and generations a change's new seal carries */
@@ -166,7 +169,29 @@ function refusingSecondRead(tx: Driver, statement: string): Driver {
 	};
 }
 
+function retiredGenerations(
+	generations: TokenGenerations,
+	retired: readonly OneTimeTokenPurpose[],
+): TokenGenerations {
+	const moved: Record<OneTimeTokenPurpose, number> = { ...generations };
+	for (const purpose of retired) {
+		moved[purpose] = drawGenerationOtherThan(moved[purpose]);
+	}
+	return moved;
+}
+
 function movedGenerations(current: SealedGenerations, moves: GenerationMoves): SealedGenerations {
+	const moved = generationsMovedByRows(current, moves);
+	return {
+		...moved,
+		tokenGenerations: retiredGenerations(moved.tokenGenerations, moves.retire ?? []),
+	};
+}
+
+function generationsMovedByRows(
+	current: SealedGenerations,
+	moves: GenerationMoves,
+): SealedGenerations {
 	return {
 		componentsVersion: current.componentsVersion,
 		sessionGeneration:
@@ -189,7 +214,12 @@ function movedGenerations(current: SealedGenerations, moves: GenerationMoves): S
 }
 
 function movesAnything(moves: GenerationMoves): boolean {
-	return moves.session === true || moves.attempt !== undefined || moves.token !== undefined;
+	return (
+		moves.session === true ||
+		moves.attempt !== undefined ||
+		moves.token !== undefined ||
+		(moves.retire ?? []).length > 0
+	);
 }
 
 function brokenVerdictOf(

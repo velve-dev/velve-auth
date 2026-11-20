@@ -32,6 +32,7 @@ const EMPTY_STATE: SecurityState = {
 	email: null,
 	emailVerified: false,
 	disabled: false,
+	recoveryDisabled: false,
 	password: null,
 	passwordResetRequired: false,
 	totp: null,
@@ -53,6 +54,7 @@ const FULL_STATE: SecurityState = {
 	email: "a@b.example",
 	emailVerified: true,
 	disabled: true,
+	recoveryDisabled: true,
 	password: { phcSha256: filled(32, 0x11), keyVersion: 2, setBySessionId: SESSION_ID },
 	passwordResetRequired: true,
 	totp: { confirmed: true, secretSha256: filled(32, 0x22), keyVersion: 3 },
@@ -145,7 +147,8 @@ describe("the canonical encoding of a security state, byte for byte", () => {
 			totp +
 			passkeys +
 			identities +
-			recoveryCodes;
+			recoveryCodes +
+			TRUE;
 
 		expect(hex(encodeSecurityState(FULL_STATE))).toBe(expected);
 	});

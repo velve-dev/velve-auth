@@ -37,6 +37,8 @@ export interface SealedComponents {
 	readonly email: string | null;
 	readonly emailVerified: boolean;
 	readonly disabled: boolean;
+	/** whether every way into the account that does not use one of its own credentials is turned off */
+	readonly recoveryDisabled: boolean;
 	readonly password: SealedPassword | null;
 	readonly passwordResetRequired: boolean;
 	readonly totp: SealedTotp | null;
@@ -206,6 +208,11 @@ function totpField(totp: SealedTotp | null): Uint8Array {
 			]);
 }
 
+//an account that never turned recovery off keeps the encoding and so the seal it had before migration 6 (E-3731)
+function recoveryDisabledField(recoveryDisabled: boolean): readonly Uint8Array[] {
+	return recoveryDisabled ? [booleanField(true)] : [];
+}
+
 //no two different states may share an encoding (S-INTEG-2)
 export function encodeSecurityState(state: SecurityState): Uint8Array<ArrayBuffer> {
 	return concatenated([
@@ -240,5 +247,6 @@ export function encodeSecurityState(state: SecurityState): Uint8Array<ArrayBuffe
 				recordField([integerField(code.keyVersion), bytesField(code.codeHmac)]),
 			),
 		),
+		...recoveryDisabledField(state.recoveryDisabled),
 	]);
 }
