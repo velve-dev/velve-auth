@@ -19506,7 +19506,7 @@ One consequence of restating in place that the rule does not mention, and that s
 **Context.** The security review of the whole library asks for a threat model and for a map of every way into an account in the specification, German with the English translation. Section 5 already models attackers class by class in each class's part (a), and 3.18 models the database writer; no place models the attackers across the classes.
 **Rejected.** (a) A new top-level section 8 after the decision log, which would put the map behind the history of the design rather than beside the requirements its guards cite. (b) Spreading the threat model over the class intros of 5.1 to 5.21, which would leave no single place that names an attacker who crosses classes, the mailbox holder or the malicious plugin. (c) Putting the map into 3.15, which describes the interface and not its guards.
 **Reason.** 5.0 precedes the classes because it says which class stands against which attacker; 5.22 follows the last class because each of its guards cites a requirement of 5.1 to 5.21. The region from 5.21 to section 6 is compared paragraph by paragraph by `test/security-state-spec-translation.test.ts`, so 5.22 is written line for line parallel in both files, with the same numbers and the same code spans in every line; the tables are produced from one list and are therefore identical in everything but the translated guard text.
-**Price.** 5.22 makes the region `test/security-state-spec-translation.test.ts` compares about five hundred lines longer, and a later edit to either file's map has to keep the line parallel. Section 5 gains two third-level headings and thirty-six fourth-level ones, one per way, and the contents line of section 5 names the two new parts.
+**Price.** 5.22 makes the region `test/security-state-spec-translation.test.ts` compares about five hundred lines longer, and a later edit to either file's map has to keep the line parallel. Section 5 gains two third-level headings and thirty-seven fourth-level ones, one per way, and the contents line of section 5 names the two new parts.
 
 <a id="e-3871"></a>
 
@@ -19515,7 +19515,7 @@ One consequence of restating in place that the rule does not mention, and that s
 
 **Context.** The requirement names a minimum list and asks for everything else found by reading `src/`. The map needed a rule for what counts, or it would either miss a path or list every route.
 **Rejected.** (a) Listing every route of 3.15 D.3, which would bury the paths that grant access under reading routes that grant none. (b) Listing only the paths that issue a session, which would leave out adding a passkey, changing the address and the recovery switch, all of which change who can get in later.
-**Reason.** A way in is every path that ends in a session, in an added way of signing in, or in a changed address, factor or recovery of an account; presenting an existing session and the pending state count, because both decide about access. Thirty-five paths follow from reading `src/core/*/routes.ts`, every method of `auth.*` that has no route, the plugin points and the maintenance steps, and a thirty-sixth, `W-EVERY-ROUTE`, holds the guards of `runRoute` that every path with a route passes, so they are written once and not thirty times. Reading routes that hand out nothing granting access, the lookups `user.find*`, `user.delete` and `maintenance.sweep` are named in 5.22 as left out, with the reason. The rename of a passkey is in `W-PASSKEY-REMOVE` because it reaches the same rows by the same owner predicate.
+**Reason.** A way in is every path that ends in a session, in an added way of signing in, or in a changed address, factor or recovery of an account; presenting an existing session and the pending state count, because both decide about access. Thirty-six paths follow from reading `src/core/*/routes.ts`, every method of `auth.*` that has no route, the plugin points and the maintenance steps, and a thirty-seventh, `W-EVERY-ROUTE`, holds the guards of `runRoute` that every path with a route passes, so they are written once and not thirty times. Reading routes that hand out nothing granting access, the lookups `user.find*`, `user.delete` and `maintenance.sweep` are named in 5.22 as left out, with the reason. The rename of a passkey is in `W-PASSKEY-REMOVE` because it reaches the same rows by the same owner predicate.
 **Price.** The boundary is a judgement, and a path judged to grant no access is not in the map; 5.22 names what was left out so that the judgement can be checked. The migration module of section 4 is not built in `src/`, so no import path is mapped.
 
 <a id="e-3872"></a>
@@ -19545,7 +19545,7 @@ One consequence of restating in place that the rule does not mention, and that s
 
 **Context.** Many test files exercise a guard on the legitimate path and assert a refusal elsewhere in the same file; naming such a file twice would make the map look complete.
 **Rejected.** Filling the attack column from the requirement a test cites, which would name a file for the requirement and not for the guard.
-**Reason.** A file is named in the attack column only where its test titles show the attacker's attempt refused — a foreign identifier, a replayed or forged token, a parallel request, a broken seal, a planted row — against that guard; where no title showed it, the cell says `— none —`. Of 234 guards, 57 carry no attack test and 20 no test of the legitimate path. None of the named attack tests was checked by removing its guard; that is step 3 of the review and belongs to the attack-test writers.
+**Reason.** A file is named in the attack column only where its test titles show the attacker's attempt refused — a foreign identifier, a replayed or forged token, a parallel request, a broken seal, a planted row — against that guard; where no title showed it, the cell says `— none —`. Of 247 guards, 61 carry no attack test and 23 no test of the legitimate path. None of the named attack tests was checked by removing its guard; that is step 3 of the review and belongs to the attack-test writers.
 **Price.** The choice rests on reading test titles and, where unclear, the test body; a file named here can still prove less than its title says, which only removing the guard shows.
 
 <a id="e-3875"></a>
@@ -19557,3 +19557,53 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Counting both as open gaps, which would contradict 3.15 B.1 and 3.6, where the specification decided them: a passkey with user verification is possession and verification in one, and the mailbox is a first factor.
 **Reason.** 5.0 names them as deliberate positions so that a reader of the map does not take them for oversights and the maintainer can overrule them in one place. The recovery-code reset is not one of them: 3.6 holds every mailed reset back for a second factor, and the code path that skips it on an account with TOTP is recorded as O-2.
 **Price.** If the maintainer reads the first risk literally, both positions become gaps and need a fix of their own; this entry records that the map did not decide that.
+
+<a id="e-3876"></a>
+
+### An account someone else created at the victim's address is a way in of its own, and what its confirmation leaves is O-10
+`E-3876` · security-review · map content, open until the pre-hijack fix
+
+**Context.** The independent review of the map found a way in that 5.22 did not name. Someone who knows the victim's address creates the account first — with `POST /sign-up/passwordless`, with a password, or through a provider whose address the library stores unconfirmed — and receives a session. When the owner of the mailbox later confirms the address, `confirmUnderTheLock` deletes a password set in another session and, only then, every session (S-LINK-4, L-12, E-608); without such a password it deletes nothing, and in no case does it remove the creator's passkeys, identities, TOTP or recovery codes. E-3871's rule should have caught it: the confirmation is a path that ends in a changed address state of an account another person can still enter. It was missed because the map read each route as a path of its own and not the sequence of two people on one account.
+**Rejected.** (a) Keeping the reviewer's failing test on this branch, which would turn a finding into a red gate here; the orchestrator moved it to the fix group for pre-hijacking. (b) Leaving the case to W-SIGN-UP, W-EMAIL-VERIFY and W-MAGIC-LINK, whose S-LINK-4 rows read as if the first confirmation closed the account to everybody else.
+**Reason.** `W-PRE-CREATED-ACCOUNT` names the creating routes and the confirming ones, lists the guards as they stand — the password removal of S-LINK-4 and the one statement that decides which confirmation is the first — and cites the new open gap O-10 for everything the confirmation leaves. The S-LINK-4 rows of W-MAGIC-LINK and W-EMAIL-VERIFY now say that the confirmation deletes the password and only then the sessions, and nothing else. The 5.0 table names the creation of an account at the victim's address against the outsider with an account of their own.
+**Price.** The map now holds a way whose only real guard is missing; the attack test for O-10 lives with the fix group and not here, so the row says `— none —` until that group lands.
+
+<a id="e-3877"></a>
+
+### Plugin migrations, migrate and FrozenContext.ownTables belong to W-PLUGIN
+`E-3877` · security-review · map content, settled
+
+**Context.** The review found that `VelvePlugin.migrations` runs plugin SQL from `migrate()` on the library's own connection, and that W-PLUGIN named neither the field nor the method, though the guards stand in `src/core/db/migration-runner.ts`. Its routes line also left out `FrozenContext.ownTables`, whose guard row it had.
+**Rejected.** Listing `migrate` among what does not belong, which would hide a path on which plugin SQL runs with more rights than a request ever has.
+**Reason.** W-PLUGIN now names `VelvePlugin.migrations`, `migrate` and `FrozenContext.ownTables` and carries six guards of the migration runner: only declared relations touched, no row written into a core table, no function, trigger or rule left behind, exactly the declared tables with the plugin's prefix, no connection whose role can outrun the measurement, and an applied migration whose text changed refused. The last cites no requirement, since none of section 5 states it.
+**Price.** The migration runner's guards are judged by what a migration did and not by parsing it, as E-637 decided; the map names the six points where that judgement refuses and not the catalogue reads behind them.
+
+<a id="e-3878"></a>
+
+### The passkey sign-in activates a due recovery before it verifies the assertion, and the map says so
+`E-3878` · security-review · map content, open until the activation fix
+
+**Context.** The review found that `findOrActivateCredential`, called from `signIn.passkey.finish`, activates a recovery whose waiting period has ended before the assertion is verified. The activation removes every other way in and revokes every session. W-PASSKEY-RECOVERY did not list that route and W-PASSKEY-SIGNIN had no guard for it.
+**Rejected.** Writing the guard as the ordering ought to be, which would map an intention and not the code.
+**Reason.** W-PASSKEY-SIGNIN carries the activation as a guard in the wording of the code as it stands — under the account lock, only while still due, before the assertion is verified — and W-PASSKEY-RECOVERY names `POST /sign-in/passkey/finish` and `signIn.passkey.finish` among its routes and the activation from it in its guard. W-PASSKEY-RECOVERY also names its five `passkeyRecovery.*` server methods, as every other way names its own.
+**Price.** A fix group will move the activation after the verification; until then anyone who presents the held passkey's credential id after the waiting period triggers the activation whether or not their assertion verifies, and the map records that rather than hiding it.
+
+<a id="e-3879"></a>
+
+### map.json carries each way's title and routes, and the test refuses a row it cannot read
+`E-3879` · security-review · tooling, settled
+
+**Context.** The review planted three faults in the English section — a route removed from a routes line, a changed title and a guard row whose enforcement cell is no path under `src/` — and `test/attacks/map.test.ts` passed all three, because map.json carried no routes, the titles and routes lines were never compared, and a row the parser could not read was skipped silently.
+**Rejected.** Comparing the German title with the English one, which cannot be done without a translation table; the German title is held only by the heading count and the order of the ways.
+**Reason.** Every way in map.json now carries `routes`. The test compares the English title and the routes line of both files with map.json, and it reports every table row under a way that is neither the header, the rule nor a guard whose enforcement cell is `src/…:function`. Each of the three faults is planted in a copy of the section and reported, and the section as it stands reports nothing, so the reports are the plants'.
+**Price.** A German title can still drift from the English one without a test noticing; a reader comparing the two headings sees it.
+
+<a id="e-3880"></a>
+
+### Requirement and test cells corrected after the review, and the gaps O-3 and REDIR placed
+`E-3880` · security-review · map content, settled
+
+**Context.** The review found requirement cells that cite a requirement about something else, test cells that break E-3874's own rule, a missing guard on W-OAUTH-AUTO-LINK, recovery-code generation missing from O-3, and the 5.0 table naming every class of section 5 but REDIR.
+**Rejected.** Finding the nearest requirement for every corrected cell, which would repeat the mistake that put them there.
+**Reason.** S-LINK-6 on the trusted-provider confirmation, S-ENUM-2 on the TOTP concealment, S-DOS-2 on the KDF before the reset token is spent, S-REST-3 on the replacement of a recovery-code set and S-REPLAY-4 on the code TOTP removal demands each named something else; those cells now say `— none —`. The recovery-code reset on a disabled account cites L-4 instead of S-OWNER-8, and the order of the automatic link's address lookup S-LINK-2 instead of S-LINK-1. The pending budget on the passkey second factor names no attack test, since the one named spent the budget with TOTP and recovery codes only; the pipeline's freshness guard names the HTTP test of `password.set` instead of a test of the session service; the passkey owner guard names `test/webauthn-authentication.test.ts`, whose case refuses another account's authenticator. W-OAUTH-AUTO-LINK gains the disabled account that `theJoinableAccountUnderItsLock` refuses, O-3 and W-RECOVERY-CODES-GENERATE name recovery-code generation, and the outsider without an account in 5.0 meets REDIR through the redirect target of a sign-in flow.
+**Price.** Sixteen guards now cite no requirement; each is a rule of 3.15 that section 5 does not state, and a later specification fix may give them one.
