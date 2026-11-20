@@ -3556,7 +3556,7 @@ as a well-formed one that was never issued.
 
 ### `ONE_TIME_TOKEN_PURPOSES` and `ONE_TIME_TOKEN_LIFETIME_SECONDS`
 
-The four purposes and the deadline each one carries (section 3.7).
+The five purposes and the deadline each one carries (section 3.7).
 
 | Purpose | Deadline |
 |---|---|
@@ -3564,6 +3564,7 @@ The four purposes and the deadline each one carries (section 3.7).
 | `password_reset` | 1 hour |
 | `email_change` | 1 hour |
 | `magic_link` | 10 minutes |
+| `passkey_recovery` | 15 minutes |
 
 A deadline is not configurable and is not a parameter of any function here. The
 purpose decides it, so a caller cannot mint a reset token that outlives the hour.
@@ -5430,6 +5431,7 @@ Fixed per purpose, from architecture 3.7, and **not configurable**.
 | `password_reset` | 1 hour | `password.requestReset` |
 | `email_change` | 1 hour | `email.requestChange` |
 | `magic_link` | 10 minutes | `signIn.magicLink.request` |
+| `passkey_recovery` | 15 minutes | `passkeyRecovery.request` — see [Recovery to a new passkey](#recovery-to-a-new-passkey) |
 
 Requesting an artefact deletes the account's previous artefact of the same
 purpose in the same transaction, so a user who clicks "send it again" invalidates
@@ -6189,6 +6191,7 @@ nothing else would tell you.
 | `plugin_route_reads_a_core_cookie` | a plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` |
 | `route_namespace_conflict` | two route names fold onto the same object path, so one server method would shadow the other |
 | `security_state_sealing_unknown` | `securityState` is given and its `sealing` is neither `"required"` nor `"migrating"` (S-INTEG-1, E-3112) |
+| `passkey_recovery_unusable` | `webauthn.recovery` is given and is not an object carrying a function `waitingPeriodInSeconds`, or the identity mode is `"username"`, where no address begins a recovery (E-3761) |
 
 #### A route conflict names both contributors
 
