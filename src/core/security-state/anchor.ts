@@ -69,10 +69,9 @@ export async function consultAnchors(
 		anchors.map((anchor) =>
 			Promise.resolve()
 				.then(() => anchor.minimumVersion({ userId }))
-				.then(
-					(answer: unknown) => decodeAnchorFloor(answer),
-					() => "malformed" as const,
-				),
+				.then((answer: unknown) => decodeAnchorFloor(answer))
+				//a floor that throws while it is read must be the same unreadable answer (E-3946)
+				.catch(() => "malformed" as const),
 		),
 	);
 	const floors: (DecodedFloor | null)[] = [];

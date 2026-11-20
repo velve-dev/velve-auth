@@ -3,6 +3,7 @@ import {
 	compareWithAnchors,
 	consultAnchors,
 	type SecurityStateAnchorPort,
+	type SecurityStateFloor,
 } from "../src/core/security-state/anchor.js";
 
 /**
@@ -14,7 +15,7 @@ import {
 
 function portAnswering(answer: () => unknown): SecurityStateAnchorPort {
 	return {
-		minimumVersion: () => Promise.resolve(answer()),
+		minimumVersion: () => Promise.resolve(answer() as SecurityStateFloor),
 		recordSeal: () => Promise.resolve(),
 	};
 }
