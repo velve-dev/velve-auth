@@ -3,6 +3,7 @@ import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
 import { isRowIdentifier } from "../db/row-identifier.js";
 import type { KeyProvider } from "../keys/provider.js";
+import type { OneTimeTokenPurpose } from "../token/purpose.js";
 import type { SealedComponents, SealedGenerations, SecurityState } from "./encoding.js";
 import { type SealVerdict, verifySeal } from "./seal.js";
 
@@ -372,6 +373,20 @@ export function sealedComponentsOf(read: SecurityStateRead): SealedComponents {
 //every path into an account that does not use one of its own credentials asks this of a verified read (S-INTEG-11)
 export function recoveryIsDisabledFor(read: SecurityStateRead): boolean {
 	return read.recoveryDisabled;
+}
+
+/** the purposes of the mailed links that lead into an account, which turning recovery off retires and refuses */
+export const LINKS_INTO_THE_ACCOUNT: readonly OneTimeTokenPurpose[] = [
+	"password_reset",
+	"magic_link",
+];
+
+/** whether a verified read refuses a link of this purpose because the account turned recovery off */
+export function recoveryRefusesTheLink(
+	read: SecurityStateRead,
+	purpose: OneTimeTokenPurpose,
+): boolean {
+	return recoveryIsDisabledFor(read) && LINKS_INTO_THE_ACCOUNT.includes(purpose);
 }
 
 /** the state a stored seal was taken over, as the read reconstructs it */

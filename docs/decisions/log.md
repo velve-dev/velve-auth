@@ -18777,3 +18777,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Editing them, which §5 forbids; leaving them unrecorded.
 **Reason.** (a) `oneTimeToken.resolve` in `src/core/token/resolution.ts` names account and purpose only for a token a redemption would act on (S-TOKEN-7), and checks the address, the generation and `disabled`. A link minted before the switch went on has left its generation and resolves to `null`; a link minted in the window between a request's lookup and the switch resolves to its account although its redemption refuses it with `recovery_disabled_on_token_redemption`. The fix is `!recoveryIsDisabledFor(read)` for the two purposes `password_reset` and `magic_link`. (b) `maintenance.resealSecurityState` in `src/core/auth/security-state-maintenance.ts` returns the `SealedSecurityState` it ratified, "darunter ob das Konto gesperrt ist", and has no field for the switch, so an administrator resealing after a writer cleared it does not see that the reseal ratified recovery being on. The fix is a `recoveryDisabled` field. (c) `DOCUMENTATION.md` counts 25 codes in its server-call section and in *Error codes*, whose table lacks `passkey_limit_reached` and `identity_limit_reached` as well as `recovery_disabled`.
 **Price.** Until a follow-up, (a) answers a resolve inconsistently with its redemption inside a window a request must hit, and (b) leaves the reseal's report one component short.
+
+<a id="e-3742"></a>
+
+### A switched-off account's links resolve to nothing
+`E-3742` · no-recovery-switch · one-time tokens, settled
+
+**Context.** E-3741 (a) handed off that `oneTimeToken.resolve` named the account of a reset or magic link minted in the window before the switch went on, although the redemption refuses it with `recovery_disabled_on_token_redemption`; S-TOKEN-7 has the resolve name an account only for a token a redemption would act on. The orchestrator extended this feature's files by `src/core/token/resolution.ts`.
+**Rejected.** Leaving the resolve as it was and documenting the window, which keeps a resolve that disagrees with its redemption.
+**Reason.** The resolve asks the same verified read with `recoveryRefusesTheLink(read, purpose)`, which `src/core/security-state/read.ts` now holds beside `recoveryIsDisabledFor` together with the two purposes the switch retires, so the resolve, the redemption and the switch name the same purposes from one list. A link of another purpose, the address confirmation's, still resolves. S-ENUM-9 and 3.18 say so in both languages; `test/no-recovery-switch-resolve.test.ts` fails when the condition is removed.
+**Price.** None beyond the one condition; the resolve reads nothing it did not read before.

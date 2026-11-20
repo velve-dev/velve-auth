@@ -7,6 +7,7 @@ import { FIRST_GENERATIONS } from "../security-state/encoding.js";
 import {
 	checkSecurityState,
 	readSecurityState,
+	recoveryRefusesTheLink,
 	type SecurityStateRead,
 } from "../security-state/read.js";
 import type { SecurityStateRuntime } from "../security-state/runtime.js";
@@ -169,7 +170,9 @@ export function createOneTimeTokenResolution(
 		const answersAsRedemptionWould =
 			addressStillTheAccounts(options, userId, row, read) &&
 			generationStillTheAccounts(options, userId, row, read, tokenSha256) &&
-			!read.disabled;
+			!read.disabled &&
+			//a link the redemption refuses while recovery is off resolves to nothing either (S-ENUM-9)
+			!recoveryRefusesTheLink(read, row.purpose);
 		return answersAsRedemptionWould ? { userId, purpose: row.purpose } : null;
 	};
 }

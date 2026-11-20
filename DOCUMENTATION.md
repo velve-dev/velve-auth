@@ -10827,6 +10827,7 @@ retires any link minted since, and turning it off again writes no new seal.
 | `signIn.magicLink.request`, `POST /sign-in/magic-link/request` | the same, with `requested: "magic_link"` |
 | `password.redeemReset`, `POST /password/redeem-reset` | `400 invalid_token`, as for an unknown token; the link is not spent and the password does not change |
 | `signIn.magicLink.redeem`, `POST /sign-in/magic-link/redeem` | `400 invalid_token`, as for an unknown token; no session, the link is not spent |
+| `auth.oneTimeToken.resolve` | `null` for a reset link or magic link of the account, as for an unknown token, because its redemption refuses it; a link of another purpose resolves as before |
 | completing a reset held back for a second factor ([Password reset with a second factor](#password-reset-with-a-second-factor)) | `401 invalid_pending_authentication`; the old password stays, no session is issued |
 | `factor.recovery.verify`, `POST /factor/recovery/verify` | `401 invalid_recovery_code`, as for a wrong code — the account has no codes |
 | `password.redeemResetWithRecoveryCode`, `POST /password/redeem-reset-with-recovery-code` | `401 invalid_recovery_code`, as for a wrong code |

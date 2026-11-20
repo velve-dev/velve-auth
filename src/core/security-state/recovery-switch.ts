@@ -3,12 +3,9 @@ import { actorOfRecoverySwitch } from "../db/actor.js";
 import { isRowIdentifier } from "../db/row-identifier.js";
 import { createRecoveryCodeRepository } from "../factor/recovery/repository.js";
 import { VelveError } from "../http/error-map.js";
-import type { OneTimeTokenPurpose } from "../token/purpose.js";
+import { LINKS_INTO_THE_ACCOUNT } from "./read.js";
 import { type SecurityStateRuntime, sealChange } from "./runtime.js";
 import { componentsAfter } from "./sealing.js";
-
-/** the purposes of the mailed links that lead into an account, which turning recovery off retires */
-const LINKS_INTO_THE_ACCOUNT: readonly OneTimeTokenPurpose[] = ["password_reset", "magic_link"];
 
 //turning recovery off deletes the codes and retires every mailed link in the one sealing transaction (S-INTEG-11)
 export async function setRecoveryDisabled(
