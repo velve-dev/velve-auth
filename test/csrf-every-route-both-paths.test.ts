@@ -145,15 +145,18 @@ async function serialised(response: Response): Promise<string> {
 }
 
 /**
- * Two challenges are never equal: each carries 32 fresh random bytes and the MAC over them (3.9).
- * Only those two fields are masked, so the status, the headers, the version, the difficulty and
- * the expiry of the two answers are still compared byte for byte (E-3670).
+ * Two challenges are never equal: each carries 32 fresh random bytes and the MAC over them (3.9),
+ * and two calls a second apart carry two expiries. Only those three fields are masked, so the
+ * status, the headers, the key version and the difficulty of the two answers are still compared
+ * byte for byte (E-3670).
  */
 function withoutFreshRandomness(answer: string): string {
-	return answer.replace(
-		/("challenge":"\d+\.\d+\.\d+)\.[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}"/,
-		'$1.<value>.<mac>"',
-	);
+	return answer
+		.replace(
+			/("challenge":"\d+\.\d+)\.\d+\.[A-Za-z0-9_-]{43}\.[A-Za-z0-9_-]{43}"/,
+			'$1.<expiry>.<value>.<mac>"',
+		)
+		.replace(/("expiresAt":")[^"]+"/, '$1<expiry>"');
 }
 
 async function codeOfServerCall(route: AnyRoute, origin: string | null): Promise<string> {

@@ -1,5 +1,6 @@
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { isUsableBucketRule } from "../http/rate-limit.js";
+import type { RouteMetadata } from "../http/route.js";
 import { KEY_PURPOSES, type KeyProvider, type KeyPurpose } from "../keys/index.js";
 import { isStorableKeyVersion } from "../keys/key-version.js";
 import { isKeyShaped, keyTakesMac, sameKeyFingerprintOf } from "../keys/mac.js";
@@ -331,6 +332,48 @@ function keySharedByTwoPurposes(first: KeyPurpose, second: KeyPurpose): VelveSta
 	const refusal = new VelveStartupError("keys_unusable");
 	refusal.message = `keys answered ${first} and ${second} with the same key, so a value taken for one purpose would verify for the other`;
 	return refusal;
+}
+
+//a proof of work whose challenges cannot be signed would answer every guarded call with a 500 (E-3677)
+export async function assertCookieSigTakesMac(
+	keys: KeyProvider,
+	proofOfWork: object | undefined,
+): Promise<void> {
+	if (proofOfWork === undefined) {
+		return;
+	}
+	const current = await keys.current("cookie-sig").catch(() => null);
+	if (current === null || !(await keyTakesMac(current.key))) {
+		const refusal = new VelveStartupError("keys_unusable");
+		refusal.message =
+			"keys answered cookie-sig with a key that cannot take HMAC-SHA256, and rateLimit.proofOfWork expands its challenge key from it";
+		throw refusal;
+	}
+}
+
+//the call envelope reads the field while the proof of work is configured, so no route may also declare it (E-3677)
+export function assertNoRouteDeclaresTheSolutionField(
+	routes: readonly RouteMetadata[],
+	proofOfWork: object | undefined,
+): void {
+	if (proofOfWork === undefined) {
+		return;
+	}
+	for (const route of routes) {
+		if (inputFieldsOf(route).includes(PROOF_OF_WORK_CALL_FIELD)) {
+			const refusal = new VelveStartupError("proof_of_work_unusable");
+			refusal.message = `route ${route.name} declares an input field ${PROOF_OF_WORK_CALL_FIELD}, which a server call carries the solution in while rateLimit.proofOfWork is configured`;
+			throw refusal;
+		}
+	}
+}
+
+const PROOF_OF_WORK_CALL_FIELD = "proofOfWork";
+
+//every route defineRoute built carries its validator, which the metadata type leaves out
+function inputFieldsOf(route: RouteMetadata): readonly string[] {
+	const input = (route as { readonly input?: { readonly fields?: unknown } }).input;
+	return Array.isArray(input?.fields) ? (input.fields as readonly string[]) : [];
 }
 
 //a key provider that answers for no purpose protects nothing and must refuse the start

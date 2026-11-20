@@ -92,7 +92,9 @@ import {
 } from "./security-state-maintenance.js";
 import {
 	assertConfigurationIsStartable,
+	assertCookieSigTakesMac,
 	assertKeysAnswerForEveryPurpose,
+	assertNoRouteDeclaresTheSolutionField,
 	type RouteConflict,
 	THE_CORE,
 	VelveStartupError,
@@ -592,6 +594,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const ownerOfRoute = (route: RouteMetadata): string => pluginRuntime.ownerOf(route);
 	assertNoCoreRouteIsOverwritten(contributedRoutes, coreRoutes, ownerOfRoute);
 	assertNoPluginTakesACoreNamespace(pluginRuntime.plugins, contributedRoutes, ownerOfRoute);
+	assertNoRouteDeclaresTheSolutionField([...coreRoutes, ...contributedRoutes], proofOfWork);
 
 	const environment: HttpEnvironment = {
 		routes: [...coreRoutes, ...contributedRoutes],
@@ -641,6 +644,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		async migrate(): Promise<MigrationReport> {
 			//a start the keys refuse must have written nothing to the schema (E-3374)
 			await assertKeysAnswerForEveryPurpose(config.keys);
+			await assertCookieSigTakesMac(config.keys, proofOfWork);
 			if (await schemaHoldsTheSealTable(driver, schema)) {
 				await assertStoredIntegrityKeysTakeMac({ driver, keys: config.keys, schema });
 			}

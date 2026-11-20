@@ -121,7 +121,7 @@ export function createProofOfWorkCalls(
 		return solvedFor(routeName).catch(() => null);
 	}
 
-	//a prepared solution is used once and only before its challenge expires
+	//a prepared solution must never be sent twice nor after the server has stopped accepting it
 	async function takePrepared(routeName: string): Promise<string | null> {
 		const waiting = prepared.get(routeName);
 		if (waiting === undefined) {

@@ -142,7 +142,6 @@ const SERVER_CALL_FIELDS = new Set<string>([
 	"oauthStateToken",
 	"ipAddress",
 	"userAgent",
-	"proofOfWork",
 ]);
 
 //an input field named like the call envelope would be stripped directly but kept over HTTP

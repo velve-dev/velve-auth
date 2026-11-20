@@ -1433,8 +1433,8 @@ handler.
 Five declaration mistakes are start errors rather than request-time surprises: a
 path that is not absolute or carries an empty or trailing segment; `freshness:
 "required"` without `caller: "session"`; `caller: "pending"` with
-`pendingCookie: "hidden"`; an input field named like one of the seven
-`ServerCallFields`; and, when the handler is built, a route table with a
+`pendingCookie: "hidden"`; an input field named like one of the six
+`ServerCallFields` other than `proofOfWork`; and, when the handler is built, a route table with a
 duplicate name or with two routes answering the same folded path.
 
 `readsPendingCookie(route)` is the predicate behind that field —
@@ -1609,9 +1609,12 @@ seven fields, and only these seven:
 | `userAgent` | `string \| null?` | Put on `RequestContext` and nothing else. Whatever stores it is obliged to truncate it by default (L-10); this layer neither stores nor shortens it. |
 | `proofOfWork` | `ProofOfWorkSolution?` | `{ challenge, nonce }`, what the `Velve-Proof-Of-Work` header would have carried; read only where the route asks for a [proof of work](#proof-of-work). A value that is no such pair counts as presented and malformed. |
 
-These seven names are reserved: a route declaring an input field of the same name
-is a start error, because the envelope would swallow it here and the HTTP path
-would keep it.
+The first six names are reserved: a route declaring an input field of the same
+name is a start error, because the envelope would swallow it here and the HTTP
+path would keep it. `proofOfWork` is the envelope's only while
+`rateLimit.proofOfWork` is configured: without it the field is passed to a
+route that declares it like any other input, and ignored by one that does not; and with it a route declaring an input field
+`proofOfWork` refuses the start with `proof_of_work_unusable` (E-3677).
 
 The method throws where the client returns a result (3.15 E), and it throws
 exactly what a request would have answered: a `VelveError` carrying one of the
@@ -6218,7 +6221,7 @@ nothing else would tell you.
 | `route_namespace_conflict` | two route names fold onto the same object path, so one server method would shadow the other |
 | `security_state_sealing_unknown` | `securityState` is given and its `sealing` is neither `"required"` nor `"migrating"` (S-INTEG-1, E-3112) |
 | `passkey_recovery_unusable` | `webauthn.recovery` is given and is not an object carrying a function `waitingPeriodInSeconds`, or the identity mode is `"username"`, where no address begins a recovery (E-3761) |
-| `proof_of_work_unusable` | `rateLimit.proofOfWork` is given and is not an object carrying the functions `difficulty` and `signInFailuresBeforeProof` (E-3662) |
+| `proof_of_work_unusable` | `rateLimit.proofOfWork` is given and is not an object carrying the functions `difficulty` and `signInFailuresBeforeProof` (E-3662), or it is given and a route declares an input field `proofOfWork` (E-3677) |
 
 #### A route conflict names both contributors
 
@@ -10667,7 +10670,13 @@ A browser's WebCrypto runs at a similar order of magnitude and a phone slower;
 12 to 16 bits is a sensible range for a form the user is still filling in.
 
 A `rateLimit.proofOfWork` that is not an object carrying both functions refuses the start
-with `VelveStartupError` code **`proof_of_work_unusable`**.
+with `VelveStartupError` code **`proof_of_work_unusable`**, and so does a route —
+a plugin's included — that declares an input field `proofOfWork`, the field a
+direct server call carries the solution in while the proof of work is
+configured. With the proof of work configured, `migrate()` also refuses with
+**`keys_unusable`** when the key provider answers `cookie-sig` with a key that
+cannot take HMAC-SHA256, since the challenge key is expanded from it; without
+the check every challenge and every guarded call would answer `500` (E-3677).
 
 ### Where it is asked for
 

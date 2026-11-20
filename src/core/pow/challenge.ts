@@ -22,7 +22,7 @@ export const PROOF_OF_WORK_LIFETIME_IN_SECONDS = 600;
 const VALUE_BYTES = 32;
 const MILLISECONDS_IN_A_SECOND = 1000;
 
-//a header longer than any challenge the route hands out is refused before it is parsed
+//a header longer than any challenge the route hands out must cost no regular expression
 const LONGEST_SOLUTION = 160;
 
 const SOLUTION =
@@ -124,7 +124,7 @@ interface ProofOfWorkChallenges {
 }
 
 export function createProofOfWorkChallenges(keys: KeyProvider): ProofOfWorkChallenges {
-	//a provider that hands back the same key object is expanded once per key and not once per call
+	//a challenge must cost two hmacs and not a third for a key the ring has already expanded
 	const expandedKeys = new WeakMap<CryptoKey, Promise<CryptoKey>>();
 	const challengeKeyOf = (purposeKey: CryptoKey): Promise<CryptoKey> => {
 		const cached = expandedKeys.get(purposeKey);
@@ -171,7 +171,7 @@ export function createProofOfWorkChallenges(keys: KeyProvider): ProofOfWorkChall
 				parsed.value,
 			].join(".");
 			const expected = await macOf(await challengeKeyOf(purposeKey), route, unsigned);
-			//a challenge for another route carries a mac over another route name and fails here (S-RATE-9)
+			//the route a challenge was issued for must be the route it is spent on (S-RATE-9)
 			if (!equalsInConstantTime(utf8.encode(encodeBase64Url(expected)), utf8.encode(parsed.mac))) {
 				return { outcome: "refused", reason: "proof_of_work_forged" };
 			}
