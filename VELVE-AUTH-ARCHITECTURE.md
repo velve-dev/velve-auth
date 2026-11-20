@@ -57,7 +57,7 @@ Velve Auth is a sign-in library for TypeScript and PostgreSQL that runs inside t
 2. Language and runtime — the assessment, the measurements, the recommendation
 3. Target architecture — package structure, schema, sessions, verification path, identity, second factor, tokens, keys, rate limiting, third-party providers, plugins, public interface, error handling, decided gaps, integrity of the security state
 4. Migration module — five sources, per source schema, mapping, hash adoption, losses, follow-up work
-5. Security requirements — 149 requirements in nineteen error classes, with a coverage table of the 33 advisories
+5. Security requirements — 149 requirements in nineteen error classes, with a coverage table of the 33 advisories, the threat model and the map of the ways into an account
 6. Test plan — 153 test cases with thresholds fixed in advance
 7. Decision log — E-01 to E-46, the initial stock for the case study
 
@@ -4525,6 +4525,48 @@ The design is **not** changed here. Where the elaboration exposed a gap in the t
 
 ---
 
+### 5.0 Threat model
+
+The library protects one answer: **who is signed in.** Nobody is to get into an account that is not theirs — to obtain no session, to add no way of signing in and to change neither the address nor the factors nor the recovery of a foreign account —, and nobody is to read a secret or a piece of personal data the library holds that does not belong to them. The error classes 5.1 to 5.21 each describe one mechanical fault; this section describes the attackers across them, names which classes stand against which attacker, and names what is open. Section 5.22 assigns every way into an account its guards.
+
+What is open carries an identifier `O-<n>` and no `S-` identifier as long as no test checks the promise; the repair turns it into a requirement of the fitting class with a test case in section 6.
+
+| Attacker | What they hold or can do | What stops them | Open |
+|---|---|---|---|
+| Outsider without an account | calls every route, from their own browser or through a foreign page in the victim's browser; tries addresses and names; guesses tokens and codes; floods; sends requests at the same time | TIM, ENUM, RAND, REPLAY, RATE, DOS, CSRF, COOKIE, RACE | O-6 |
+| Outsider with an account of their own | knows the identifiers, tokens and links of their own account and holds an account of their own at a provider; puts in foreign identifiers, carries a token into another purpose, plants their session on the victim | OWNER, TOKEN, LINK, FIX, CSRF | O-5 |
+| Holder of the victim's mailbox | receives every mailed link: magic link, reset, confirmation, address change, recovery to a new passkey | FIX (second factor before every mailed reset), ENUM, LINK, INTEG (waiting period of the recovery) | O-9 |
+| Holder of a stolen secret | holds an old session, a recovery code, the password or a copied link of the victim | CACHE, FIX, REPLAY, RACE | O-1, O-2, O-3 |
+| Malicious or careless application, malicious plugin | calls methods without a route without an authorisation decision of its own; a plugin registers hooks, routes, its own SQL and an anchor | OWNER, CSRF, CACHE, DEFAULT | O-4 |
+| Reader of the database | holds a `pg_dump`, a backup or a replica | REST, KEY | — |
+| Writer on the database without the root key | inserts, changes and deletes rows, plays old rows back | INTEG | the named limits of 3.18 |
+| Holder of the root key | has everything | — | outside the model |
+| Supply chain and published package | a dependency, the published package, the release workflow | the gate checks and the fixed dependencies of the rules | O-7 |
+
+An application that calls a method without a route — `user.*`, `maintenance.*`, `oneTimeToken.resolve` — has taken its authorisation decision beforehand (3.15 B.3, B.8); the library cannot check that decision, and it does not protect against an application that does not take it. What the library takes off its hands is that the direct call of a method with a route also passes the origin check, the rate limit and the hooks (S-CSRF-1).
+
+**Deliberate positions.** Not counted as open, because 3.15 B.1 and 3.6 decided them: a passkey sign-in yields a session with `webauthn` alone, also when the account has a password and TOTP, because a passkey with user verification is two factors in one. A magic link and a mailed reset open an account without a second factor with the mailbox alone; with a second factor they yield a pending state. Usernames are enumerable as soon as `GET /username/available` is offered (S-ENUM-8).
+
+**O-1 — Freshness is a guard without a requirement.** Every method with `freshness: "required"` demands a session younger than `freshnessWindow` (3.15 B.9), and the guard stands in `assertSessionIsFresh`. No requirement in section 5 names it, and no test case in section 6 is about it — T-INTEG-9 uses it only to show that a writer cannot renew `created_at`; what stands in the way of an attacker holding a stolen, old session is therefore code and no promise.
+
+**O-2 — The reset with a recovery code asks for no further factor.** `password.redeemResetWithRecoveryCode` writes a new password and issues a session with the identifier and one single code, also when the account has TOTP or a passkey. The mailed reset, by contrast, holds back for every second factor (S-FIX-7). Whoever stole one code therefore needs less than the sign-in asks for.
+
+**O-3 — A factor or an address changes without sessions being reissued or revoked.** Enrolling and removing TOTP, registering and removing a passkey, unlinking an identity and changing the address give the calling session no new token and revoke no other session. S-FIX-1 does not name these events; whoever stole a session keeps it after the owner removed or added a factor.
+
+**O-4 — A plugin route receives plaintext tokens and can set the session cookie.** The `RequestContext` of a plugin route carries `sessionToken` and `pendingToken` in plaintext and a `CookieWriter` with `setSession`, and a field `sessionToken` in the output of any route is moved into the session cookie. 3.15 G says a plugin has no access to session tokens; a malicious plugin can therefore read sessions along and plant a session.
+
+**O-5 — The automatic link stays even when the second factor fails.** The automatic link writes the identity before the account's second factor has been passed. If it fails, the identity stays linked; every later sign-in through it asks for the factor again, but the account has one way in more that its owner did not create.
+
+**O-6 — The account bucket depends on a call in the handler.** A route that declares an account bucket draws it only when its handler calls `enforceAccountRateLimit`. If the handler forgets, the pipeline logs a warning and lets the request through; the declaration alone protects nothing.
+
+**O-7 — The supply chain and the published package have no requirement.** Dependencies, lockfile, the content of the published package and the release workflow are covered by gate checks and tests, but by no requirement in section 5.
+
+**O-8 — The checks of a WebAuthn ceremony beyond its challenge have no requirement.** The origin of `clientDataJSON`, the RP ID hash, user presence and user verification are checked at every ceremony, in `assertOriginIsExpected`, `assertRelyingPartyIsExpected` and `assertUserWasVerified`. S-REPLAY-5 asks for the challenge alone; what refuses a response from another origin or without verification is code and no promise.
+
+**O-9 — That the magic link and the provider lead into the pending state is fixed nowhere.** S-FIX-4 demands the pending state after a correct password, S-FIX-7 after a mailed reset. That a magic link and a sign-in through a provider likewise yield only a pending state on an account with a second factor is code (`redeemMagicLink`, `signInOrAskForTheSecondFactor`) and no requirement.
+
+---
+
 ### 5.1 TIM — Timing attacks
 
 **(a) The error class.** Constant runtime is not a property of the comparison function but of the entire request path. An early `return` before the KDF runs produces a signal of 50–250 ms and is visible over the network with a few dozen measurements; an early-exit string comparison on a secret produces a sub-nanosecond signal that only an in-process attacker can exploit. Between them lie data-dependent database paths (index hit vs. miss, additional join) in the range 0.1–2 ms. The attacker uses the signal not to guess a password but to reduce a list of 10 million addresses to the few thousand that actually have accounts at this service.
@@ -4964,6 +5006,502 @@ While this section and the test plan were being elaborated, thirteen gaps in the
 - **S-INTEG-11:** The no-recovery switch is a component of the seal and changes only through `user.disableRecovery` and `user.enableRecovery`, without an HTTP route, as a sealed change under the account lock. Turning it on deletes every recovery code of the account in the same transaction and draws new generations for `password_reset` and `magic_link` and a new `attempt_generation`, turning it off the two generations of the links; both keep the epoch and revoke no session; both calls are logged with an event name and the `userId`, without an address, and not stored. If a writer without the root key clears or sets `recovery_disabled_at`, the state is broken: sign-in, session resolution and the redemption of a link refuse and raise the alarm. A reseal whose stored seal does not confirm the state refuses with the switch off with `security_state_recovery_switch_unconfirmed` as long as the caller does not name it with `recoveryDisabled`, and likewise when the stored seal holds with the switch the other way round; if the caller names it, it writes that value; if it ends with the switch on, it deletes every recovery code, and it reports the switch in its result. An account that has never turned the switch on keeps its encoding and its seal. *(Section 3.18, The no-recovery switch)*
 - **S-INTEG-12:** A waiting recovery to a new passkey — its held passkey and its activation time — and the generation of the purpose `passkey_recovery` are components of the seal; start, cancellation and activation are sealed changes under the account lock. Before the activation no sign-in path and no factor path signs in with the held passkey, and L-13 does not count it. The activation happens only from `activates_at` by the database clock and only when the verified read still holds the recovery, the account is not disabled and the switch is off; in one transaction it removes password, TOTP, every other passkey, every recovery code, every linked identity and every session, these with `beforeSessionRevoke`, draws a new epoch and new generations of every purpose of the one-time tokens and of the attempts, and leaves the held passkey as the only way in. A writer without the root key who shortens the waiting period, assigns a recovery to another account, plants one or writes back a cancelled one breaks the state. Turning the switch on cancels a waiting recovery, and turning it on and off both draw the generation of `passkey_recovery` anew. *(Section 3.18, The recovery to a new passkey)*
 - **S-INTEG-13:** With `webauthn.attestation` an attestation counts as verified only when it is a full attestation in the format `packed`, names an AAGUID and its chain leads to a configured root without a revocation list being fetched, and `none`, a self attestation and every other format never do; a registration asks for `attestation: "direct"` only for an account with a list or with `requestForEveryAccount`, and otherwise for `"none"`. Where an account holds a list from `user.limitAuthenticators`, every registration of a passkey that does not satisfy it is refused without a row — in a session with `authenticator_not_allowed`, in the recovery with `passkey_recovery_failed` —, and the passkey sign-in and the passkey as a second factor refuse such a passkey before the signature is checked with the same answer as an unknown one. The list and the AAGUID of every passkey with a verified attestation are components of the seal: a writer without the root key who adds an AAGUID, removes the list, sets a flag or changes an AAGUID breaks the state, and no resealing ratifies a list or an attestation the stored seal does not confirm. A list that leaves the account no usable sign-in method is refused with `last_sign_in_method` without `allowNoUsableSignInMethod: true` (L-13). No registration, with or without `webauthn.attestation`, hands the verifier a certificate that names a revocation list or an attestation object it cannot read strictly; such a chain is verified as an attestation `none` and stays unverified. Without a list nothing else changes. *(Section 3.18, Verified attestation and the authenticator allowlist)*
+
+---
+
+### 5.22 The ways into an account
+
+A way into an account is every path that ends in a session, in an added way of signing in or in a change of an account's address, factors or recovery; presenting an existing session and the pending state belong to it, because both decide about access. Every way carries a stable identifier `W-…`; the table names for each guard the requirement it implements, the file and function that enforce it, a test that proves the legitimate path and a test that proves the attack. `— none —` means that this test does not exist yet; `— none —` in the requirement column means that no `S-` and no `L-` asks for the guard.
+
+Every way with a route also passes the guards of `W-EVERY-ROUTE`. The same map lies machine-readable in `test/attacks/map.json`; `test/attacks/map.test.ts` keeps the two equal.
+
+What does not belong: reading routes that hand out nothing that grants access (`GET /session/list`, `GET /factor/webauthn/list`, `GET /factor/recovery/remaining`, `GET /identity/list`, `GET /username/available`, `GET /proof-of-work/challenge`), the lookup methods `user.findById`, `user.findByEmail`, `user.findByUsername`, `user.delete`, which removes an account and opens none, and `maintenance.sweep`, which deletes only what has expired.
+
+#### `W-EVERY-ROUTE` — What every route passes
+
+Routes and methods: `toWebHandler`, `createServerMethod`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| The `Origin` must equal an entry of `origins` before anything else runs | S-CSRF-1 | `src/core/http/pipeline.ts:runRoute` | `test/http-origin.test.ts` | `test/csrf-every-route-both-paths.test.ts` |
+| The comparison is equality on `new URL(x).origin`, with no prefix or pattern | S-CSRF-2 | `src/core/http/origin.ts:isOriginAllowed` | `test/http-origin.test.ts` | `test/http-origin.test.ts` |
+| The bucket per IP prefix and route is drawn before the handler | S-RATE-1 | `src/core/http/pipeline.ts:enforceIpAddressRateLimit` | `test/limit-address-key.test.ts` | `test/limit-pipeline.test.ts` |
+| `X-Forwarded-For` counts only with configured `trustedProxies` | S-RATE-3 | `src/core/limit/client-address.ts:resolveClientAddress` | `test/http-trusted-proxies.test.ts` | `test/http-trusted-proxies.test.ts` |
+| The account bucket is keyed on the normalised identifier, formed before the account is resolved | S-RATE-7 | `src/core/http/pipeline.ts:createAccountBucket` | `test/limit-account.test.ts` | `test/limit-account.test.ts` |
+| Where configured, the proof of work is spent before the account bucket, every KDF and every mail | S-RATE-11 | `src/core/http/pipeline.ts:spendProofOfWorkBeforeTheHandler` | `test/proof-of-work-requests.test.ts` | `test/proof-of-work-review-attacks.test.ts` |
+| A session caller comes from the cookie alone and is resolved by a database query | S-CACHE-1 | `src/core/http/pipeline.ts:resolveSession` | `test/session-resolution.test.ts` | `test/session-resolution.test.ts` |
+| A route with `freshness: "required"` demands a session younger than `freshnessWindow` | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | `test/auth-password-routes.test.ts` | `test/session-lifecycle.test.ts` |
+| Only the declared routes see the pending cookie | S-CACHE-4 | `src/core/http/pipeline.ts:createRequestContext` | `test/http-pending-visibility.test.ts` | `test/cache-pending-ignored-proof.test.ts` |
+| Two cookies of the same name are refused instead of one being chosen | S-COOKIE-5 | `src/core/http/cookies.ts:readCookies` | `test/http-cookie-policy.test.ts` | `test/http-cookie-policy.test.ts` |
+| What a caller learns about a failure is decided by the error map alone | S-ENUM-6 | `src/core/http/error-map.ts:toVisibleFailure` | `test/http-error-map.test.ts` | `test/http-error-map.test.ts` |
+| Plugin code runs only after the origin check and the rate limit | S-CSRF-6 | `src/core/http/pipeline.ts:runRoute` | `test/plugin-security-order.test.ts` | `test/plugin-security-order.test.ts` |
+
+#### `W-SESSION-USE` — Presenting an existing session
+
+Routes and methods: `GET /session`, `session.resolve`, `session.resolveFromHeaders`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| The lookup is by `sha256(token)` only, never by the plaintext | S-TIM-4 | `src/core/session/service.ts:verifiedSession` | `test/session-token.test.ts` | — none — |
+| The idle and the absolute deadline stand in the one query | S-CACHE-2 | `src/core/db/repositories/session.ts:findSessionByTokenHash` | `test/session-resolution.test.ts` | `test/session-resolution.test.ts` |
+| A row whose MAC does not hold is no session | S-INTEG-9 | `src/core/session/binding.ts:librarySessionBinding` | `test/integ-token-binding.test.ts` | `test/integ-token-tampered-columns.test.ts` |
+| The seal is checked from the same statement before the session is used | S-INTEG-4 | `src/core/security-state/runtime.ts:sessionStateCheckOf` | `test/security-state-checking.test.ts` | `test/security-state-checking.test.ts` |
+| A row from an epoch before the last mass revocation does not resolve | S-INTEG-3 | `src/core/session/service.ts:verifiedSession` | `test/security-state-session-epoch.test.ts` | `test/security-state-session-epoch.test.ts` |
+| A disabled account ends at the next request with `account_disabled` | S-CACHE-3 | `src/core/session/service.ts:resolveAndExtend` | `test/session-resolution.test.ts` | `test/session-resolution.test.ts` |
+| The session token is 32 random bytes in base64url | S-RAND-2 | `src/core/session/token.ts:createSessionToken` | `test/session-token.test.ts` | `test/rand-session-token-proof.test.ts` |
+| The cookie carries `__Host-`, `HttpOnly`, `Secure`, `SameSite=Lax` and no `Domain` | S-COOKIE-1 | `src/core/http/cookies.ts:serializeCookie` | `test/http-cookie-policy.test.ts` | `test/cookie-option-surface-proof.test.ts` |
+| The cookie holds the token alone and no check result | S-COOKIE-4 | `src/core/http/web-handler.ts:moveTokensIntoCookies` | `test/http-cookie-policy.test.ts` | `test/cookie-session-value-proof.test.ts` |
+
+#### `W-SESSION-REFRESH` — Extending a session
+
+Routes and methods: `POST /session/refresh`, `session.refresh`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| The extension moves only the idle deadline, never the absolute one | — none — | `src/core/session/service.ts:resolveAndExtend` | `test/session-resolution.test.ts` | `test/session-review-deadlines.test.ts` |
+| An extension issues no new token | — none — | `src/core/session/service.ts:createSessionService` | `test/session-resolution.test.ts` | — none — |
+| An expired session stays dead, also for the extension | S-CACHE-2 | `src/core/db/repositories/session.ts:extendIdleDeadline` | `test/session-review-deadlines.test.ts` | `test/session-review-deadlines.test.ts` |
+
+#### `W-SESSION-END` — Ending sessions
+
+Routes and methods: `POST /sign-out`, `POST /session/revoke`, `POST /session/revoke-others`, `POST /session/revoke-all`, `signOut`, `session.revoke`, `session.revokeAllOther`, `session.revokeAll`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| `revoke` acts only on rows of the calling session's account | S-OWNER-4 | `src/core/db/repositories/session.ts:deleteSessionOwnedBy` | `test/owner-revoke-proof.test.ts` | `test/owner-revoke-proof.test.ts` |
+| A foreign and an invented session id answer alike | S-OWNER-8 | `src/core/session/service.ts:createSessionService` | `test/owner-foreign-id-proof.test.ts` | `test/owner-foreign-id-proof.test.ts` |
+| Listing and revoking demand a fresh session | O-1 | `src/core/session/service.ts:actorOfFreshSession` | `test/session-lifecycle.test.ts` | `test/session-lifecycle.test.ts` |
+| `revokeAllOther` draws a new epoch under which only the kept session is rebound | S-INTEG-3 | `src/core/auth/routes.ts:revokedUnderANewEpoch` | `test/security-state-kept-session.test.ts` | `test/integ-session-epoch-race.test.ts` |
+| Signing out deletes exactly the presented session | — none — | `src/core/session/service.ts:createSessionService` | `test/session-lifecycle.test.ts` | — none — |
+
+#### `W-PASSWORD-SIGNIN` — Signing in with a password
+
+Routes and methods: `POST /sign-in/password`, `signIn.password`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| The account bucket is drawn before anything else | S-RATE-7 | `src/core/password/routes.ts:passwordRoutes` | `test/limit-account.test.ts` | `test/limit-account.test.ts` |
+| The length is checked before the account lookup, without a KDF call | S-DOS-2 | `src/core/password/policy.ts:acceptSubmittedPassword` | `test/auth-password-routes.test.ts` | `test/dos-oversized-password-proof.test.ts` |
+| An unknown identifier verifies against a dummy PHC of the same parameters | S-TIM-2 | `src/core/password/verify.ts:checkPassword` | `test/tim-dummy-verifier-proof.test.ts` | `test/tim-dummy-verifier-proof.test.ts` |
+| The KDF result is compared in constant time | S-TIM-3 | `src/core/keys/constant-time.ts:equalsInConstantTime` | `test/keys-constant-time.test.ts` | `test/tim-secret-comparison-proof.test.ts` |
+| A broken seal answers like a wrong password | S-INTEG-5 | `src/core/password/routes.ts:checkedCredential` | `test/security-state-checking.test.ts` | `test/security-state-checking.test.ts` |
+| A disabled account answers the right password like a wrong one | S-ENUM-2 | `src/core/password/routes.ts:passwordRoutes` | `test/enum-sign-in-states-proof.test.ts` | `test/enum-sign-in-states-proof.test.ts` |
+| With a second factor a pending state comes into being instead of a session | S-FIX-4 | `src/core/password/routes.ts:signedIn` | `test/auth-factor-routes.test.ts` | — none — |
+| The new session replaces the presented one in one transaction | S-FIX-1 | `src/core/session/service.ts:createSessionService` | `test/signin-replaces-session.test.ts` | `test/signin-replaces-session.test.ts` |
+| The rehash runs after the answer and writes by compare-and-swap under the account lock | S-RACE-6 | `src/core/password/routes.ts:rehashUnderTheLock` | `test/password-rehash-after-response.test.ts` | `test/race-rehash-compare-and-swap-proof.test.ts` |
+| After failures the route asks for a proof of work, alike for known and unknown accounts | S-RATE-11 | `src/core/password/routes.ts:passwordRoutes` | `test/proof-of-work-sign-in.test.ts` | `test/proof-of-work-sign-in.test.ts` |
+| Simultaneous KDF calls are bounded by a semaphore | S-DOS-3 | `src/core/password/semaphore.ts:createKdfSemaphore` | `test/password-kdf-semaphore.test.ts` | `test/dos-limit-before-kdf-proof.test.ts` |
+| A veto of `beforeSignIn` or `beforeSessionCreate` prevents the session | S-OWNER-12 | `src/core/plugin/sign-in.ts:createSessionUnderHooks` | `test/plugin-sign-in-hooks.test.ts` | `test/plugin-sign-in-hooks.test.ts` |
+
+#### `W-PASSKEY-SIGNIN` — Signing in with a passkey
+
+Routes and methods: `POST /sign-in/passkey/start`, `POST /sign-in/passkey/finish`, `signIn.passkey.start`, `signIn.passkey.finish`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| The challenge holds five minutes, once, and only for its ceremony | S-REPLAY-5 | `src/core/factor/webauthn/challenge.ts:createWebAuthnChallenges` | `test/webauthn-challenge.test.ts` | `test/webauthn-challenge.test.ts` |
+| The origin in `clientDataJSON` must be configured | O-8 | `src/core/factor/webauthn/verification.ts:assertOriginIsExpected` | `test/webauthn-authentication.test.ts` | `test/webauthn-authentication.test.ts` |
+| The RP ID hash must match | O-8 | `src/core/factor/webauthn/verification.ts:assertRelyingPartyIsExpected` | `test/webauthn-authentication.test.ts` | `test/webauthn-authentication.test.ts` |
+| User verification is always required | O-8 | `src/core/factor/webauthn/verification.ts:assertUserWasVerified` | `test/webauthn-authentication.test.ts` | `test/webauthn-authentication.test.ts` |
+| The seal is checked first and the signature verified against the passkey of that read | S-INTEG-4 | `src/core/factor/webauthn/service.ts:verifyCheckedAssertion` | `test/security-state-checking.test.ts` | `test/security-state-checking.test.ts` |
+| Under a list only an authenticator with verified attestation signs in | S-INTEG-13 | `src/core/factor/webauthn/service.ts:verifyCheckedAssertion` | `test/verified-attestation-flow.test.ts` | `test/verified-attestation-review-flows.test.ts` |
+| A regressing counter is reported and the highest one kept | L-9 | `src/core/factor/webauthn/service.ts:countHasRegressed` | `test/webauthn-counter-race.test.ts` | `test/webauthn-counter-race.test.ts` |
+| A disabled account answers like an invalid assertion | L-4 | `src/core/factor/routes.ts:passkeyRoutes` | — none — | — none — |
+| The new session replaces the presented one | S-FIX-1 | `src/core/session/service.ts:createSessionService` | `test/auth-webauthn-routes.test.ts` | `test/signin-replaces-session.test.ts` |
+| After failures per address the route asks for a proof of work | S-RATE-11 | `src/core/factor/routes.ts:passkeyRoutes` | `test/proof-of-work-sign-in.test.ts` | `test/proof-of-work-sign-in.test.ts` |
+
+#### `W-PENDING` — The pending state between first and second factor
+
+Routes and methods: `GET /pending`, `POST /pending/cancel`, `pending.resolve`, `pending.resolveFromHeaders`, `pending.cancel`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| The pending state is a row in `pending_authentication`, not a session | S-FIX-4 | `src/core/factor/pending/service.ts:createPendingAuthenticationService` | `test/factor-pending-state.test.ts` | `test/factor-pending-surface.test.ts` |
+| It is resolved as a session nowhere | S-CACHE-4 | `src/core/http/pipeline.ts:createRequestContext` | `test/http-pending-visibility.test.ts` | `test/cache-pending-ignored-proof.test.ts` |
+| Cookie and row live five minutes | S-COOKIE-3 | `src/core/http/cookies.ts:createCookieCollector` | `test/factor-pending-state.test.ts` | `test/cookie-pending-expiry-proof.test.ts` |
+| A row whose MAC does not hold is no pending state | S-INTEG-9 | `src/core/factor/pending/service.ts:createPendingAuthenticationService` | `test/integ-token-binding.test.ts` | `test/integ-token-tampered-columns.test.ts` |
+| A mass revocation makes the pending state invalid | S-INTEG-3 | `src/core/factor/pending/service.ts:createPendingAuthenticationService` | `test/integ-pending-epoch.test.ts` | `test/integ-pending-epoch.test.ts` |
+| The factors on offer are those of the verified read, and a factor removed since refuses | S-INTEG-4 | `src/core/factor/pending/service.ts:refuseAFactorGoneSinceTheCheck` | `test/spine-available-factors.test.ts` | `test/security-state-offered-factors.test.ts` |
+| Five attempts per pending state across every factor, counted before the check | L-8 | `src/core/factor/pending/attempt-limit.ts:verifyUnderPendingAttemptLimit` | `test/totp-pending-attempts.test.ts` | `test/security-state-attempt-budget.test.ts` |
+| A disabled account answers like an unknown pending state | L-4 | `src/core/factor/pending/service.ts:createPendingAuthenticationService` | — none — | — none — |
+| Cancelling deletes the row and the cookie | — none — | `src/core/auth/routes.ts:pendingRoutes` | `test/auth-pending-routes.test.ts` | — none — |
+
+#### `W-TOTP-SECOND-FACTOR` — TOTP as second factor
+
+Routes and methods: `POST /factor/totp/verify`, `factor.totp.verify`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| The account bucket of the pending state's account is drawn before the check | S-RATE-7 | `src/core/factor/routes.ts:spendAccountToken` | `test/auth-factor-routes.test.ts` | — none — |
+| The secret comes from the read the seal check verified | S-INTEG-4 | `src/core/factor/totp/service.ts:createTotpService` | `test/security-state-checking.test.ts` | `test/security-state-checking.test.ts` |
+| A code holds at most once per account and time step | S-REPLAY-4 | `src/core/factor/totp/repository.ts:createTotpRepository` | `test/totp-replay.test.ts` | `test/totp-replay.test.ts` |
+| Of 50 simultaneous submissions of one code exactly one wins | S-RACE-3 | `src/core/factor/totp/repository.ts:createTotpRepository` | `test/totp-race.test.ts` | `test/totp-race.test.ts` |
+| A missing, unconfirmed or wrong factor answers alike | S-ENUM-2 | `src/core/factor/totp/service.ts:createTotpService` | `test/totp-concealment.test.ts` | `test/totp-concealment.test.ts` |
+| The pending row is deleted in the transaction that inserts the session | S-FIX-1 | `src/core/factor/pending/complete.ts:createSecondFactorCompletion` | `test/factor-pending-race.test.ts` | `test/factor-pending-race.test.ts` |
+
+#### `W-RECOVERY-SECOND-FACTOR` — Recovery code as second factor
+
+Routes and methods: `POST /factor/recovery/verify`, `factor.recovery.verify`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| Only `HMAC-SHA256(pepper, code)` is stored | S-REST-3 | `src/core/factor/recovery/pepper.ts:pepperRecoveryCode` | `test/recovery-codes.test.ts` | `test/rest-hash-proof.test.ts` |
+| The code is spent under the account lock by `DELETE … RETURNING` and must stand in the seal | S-RACE-4 | `src/core/factor/recovery/repository.ts:createRecoveryCodeRepository` | `test/auth-factor-routes.test.ts` | `test/recovery-race.test.ts` |
+| With recovery switched off every code answers like a wrong one | S-ENUM-9 | `src/core/factor/recovery/service.ts:createRecoveryCodeService` | `test/no-recovery-switch-seal.test.ts` | — none — |
+| A spent and an invented code answer alike | — none — | `src/core/factor/recovery/service.ts:createRecoveryCodeService` | `test/auth-factor-routes.test.ts` | `test/auth-factor-routes.test.ts` |
+| The pending row is deleted in the transaction that inserts the session | S-FIX-1 | `src/core/factor/pending/complete.ts:createSecondFactorCompletion` | `test/factor-pending-race.test.ts` | `test/factor-pending-race.test.ts` |
+
+#### `W-PASSKEY-SECOND-FACTOR` — Passkey as second factor
+
+Routes and methods: `POST /factor/webauthn/authenticate/start`, `POST /factor/webauthn/authenticate/finish`, `factor.webauthn.authenticate.start`, `factor.webauthn.authenticate.finish`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| The challenge is bound to account and ceremony | S-REPLAY-5 | `src/core/factor/webauthn/challenge.ts:createWebAuthnChallenges` | `test/auth-webauthn-routes.test.ts` | `test/webauthn-challenge.test.ts` |
+| The passkey must belong to the pending state's account | S-OWNER-2 | `src/core/factor/webauthn/credential-repository.ts:createWebAuthnCredentialRepository` | `test/auth-webauthn-routes.test.ts` | — none — |
+| Origin, RP ID, user verification and seal as for the passkey sign-in | S-INTEG-4 | `src/core/factor/webauthn/service.ts:verifyCheckedAssertion` | `test/auth-webauthn-routes.test.ts` | `test/security-state-checking.test.ts` |
+| A passkey outside the list answers like an unknown one and never falls back to one factor | S-INTEG-13 | `src/core/factor/webauthn/service.ts:verifyCheckedAssertion` | `test/verified-attestation-flow.test.ts` | `test/verified-attestation-review-flows.test.ts` |
+| The attempt counts against the pending state's shared budget | L-8 | `src/core/factor/pending/attempt-limit.ts:verifyUnderPendingAttemptLimit` | `test/totp-pending-attempts.test.ts` | `test/reset-second-factor-review-attacks.test.ts` |
+| The pending row is deleted in the transaction that inserts the session | S-FIX-1 | `src/core/factor/pending/complete.ts:createSecondFactorCompletion` | `test/factor-pending-race.test.ts` | `test/factor-pending-race.test.ts` |
+
+#### `W-MAGIC-LINK` — The magic link
+
+Routes and methods: `POST /sign-in/magic-link/request`, `POST /sign-in/magic-link/redeem`, `signIn.magicLink.request`, `signIn.magicLink.redeem`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| A known and an unknown address run the same statements and send exactly once | S-TIM-6 | `src/core/flows/magic-link.ts:requestMagicLink` | `test/flows-review-enumeration.test.ts` | `test/flows-review-request-oracle-race.test.ts` |
+| A switched-off account takes the branch of an unknown address | S-ENUM-9 | `src/core/flows/artefact.ts:ownerAMailedLinkMayReach` | `test/no-recovery-switch-mailed-paths.test.ts` | `test/no-recovery-switch-mailed-paths.test.ts` |
+| The token carries 256 bits from the one random module | S-RAND-4 | `src/core/token/secret-token.ts:createSecretToken` | `test/token-random.test.ts` | `test/token-review-randomness.test.ts` |
+| A new token of the same purpose deletes every earlier one | S-TOKEN-3 | `src/core/db/repositories/token.ts:createOneTimeTokenRepository` | `test/token-repository.test.ts` | `test/token-review-purpose-and-ownership.test.ts` |
+| The redemption is a `DELETE … RETURNING` with purpose and deadline in the predicate | S-REPLAY-2 | `src/core/token/one-time-token.ts:createOneTimeTokens` | `test/token-one-time-token.test.ts` | `test/replay-redeem-answers-proof.test.ts` |
+| Of 50 simultaneous redemptions exactly one wins | S-RACE-1 | `src/core/db/repositories/token.ts:createOneTimeTokenRepository` | `test/token-race.test.ts` | `test/token-race.test.ts` |
+| A token of another purpose answers like an invented one | S-TOKEN-2 | `src/core/token/one-time-token.ts:createOneTimeTokens` | `test/token-review-purpose-and-ownership.test.ts` | `test/token-review-purpose-and-ownership.test.ts` |
+| The row's MAC and the address it was mailed to must still hold | S-INTEG-9 | `src/core/flows/artefact.ts:refuseUnlessTheAddressIsStillTheAccounts` | `test/integ-token-address-binding.test.ts` | `test/integ-token-address-binding.test.ts` |
+| The account comes from the removed row alone | S-TOKEN-4 | `src/core/flows/environment.ts:accountOrDisabledOfRedemption` | `test/token-target-account-proof.test.ts` | `test/token-target-account-proof.test.ts` |
+| A switched-off account refuses the link and spends nothing | S-ENUM-9 | `src/core/flows/environment.ts:refuseALinkWhileRecoveryIsDisabled` | `test/no-recovery-switch-mailed-paths.test.ts` | `test/no-recovery-switch-mailed-paths.test.ts` |
+| A disabled account spends the link and answers like an invented token | S-REPLAY-3 | `src/core/flows/environment.ts:accountOrDisabledOfRedemption` | `test/redeem-disabled-account.test.ts` | `test/redeem-disabled-account.test.ts` |
+| With a second factor a pending state comes into being instead of a session | O-9 | `src/core/flows/magic-link.ts:redeemMagicLink` | `test/flows-email-behaviour.test.ts` | — none — |
+| The first confirmation deletes a password set in another session and every session | S-LINK-4 | `src/core/flows/confirmation.ts:confirmAddress` | `test/flows-review-first-confirmation.test.ts` | `test/flows-review-first-confirmation.test.ts` |
+| The new session replaces the presented one | S-FIX-1 | `src/core/session/service.ts:createSessionService` | `test/signin-replaces-session.test.ts` | `test/signin-replaces-session.test.ts` |
+
+#### `W-PASSWORD-RESET-MAIL` — Password reset by mail
+
+Routes and methods: `POST /password/request-reset`, `POST /password/redeem-reset`, `password.requestReset`, `password.redeemReset`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| A known and an unknown address answer byte for byte alike | S-ENUM-5 | `src/core/flows/reset.ts:requestReset` | `test/flows-review-enumeration.test.ts` | `test/flows-review-enumeration.test.ts` |
+| A switched-off account takes the branch of an unknown address | S-ENUM-9 | `src/core/flows/artefact.ts:ownerAMailedLinkMayReach` | `test/no-recovery-switch-mailed-paths.test.ts` | `test/no-recovery-switch-mailed-paths.test.ts` |
+| The redemption is a `DELETE … RETURNING` with purpose and deadline | S-REPLAY-2 | `src/core/flows/artefact.ts:redeemOrRefuse` | `test/token-one-time-token.test.ts` | `test/replay-redeem-answers-proof.test.ts` |
+| Policy and KDF run before the token is spent | S-DOS-2 | `src/core/flows/reset.ts:redeemReset` | `test/reset-second-factor-flow.test.ts` | — none — |
+| Address, token generation and switch are checked under the account lock | S-INTEG-9 | `src/core/flows/reset.ts:redeemReset` | `test/integ-token-address-binding.test.ts` | `test/integ-token-address-binding.test.ts` |
+| With a second factor only the token is spent and nothing written | S-FIX-7 | `src/core/flows/reset.ts:replacePassword` | `test/reset-second-factor-flow.test.ts` | `test/reset-second-factor-review-attacks.test.ts` |
+| Password, revocation and session come into being only at the second factor, the new password only as a bound envelope | S-FIX-8 | `src/core/flows/reset.ts:completeResetBySecondFactor` | `test/reset-second-factor-flow.test.ts` | `test/reset-second-factor-integrity.test.ts` |
+| A change of the account since the factor check refuses the completion | S-INTEG-5 | `src/core/flows/reset.ts:isTheStateTheFactorChecked` | `test/reset-second-factor-integrity.test.ts` | `test/reset-second-factor-integrity.test.ts` |
+| The reset revokes every session, with no switch | S-FIX-6 | `src/core/flows/reset.ts:replacePassword` | `test/flows-email-behaviour.test.ts` | `test/default-revocation-switch-proof.test.ts` |
+| A disabled account spends the token and answers like an invented one | S-REPLAY-3 | `src/core/flows/reset.ts:redeemReset` | `test/reset-token-disabled.test.ts` | `test/reset-token-disabled.test.ts` |
+
+#### `W-PASSWORD-RESET-RECOVERY-CODE` — Password reset with a recovery code
+
+Routes and methods: `POST /password/redeem-reset-with-recovery-code`, `password.redeemResetWithRecoveryCode`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| The account bucket is drawn before any derivation | S-RATE-7 | `src/core/flows/reset.ts:redeemResetWithRecoveryCode` | `test/recovery-reset-rate.test.ts` | `test/recovery-reset-rate.test.ts` |
+| An unknown account locks and consumes as a known one does | S-TIM-6 | `src/core/flows/reset.ts:redeemResetWithRecoveryCode` | `test/recovery-reset-disabled.test.ts` | `test/recovery-reset-disabled.test.ts` |
+| The code is spent under the account lock and must stand in the seal | S-RACE-4 | `src/core/factor/recovery/repository.ts:createRecoveryCodeRepository` | `test/auth-factor-routes.test.ts` | — none — |
+| With recovery switched off every code answers like a wrong one | S-ENUM-9 | `src/core/flows/reset.ts:redeemResetWithRecoveryCode` | `test/no-recovery-switch-seal.test.ts` | — none — |
+| The reset revokes every session | S-FIX-6 | `src/core/flows/reset.ts:replacePassword` | — none — | — none — |
+| A disabled account spends the code and answers like a wrong one | S-OWNER-8 | `src/core/flows/reset.ts:redeemResetWithRecoveryCode` | `test/recovery-reset-disabled.test.ts` | `test/recovery-reset-disabled.test.ts` |
+| No further second factor of the account is asked for | O-2 | `src/core/flows/reset.ts:redeemResetWithRecoveryCode` | `test/reset-second-factor-review-attacks.test.ts` | — none — |
+
+#### `W-PASSKEY-RECOVERY` — Recovery to a new passkey
+
+Routes and methods: `POST /passkey-recovery/request`, `POST /passkey-recovery/start`, `POST /passkey-recovery/finish`, `GET /passkey-recovery`, `POST /passkey-recovery/cancel`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| An unknown address, a switched-off account and an account with a passkey run one path | S-ENUM-10 | `src/core/recovery/flow.ts:requestPasskeyRecovery` | `test/passkey-recovery-uniform.test.ts` | `test/passkey-recovery-uniform.test.ts` |
+| Link and one recovery code are spent together or neither is | S-RACE-7 | `src/core/recovery/flow.ts:startPasskeyRecovery` | `test/passkey-recovery-flow.test.ts` | `test/passkey-recovery-review-attacks.test.ts` |
+| Disabled, switched off or already recovering answers like a wrong code | S-ENUM-10 | `src/core/recovery/flow.ts:refuseUnlessTheAccountMayBeRecovered` | `test/passkey-recovery-uniform.test.ts` | `test/passkey-recovery-uniform.test.ts` |
+| The challenge names its account, holds only for the recovery and requires user verification | S-REPLAY-5 | `src/core/factor/webauthn/service.ts:createWebAuthnService` | `test/passkey-recovery-flow.test.ts` | `test/passkey-recovery-review-attacks.test.ts` |
+| The new passkey is held back, sealed, until the waiting period ends | S-INTEG-12 | `src/core/recovery/flow.ts:registerUnderTheSeal` | `test/passkey-recovery-flow.test.ts` | `test/passkey-recovery-integrity.test.ts` |
+| Every session of the account sees the recovery and cancels it | S-LINK-9 | `src/core/recovery/flow.ts:cancelPasskeyRecovery` | `test/passkey-recovery-flow.test.ts` | `test/passkey-recovery-review-lifecycle.test.ts` |
+| The address is told after the commit | S-LINK-9 | `src/core/recovery/flow.ts:tellOfThePendingRecovery` | `test/passkey-recovery-flow.test.ts` | — none — |
+| The activation replaces every way in and revokes every session and link | S-INTEG-12 | `src/core/recovery/activation.ts:activateDueRecovery` | `test/passkey-recovery-review-lifecycle.test.ts` | `test/passkey-recovery-review-lifecycle.test.ts` |
+| An authenticator outside the list never becomes a way in | S-INTEG-13 | `src/core/factor/webauthn/service.ts:refuseAnAuthenticatorOutsideTheList` | `test/verified-attestation-review-flows.test.ts` | `test/verified-attestation-review-flows.test.ts` |
+| With `requireDiscoverableCredential` only a discoverable passkey is registered | S-DEFAULT-8 | `src/core/factor/webauthn/verification.ts:assertClientReportsADiscoverableCredential` | `test/discoverable-registration-flow.test.ts` | `test/discoverable-registration-review-paths.test.ts` |
+
+#### `W-OAUTH-SIGNIN` — Signing in through OAuth and OIDC
+
+Routes and methods: `POST /sign-in/oauth/start`, `GET /sign-in/oauth/callback/:provider`, `POST /sign-in/oauth/callback/:provider`, `signIn.oauth.start`, `signIn.oauth.callback`, `signIn.oauth.callbackFormPost`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| The `state` lies server-side, the cookie holds only the pointer, and both must match | S-CSRF-5 | `src/core/oauth/flow-secrets.ts:pointerBelongsToState` | `test/oauth-flow.test.ts` | `test/oauth-state-race.test.ts` |
+| The flow row is consumed once and before its deadline | S-REPLAY-6 | `src/core/oauth/flow-repository.ts:createOAuthFlowRepository` | `test/oauth-flow-row.test.ts` | `test/oauth-flow-row.test.ts` |
+| PKCE `S256` is mandatory, the verifier encrypted bound to the flow row | S-REPLAY-6 | `src/core/oauth/flow-secrets.ts:pkceChallengeOf` | `test/oauth-flow.test.ts` | `test/oauth-flow-row.test.ts` |
+| The `iss` is checked per RFC 9207 | S-REPLAY-6 | `src/core/oauth/service.ts:assertIssuerMatches` | `test/oauth-flow.test.ts` | — none — |
+| The ID token's `nonce` must be the stored one | S-REPLAY-6 | `src/core/oauth/id-token.ts:claimsOfIdToken` | `test/oauth-flow.test.ts` | — none — |
+| The ID token is verified against the JWKS with listed asymmetric algorithms only | S-KEY-7 | `src/core/oauth/id-token.ts:claimsOfIdToken` | `test/oauth-flow.test.ts` | `test/oauth-id-token-allow-list.test.ts` |
+| Linking is by `(provider, subject)` alone, the subject is never an address | S-LINK-3 | `src/core/oauth/claims.ts:providerAccountOf` | `test/oauth-linking-matrix.test.ts` | `test/oauth-linking-matrix.test.ts` |
+| The identity must stand in the sealed read | S-INTEG-4 | `src/core/oauth/service.ts:checkedIdentityOf` | `test/security-state-checking.test.ts` | `test/security-state-checking.test.ts` |
+| With a second factor a pending state comes into being instead of a session | O-9 | `src/core/oauth/service.ts:signInOrAskForTheSecondFactor` | `test/oauth-flow.test.ts` | — none — |
+| A disabled account ends the flow | L-4 | `src/core/oauth/service.ts:assertTheAccountIsEnabled` | — none — | — none — |
+| The redirect target is a path, never a URL | S-REDIR-2 | `src/core/oauth/redirect-path.ts:acceptedRedirectPath` | `test/oauth-redirect-corpus.test.ts` | `test/oauth-redirect-corpus.test.ts` |
+| The provider's endpoints come from the configuration alone | S-REDIR-6 | `src/core/oauth/providers.ts:resolveProviderTable` | `test/oauth-config-seam.test.ts` | `test/oauth-redirect-corpus.test.ts` |
+| The new session replaces the presented one | S-FIX-1 | `src/core/session/service.ts:createSessionService` | `test/signin-replaces-session.test.ts` | `test/signin-replaces-session.test.ts` |
+
+#### `W-OAUTH-SIGNUP` — Creating an account through a provider
+
+Routes and methods: `GET /sign-in/oauth/callback/:provider`, `POST /sign-in/oauth/callback/:provider`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| No address and no username is invented | S-LINK-5 | `src/core/oauth/service.ts:createAccountFor` | `test/oauth-signup-username-email.test.ts` | `test/identity-invented-email.test.ts` |
+| An address of another account ends the flow before the insert | S-LINK-1 | `src/core/oauth/service.ts:createAccountFor` | `test/oauth-linking-matrix.test.ts` | `test/oauth-signup-unique-race.test.ts` |
+| A provider claim confirms the address only for a trusted provider | S-LINK-6 | `src/core/oauth/service.ts:createAccountFor` | `test/oauth-linking-matrix.test.ts` | `test/oauth-linking-matrix.test.ts` |
+| The account is sealed with its identity in the same transaction | S-INTEG-3 | `src/core/oauth/service.ts:accountForSignIn` | `test/security-state-sealing.test.ts` | — none — |
+| `beforeUserCreate` can refuse the creation | S-OWNER-12 | `src/core/oauth/service.ts:createAccountFor` | `test/plugin-oauth-sign-up-hooks-pool.test.ts` | — none — |
+
+#### `W-OAUTH-AUTO-LINK` — Automatic link with an existing account
+
+Routes and methods: `GET /sign-in/oauth/callback/:provider`, `POST /sign-in/oauth/callback/:provider`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| Provider reports verified, local account confirmed, provider trusted — all three | S-LINK-2 | `src/core/oauth/linking.ts:automaticLinkIsAllowed` | `test/oauth-linking-matrix.test.ts` | `test/oauth-linking-matrix.test.ts` |
+| The address is looked up only once the other two conditions hold | S-LINK-1 | `src/core/oauth/linking.ts:accountAnAutomaticLinkMayJoin` | `test/oauth-linking-matrix.test.ts` | `test/oauth-linking-matrix.test.ts` |
+| The conditions are checked again under the account lock | S-LINK-2 | `src/core/oauth/service.ts:theJoinableAccountUnderItsLock` | `test/oauth-anchor-before-lock.test.ts` | — none — |
+| At most `limits.identitiesPerAccount` identities | S-INTEG-10 | `src/core/security-state/limits.ts:assertBelowCredentialLimit` | `test/security-state-limits-cap.test.ts` | `test/security-state-limits-cap.test.ts` |
+| A second factor of the account is asked for afterwards | O-9 | `src/core/oauth/service.ts:signInOrAskForTheSecondFactor` | — none — | — none — |
+| The link is written before the second factor has been passed | O-5 | `src/core/oauth/service.ts:accountForSignIn` | — none — | — none — |
+
+#### `W-IDENTITY-LINK` — Linking an identity from a session
+
+Routes and methods: `POST /identity/link/start`, `GET /sign-in/oauth/callback/:provider`, `POST /sign-in/oauth/callback/:provider`, `identity.link.start`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| The start demands a fresh session | O-1 | `src/core/oauth/routes.ts:linkStartOf` | `test/oauth-flow.test.ts` | — none — |
+| The flow row carries the target account and the starting session, the callback reads no session cookie | S-TOKEN-4 | `src/core/oauth/flow-repository.ts:createOAuthFlowRepository` | `test/token-target-account-proof.test.ts` | `test/token-target-account-proof.test.ts` |
+| The verifier is bound to the target account | S-INTEG-1 | `src/core/oauth/service.ts:pkceBindingOf` | `test/oauth-flow.test.ts` | `test/integ-envelope-attacks.test.ts` |
+| A pair already linked is refused | S-LINK-1 | `src/core/oauth/service.ts:refuseIfAlreadyLinked` | `test/oauth-flow.test.ts` | `test/oauth-linking-matrix.test.ts` |
+| The link replaces the starting session with a new one | S-LINK-7 | `src/core/oauth/service.ts:linkInOneTransaction` | `test/oauth-flow.test.ts` | `test/signin-replaces-session.test.ts` |
+| A disabled account and the identity bound refuse | S-INTEG-10 | `src/core/oauth/service.ts:linkInOneTransaction` | `test/security-state-limits-cap.test.ts` | `test/security-state-limits-cap.test.ts` |
+
+#### `W-IDENTITY-UNLINK` — Unlinking an identity
+
+Routes and methods: `POST /identity/unlink`, `identity.unlink`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| Only a row of the calling account is unlinked | S-OWNER-5 | `src/core/identity/sign-in-methods.ts:removeSignInMethod` | `test/identity-unlink-ownership.test.ts` | `test/identity-unlink-ownership.test.ts` |
+| A foreign and an invented identity answer alike | S-OWNER-8 | `src/core/oauth/routes.ts:oauthRoutes` | `test/identity-unlink-ownership.test.ts` | `test/identity-unlink-ownership.test.ts` |
+| The last way in is not removed, also not under two simultaneous calls | L-13 | `src/core/identity/sign-in-methods.ts:removeSignInMethod` | `test/identity-sign-in-methods.test.ts` | `test/identity-last-method-race.test.ts` |
+| Under a list only a passkey that satisfies it counts | S-INTEG-13 | `src/core/identity/sign-in-methods.ts:countSignInMethods` | `test/verified-attestation-unlink.test.ts` | `test/verified-attestation-unlink.test.ts` |
+| Unlinking demands a fresh session | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | — none — | — none — |
+| Unlinking revokes no session and issues no new one | O-3 | `src/core/oauth/service.ts:createOAuthService` | — none — | — none — |
+
+#### `W-SIGN-UP` — Sign-up with and without a password
+
+Routes and methods: `POST /sign-up`, `POST /sign-up/passwordless`, `signUp.withPassword`, `signUp.withoutPassword`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| A taken address answers byte for byte like a free one, through a rolled-back registration | S-ENUM-3 | `src/core/flows/sign-up.ts:registerOrCover` | `test/flows-review-enumeration.test.ts` | `test/flows-review-signup-race.test.ts` |
+| The taken address receives exactly one message | S-ENUM-4 | `src/core/flows/sign-up.ts:announce` | `test/flows-email-behaviour.test.ts` | `test/flows-review-enumeration.test.ts` |
+| The KDF runs before any lookup | S-TIM-6 | `src/core/flows/sign-up.ts:signUp` | `test/flows-review-signup-timing.test.ts` | `test/flows-review-signup-timing.test.ts` |
+| A new account is sealed in the transaction that creates it | S-INTEG-3 | `src/core/flows/sign-up.ts:register` | `test/security-state-sealing.test.ts` | — none — |
+| The new session replaces the presented one | S-FIX-1 | `src/core/session/service.ts:createSessionService` | `test/signin-replaces-session.test.ts` | `test/signin-replaces-session.test.ts` |
+| A hook veto runs before the address lookup | S-ENUM-3 | `src/core/flows/sign-up.ts:signUp` | `test/plugin-sign-in-hooks.test.ts` | — none — |
+
+#### `W-EMAIL-VERIFY` — Confirming the address
+
+Routes and methods: `POST /email/request-verification`, `POST /email/redeem-verification`, `email.requestVerification`, `email.redeemVerification`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| The request takes no address, only the account's | S-ENUM-7 | `src/core/flows/address.ts:requestVerification` | — none — | — none — |
+| The redemption is a `DELETE … RETURNING` with its purpose | S-REPLAY-2 | `src/core/flows/artefact.ts:redeemOrRefuse` | `test/token-one-time-token.test.ts` | `test/replay-redeem-answers-proof.test.ts` |
+| The account comes from the removed row alone | S-TOKEN-4 | `src/core/flows/environment.ts:accountOrDisabledOfRedemption` | `test/token-target-account-proof.test.ts` | `test/token-target-account-proof.test.ts` |
+| The first confirmation deletes a password set in another session and every session | S-LINK-4 | `src/core/flows/confirmation.ts:confirmUnderTheLock` | `test/flows-review-first-confirmation.test.ts` | `test/flows-review-first-confirmation.test.ts` |
+
+#### `W-EMAIL-CHANGE` — Changing the address
+
+Routes and methods: `POST /email/request-change`, `POST /email/redeem-change`, `email.requestChange`, `email.redeemChange`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| The request demands a fresh session | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | — none — | — none — |
+| The request answers alike whether the new address is taken or not | S-ENUM-5 | `src/core/flows/address.ts:requestChange` | `test/flows-email-behaviour.test.ts` | `test/flows-review-enumeration.test.ts` |
+| Uniqueness is checked again at redemption, a race answers like a taken address | S-ENUM-5 | `src/core/flows/confirmation.ts:refuseAnAddressTakenMeanwhile` | `test/email-change-unique-race.test.ts` | `test/email-change-unique-race.test.ts` |
+| The old address's links are withdrawn | S-INTEG-9 | `src/core/flows/address.ts:redeemChange` | `test/flows-address-change-withdraws.test.ts` | `test/integ-token-address-binding.test.ts` |
+| The previous address receives exactly one message after the commit | S-LINK-8 | `src/core/flows/address.ts:noticeThePreviousAddress` | `test/address-change-notice-flow.test.ts` | `test/address-change-notice-review-flow.test.ts` |
+| The change revokes no other session and issues no new one | O-3 | `src/core/flows/address.ts:redeemChange` | — none — | — none — |
+
+#### `W-USERNAME-CHANGE` — Changing the username
+
+Routes and methods: `POST /username/change`, `username.change`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| The change demands a fresh session | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | `test/auth-username-change.test.ts` | — none — |
+| The account bucket is drawn | S-RATE-7 | `src/core/auth/routes.ts:usernameRoutes` | `test/auth-username-change.test.ts` | — none — |
+| Only the account of the resolved session is changed | S-OWNER-7 | `src/core/auth/routes.ts:usernameRoutes` | `test/auth-username-change.test.ts` | — none — |
+| The unique index decides, a race answers `username_taken` | — none — | `src/core/auth/routes.ts:usernameRoutes` | `test/auth-username-change.test.ts` | `test/auth-username-change.test.ts` |
+
+#### `W-PASSWORD-SET` — Adding a password to an account without one
+
+Routes and methods: `POST /password/set`, `password.set`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| Demands a fresh session | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | `test/auth-password-routes.test.ts` | `test/auth-password-routes.test.ts` |
+| An existing password is never replaced without the current one | — none — | `src/core/password/set-credential.ts:refuseUnlessTheReadHoldsTheCheckedPassword` | `test/auth-password-routes.test.ts` | `test/password-set-race.test.ts` |
+| Every other session is revoked and a new one issued | S-FIX-6 | `src/core/password/set-credential.ts:replacePasswordOfSession` | `test/auth-password-routes.test.ts` | `test/password-change-concurrent-writers.test.ts` |
+| A session a concurrent change revoked is not reissued | S-RACE-5 | `src/core/password/set-credential.ts:refuseUnlessCallingSessionIsAmong` | `test/password-change-concurrent-writers.test.ts` | `test/password-change-concurrent-writers.test.ts` |
+| Policy and length before the KDF | S-DOS-1 | `src/core/password/policy.ts:acceptNewPassword` | `test/password-policy.test.ts` | `test/dos-oversized-password-proof.test.ts` |
+
+#### `W-PASSWORD-CHANGE` — Changing the password
+
+Routes and methods: `POST /password/change`, `password.change`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| Demands a fresh session | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | `test/auth-password-routes.test.ts` | `test/auth-password-routes.test.ts` |
+| The current password runs through the same check sequence as the sign-in | S-TIM-1 | `src/core/password/routes.ts:passwordRoutes` | `test/auth-password-routes.test.ts` | `test/auth-password-routes.test.ts` |
+| The checked password must still be the stored one under the lock | S-INTEG-4 | `src/core/password/set-credential.ts:refuseUnlessTheReadHoldsTheCheckedPassword` | `test/password-change-concurrent-writers.test.ts` | `test/password-set-race.test.ts` |
+| Every other session is revoked, with no switch | S-FIX-6 | `src/core/password/set-credential.ts:replacePasswordOfSession` | `test/auth-password-routes.test.ts` | `test/default-revocation-switch-proof.test.ts` |
+| A new session replaces the calling one in the same transaction | S-RACE-5 | `src/core/password/set-credential.ts:replacePasswordOfSession` | `test/auth-password-routes.test.ts` | `test/race-credential-change-rollback-proof.test.ts` |
+
+#### `W-TOTP-ENROL` — Enrolling TOTP
+
+Routes and methods: `POST /factor/totp/enroll/start`, `POST /factor/totp/enroll/finish`, `factor.totp.enroll.start`, `factor.totp.enroll.finish`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| Demands a fresh session | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | `test/totp-enrolment.test.ts` | — none — |
+| An unconfirmed secret counts as no factor | — none — | `src/core/factor/totp/service.ts:createTotpService` | `test/spine-available-factors.test.ts` | `test/totp-enrolment.test.ts` |
+| The secret lies AES-256-GCM encrypted and bound to the account | S-REST-4 | `src/core/factor/totp/service.ts:createTotpService` | `test/totp-enrolment.test.ts` | `test/integ-envelope-binding.test.ts` |
+| The confirmation demands a valid code and spends its time step | S-REPLAY-4 | `src/core/factor/totp/service.ts:createTotpService` | `test/totp-enrolment.test.ts` | `test/totp-enrolment.test.ts` |
+| Enrolling issues no new session and revokes none | O-3 | `src/core/factor/totp/service.ts:createTotpService` | — none — | — none — |
+
+#### `W-TOTP-REMOVE` — Removing TOTP
+
+Routes and methods: `POST /factor/totp/remove`, `factor.totp.remove`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| Demands a fresh session | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | — none — | — none — |
+| Removing demands a valid code of the factor | S-REPLAY-4 | `src/core/factor/totp/service.ts:createTotpService` | `test/totp-enrolment.test.ts` | — none — |
+| The account bucket is drawn before the check | S-RATE-7 | `src/core/factor/routes.ts:spendAccountToken` | — none — | — none — |
+| Removing revokes no other session | O-3 | `src/core/factor/totp/service.ts:createTotpService` | — none — | — none — |
+
+#### `W-PASSKEY-REGISTER` — Registering a passkey in a session
+
+Routes and methods: `POST /factor/webauthn/register/start`, `POST /factor/webauthn/register/finish`, `factor.webauthn.register.start`, `factor.webauthn.register.finish`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| Demands a fresh session | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | `test/auth-webauthn-routes.test.ts` | — none — |
+| The challenge is bound to account and registration | S-REPLAY-5 | `src/core/factor/webauthn/challenge.ts:createWebAuthnChallenges` | `test/webauthn-registration.test.ts` | `test/webauthn-challenge.test.ts` |
+| Origin, RP ID and user presence are checked | O-8 | `src/core/factor/webauthn/service.ts:createWebAuthnService` | `test/webauthn-registration.test.ts` | — none — |
+| With `requireDiscoverableCredential` only a discoverable passkey is registered | S-DEFAULT-8 | `src/core/factor/webauthn/verification.ts:assertClientReportsADiscoverableCredential` | `test/discoverable-registration-flow.test.ts` | `test/discoverable-registration-flow.test.ts` |
+| Under a list only an authenticator with verified attestation | S-INTEG-13 | `src/core/factor/webauthn/service.ts:refuseAnAuthenticatorOutsideTheList` | `test/verified-attestation-flow.test.ts` | `test/verified-attestation-flow.test.ts` |
+| At most `limits.passkeysPerAccount` passkeys | S-INTEG-10 | `src/core/security-state/limits.ts:assertBelowCredentialLimit` | `test/security-state-limits-cap.test.ts` | `test/security-state-limits-cap.test.ts` |
+| Registering issues no new session and revokes none | O-3 | `src/core/factor/webauthn/service.ts:createWebAuthnService` | — none — | — none — |
+
+#### `W-PASSKEY-REMOVE` — Removing or renaming a passkey
+
+Routes and methods: `POST /factor/webauthn/remove`, `POST /factor/webauthn/rename`, `factor.webauthn.remove`, `factor.webauthn.rename`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| Only a passkey of the calling account is removed, a foreign one answers like an invented one | S-OWNER-3 | `src/core/identity/sign-in-methods.ts:removeSignInMethod` | `test/webauthn-ownership.test.ts` | `test/webauthn-ownership.test.ts` |
+| The last way in is not removed | L-13 | `src/core/factor/webauthn/service.ts:refuseRemovingTheLastUsablePasskey` | `test/webauthn-ownership.test.ts` | `test/identity-last-method-race.test.ts` |
+| Renaming acts on own rows alone | S-OWNER-8 | `src/core/factor/webauthn/credential-repository.ts:createWebAuthnCredentialRepository` | `test/webauthn-ownership.test.ts` | `test/webauthn-ownership.test.ts` |
+| Removing demands a fresh session | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | — none — | — none — |
+| Removing revokes no other session | O-3 | `src/core/factor/webauthn/service.ts:createWebAuthnService` | — none — | — none — |
+
+#### `W-RECOVERY-CODES-GENERATE` — Generating recovery codes
+
+Routes and methods: `POST /factor/recovery/generate`, `factor.recovery.generate`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| Demands a fresh session | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | — none — | — none — |
+| Ten codes of 160 bits, pairwise distinct | S-RAND-3 | `src/core/factor/recovery/code.ts:createRecoveryCodeSet` | `test/recovery-codes.test.ts` | `test/recovery-codes.test.ts` |
+| A new set replaces the old one in the same transaction | S-REST-3 | `src/core/factor/recovery/service.ts:createRecoveryCodeService` | `test/recovery-codes.test.ts` | — none — |
+| With recovery switched off no code is generated | S-INTEG-11 | `src/core/factor/recovery/service.ts:createRecoveryCodeService` | `test/no-recovery-switch-mailed-paths.test.ts` | `test/no-recovery-switch-mailed-paths.test.ts` |
+
+#### `W-ADMIN-DISABLE` — Disabling and enabling an account
+
+Routes and methods: `user.disable`, `user.enable`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| In the application's process alone, without a route | — none — | `src/core/auth/instance.ts:setDisabledUnderTheSeal` | `test/session-resolution.test.ts` | — none — |
+| The change is a sealed change under the account lock | S-INTEG-3 | `src/core/auth/instance.ts:setDisabledUnderTheSeal` | `test/security-state-sealing.test.ts` | — none — |
+| Every session ends at its next request | S-CACHE-3 | `src/core/session/service.ts:resolveAndExtend` | `test/session-resolution.test.ts` | `test/session-resolution.test.ts` |
+
+#### `W-ADMIN-RECOVERY-SWITCH` — Setting the no-recovery switch
+
+Routes and methods: `user.disableRecovery`, `user.enableRecovery`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| The switch is a sealed change without a route | S-INTEG-11 | `src/core/security-state/recovery-switch.ts:setRecoveryDisabled` | `test/no-recovery-switch-seal.test.ts` | `test/no-recovery-switch-review-writer.test.ts` |
+| Switching on deletes the codes and withdraws every mailed link | S-INTEG-11 | `src/core/security-state/recovery-switch.ts:setRecoveryDisabled` | `test/no-recovery-switch-seal.test.ts` | `test/no-recovery-switch-mailed-paths.test.ts` |
+| A waiting recovery is cancelled with it | S-INTEG-12 | `src/core/security-state/recovery-switch.ts:setRecoveryDisabled` | `test/passkey-recovery-integrity.test.ts` | — none — |
+
+#### `W-ADMIN-AUTHENTICATOR-LIMIT` — Setting and lifting the authenticator allowlist
+
+Routes and methods: `user.limitAuthenticators`, `user.liftAuthenticatorLimit`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| A list without configured roots is refused | S-INTEG-13 | `src/core/auth/instance.ts:allowlistToLimitTo` | `test/verified-attestation-flow.test.ts` | `test/verified-attestation-flow.test.ts` |
+| An account without a usable way in is left only on explicit request | S-INTEG-13 | `src/core/security-state/authenticator-allowlist.ts:setAuthenticatorAllowlist` | `test/verified-attestation-flow.test.ts` | — none — |
+| The list is a sealed change, a writer cannot widen it | S-INTEG-13 | `src/core/security-state/authenticator-allowlist.ts:setAuthenticatorAllowlist` | `test/verified-attestation-flow.test.ts` | `test/verified-attestation-review-flows.test.ts` |
+
+#### `W-ADMIN-RESEAL` — Sealing and resealing by the operator
+
+Routes and methods: `maintenance.sealSecurityState`, `maintenance.resealSecurityState`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| Only the reseal with a non-empty reason seals a broken state | S-INTEG-7 | `src/core/auth/security-state-maintenance.ts:resealAccount` | `test/security-state-reseal.test.ts` | `test/security-state-reseal.test.ts` |
+| The reseal signs every session out | S-INTEG-7 | `src/core/auth/security-state-maintenance.ts:resealUnderAccountLock` | `test/security-state-reseal.test.ts` | — none — |
+| A switch a writer cleared is not ratified | S-INTEG-11 | `src/core/auth/security-state-maintenance.ts:withTheConfirmedSwitch` | `test/no-recovery-switch-reseal.test.ts` | `test/no-recovery-switch-reseal.test.ts` |
+| A list or attestation the seal does not confirm is not ratified | S-INTEG-13 | `src/core/auth/security-state-maintenance.ts:withTheConfirmedAllowlist` | `test/verified-attestation-review-flows.test.ts` | `test/verified-attestation-review-flows.test.ts` |
+| The first sealing is idempotent and resumable | S-INTEG-8 | `src/core/auth/security-state-maintenance.ts:sealOneAccount` | `test/security-state-maintenance.test.ts` | `test/security-state-maintenance-tamper.test.ts` |
+
+#### `W-TOKEN-RESOLVE` — Resolving a mailed link without spending it
+
+Routes and methods: `oneTimeToken.resolve`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| In the application's process alone, without a route | S-TOKEN-7 | `src/core/auth/instance.ts:oneTimeTokenSurfaceIn` | `test/token-resolution-surface.test.ts` | — none — |
+| Answers only where the redemption would take effect, `null` otherwise | S-TOKEN-7 | `src/core/token/resolution.ts:createOneTimeTokenResolution` | `test/token-resolution-resolve.test.ts` | `test/token-resolution-review-oracle.test.ts` |
+| A forged row answers like a missing one | S-INTEG-9 | `src/core/token/resolution.ts:createOneTimeTokenResolution` | `test/token-resolution-resolve.test.ts` | `test/token-resolution-review-oracle.test.ts` |
+
+#### `W-PLUGIN` — What a plugin reaches of sessions and factors
+
+Routes and methods: `VelvePlugin.hooks`, `VelvePlugin.routes`, `VelvePlugin.securityStateAnchor`, `FrozenContext.repositories`.
+
+| Guard | Requirement | Enforced in | Legitimate path | Attack |
+|---|---|---|---|---|
+| A hook can refuse or observe, never replace the answer | S-OWNER-12 | `src/core/plugin/sign-in.ts:createSessionUnderHooks` | `test/plugin-sign-in-hooks.test.ts` | `test/plugin-boundary.test.ts` |
+| The frozen context has no writing method on account, password or factor | S-OWNER-10 | `src/core/plugin/context.ts:createFrozenRepositories` | `test/plugin-frozen-context.test.ts` | `test/plugin-frozen-context.test.ts` |
+| Plugin SQL runs under a role without rights on the core tables | S-OWNER-10 | `src/core/plugin/own-tables.ts:createOwnTables` | `test/plugin-sql-role.test.ts` | `test/plugin-sql-role.test.ts` |
+| A plugin route cannot override a core route | S-OWNER-11 | `src/core/plugin/registry.ts:assertNoCoreRouteIsOverwritten` | `test/plugin-route-conflict-contributors.test.ts` | `test/plugin-route-conflict-contributors.test.ts` |
+| A plugin route cannot exempt itself from the origin check | S-CSRF-6 | `src/core/plugin/registry.ts:assertNoRouteExemptsItselfFromTheOriginCheck` | `test/plugin-security-order.test.ts` | `test/plugin-security-order.test.ts` |
+| No plugin brings a session resolver or a cache | S-CACHE-5 | `src/core/plugin/registry.ts:assertNoFieldOutsideTheInterface` | `test/plugin-boundary.test.ts` | `test/plugin-boundary.test.ts` |
+| An anchor sets a floor and refuses a rolled-back state | S-INTEG-6 | `src/core/security-state/anchor.ts:consultAnchors` | `test/security-state-anchor-port.test.ts` | `test/security-state-anchor-rollback.test.ts` |
+| A plugin handler receives the plaintext session token and a cookie writer | O-4 | `src/core/http/pipeline.ts:createRequestContext` | — none — | — none — |
 
 ---
 

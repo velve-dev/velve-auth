@@ -55,7 +55,7 @@ Velve Auth ist eine Anmeldebibliothek für TypeScript und PostgreSQL, die im Pro
 2. Sprache und Laufzeit — die Bewertung, die Messungen, die Empfehlung
 3. Zielarchitektur — Paketstruktur, Schema, Sitzungen, Prüfpfad, Identität, zweiter Faktor, Tokens, Schlüssel, Ratenbegrenzung, Drittanbieter, Plugins, öffentliche Schnittstelle, Fehlerbehandlung, entschiedene Lücken, Integrität des Sicherheitszustands
 4. Migrationsmodul — fünf Quellen, je Quellschema, Zuordnung, Hash-Übernahme, Verluste, Folgearbeit
-5. Sicherheitsanforderungen — 149 Anforderungen in neunzehn Fehlerklassen, mit Abdeckungstabelle der 33 Advisories
+5. Sicherheitsanforderungen — 149 Anforderungen in neunzehn Fehlerklassen, mit Abdeckungstabelle der 33 Advisories, dem Bedrohungsmodell und der Karte der Wege in ein Konto
 6. Prüfplan — 153 Testfälle mit vorab festgelegten Schwellen
 7. Entscheidungsprotokoll — E-01 bis E-46, Ausgangsbestand für die Fallstudie
 
@@ -4536,6 +4536,48 @@ Der Entwurf wird hier **nicht** geändert. Wo die Ausarbeitung eine Lücke in de
 
 ---
 
+### 5.0 Bedrohungsmodell
+
+Die Bibliothek schützt eine Antwort: **wer angemeldet ist.** Niemand soll in ein Konto gelangen, das nicht seines ist — keine Sitzung erhalten, keinen Anmeldeweg hinzufügen und weder Adresse noch Faktoren noch Wiederherstellung eines fremden Kontos ändern —, und kein Geheimnis und kein personenbezogenes Datum, das die Bibliothek hält, soll jemand lesen, dem es nicht gehört. Die Fehlerklassen 5.1 bis 5.21 beschreiben je einen mechanischen Fehler; dieser Abschnitt beschreibt die Angreifer quer zu ihnen, nennt, welche Klassen gegen welchen Angreifer stehen, und benennt, was offen ist. Abschnitt 5.22 ordnet jedem Weg in ein Konto seine Wächter zu.
+
+Offenes trägt eine Kennung `O-<Nr>` und keine `S-`-Kennung, solange kein Test die Zusage prüft; die Behebung macht daraus eine Anforderung der passenden Klasse mit Testfall in Abschnitt 6.
+
+| Angreifer | Was er hält oder kann | Was ihn aufhält | Offen |
+|---|---|---|---|
+| Außenstehender ohne Konto | ruft jede Route auf, aus seinem Browser oder über eine fremde Seite im Browser des Opfers; probiert Adressen und Namen aus; rät Tokens und Codes; flutet; schickt Anfragen gleichzeitig | TIM, ENUM, RAND, REPLAY, RATE, DOS, CSRF, COOKIE, RACE | O-6 |
+| Außenstehender mit eigenem Konto | kennt die Kennungen, Tokens und Links seines eigenen Kontos und hält ein eigenes Konto bei einem Anbieter; setzt fremde Kennungen ein, trägt ein Token in eine andere Absicht, schiebt dem Opfer seine Sitzung unter | OWNER, TOKEN, LINK, FIX, CSRF | O-5 |
+| Inhaber des Postfachs des Opfers | erhält jeden gemailten Link: Magic Link, Reset, Bestätigung, Adresswechsel, Wiederherstellung auf einen neuen Passkey | FIX (zweiter Faktor vor jedem gemailten Reset), ENUM, LINK, INTEG (Wartezeit der Wiederherstellung) | O-9 |
+| Inhaber eines gestohlenen Geheimnisses | hält eine alte Sitzung, einen Wiederherstellungscode, das Kennwort oder einen kopierten Link des Opfers | CACHE, FIX, REPLAY, RACE | O-1, O-2, O-3 |
+| Bösartige oder nachlässige Anwendung, bösartiges Plugin | ruft Methoden ohne Route ohne eigene Berechtigungsentscheidung auf; ein Plugin registriert Hooks, Routen, eigenes SQL und einen Anker | OWNER, CSRF, CACHE, DEFAULT | O-4 |
+| Leser der Datenbank | hält einen `pg_dump`, eine Sicherung oder eine Replik | REST, KEY | — |
+| Schreiber auf der Datenbank ohne Wurzelschlüssel | fügt Zeilen ein, ändert und löscht sie, spielt alte Zeilen zurück | INTEG | die benannten Grenzen aus 3.18 |
+| Inhaber des Wurzelschlüssels | hat alles | — | außerhalb des Modells |
+| Lieferkette und veröffentlichtes Paket | eine Abhängigkeit, das veröffentlichte Paket, der Release-Workflow | die Gate-Prüfungen und die festen Abhängigkeiten aus den Regeln | O-7 |
+
+Eine Anwendung, die eine Methode ohne Route aufruft — `user.*`, `maintenance.*`, `oneTimeToken.resolve` —, hat ihre Berechtigungsentscheidung vorher getroffen (3.15 B.3, B.8); die Bibliothek kann diese Entscheidung nicht prüfen, und gegen eine Anwendung, die sie nicht trifft, schützt sie nicht. Was die Bibliothek ihr abnimmt, ist, dass auch der direkte Aufruf einer Methode mit Route Origin-Prüfung, Ratenbegrenzung und Hooks durchläuft (S-CSRF-1).
+
+**Bewusste Positionen.** Nicht als offen gezählt, weil 3.15 B.1 und 3.6 sie entschieden haben: Eine Passkey-Anmeldung ergibt eine Sitzung mit `webauthn` allein, auch wenn das Konto ein Kennwort und TOTP hat, weil ein Passkey mit Nutzerverifikation zwei Faktoren in einem ist. Ein Magic Link und ein gemailter Reset öffnen ein Konto ohne zweiten Faktor mit dem Postfach allein; mit zweitem Faktor ergeben sie einen Zwischenzustand. Benutzernamen sind aufzählbar, sobald `GET /username/available` angeboten wird (S-ENUM-8).
+
+**O-1 — Frische ist ein Wächter ohne Anforderung.** Jede Methode mit `freshness: "required"` verlangt eine Sitzung jünger als `freshnessWindow` (3.15 B.9), und der Wächter steht in `assertSessionIsFresh`. Keine Anforderung in Abschnitt 5 nennt ihn, und kein Testfall in Abschnitt 6 hat ihn zum Gegenstand — T-INTEG-9 benutzt ihn nur, um zu zeigen, dass ein Schreiber `created_at` nicht erneuern kann; was die Hürde für einen Angreifer mit einer gestohlenen, alten Sitzung ist, ist damit Code und keine Zusage.
+
+**O-2 — Der Reset mit Wiederherstellungscode verlangt keinen weiteren Faktor.** `password.redeemResetWithRecoveryCode` schreibt mit dem Bezeichner und einem einzigen Code ein neues Kennwort und gibt eine Sitzung aus, auch wenn das Konto TOTP oder einen Passkey hat. Der gemailte Reset hält dagegen für jeden zweiten Faktor zurück (S-FIX-7). Wer einen Code gestohlen hat, braucht also weniger als die Anmeldung verlangt.
+
+**O-3 — Ein Faktor oder eine Adresse ändert sich, ohne dass Sitzungen neu ausgegeben oder widerrufen werden.** TOTP einrichten und entfernen, einen Passkey registrieren und entfernen, eine Identität lösen und die Adresse ändern geben der aufrufenden Sitzung kein neues Token und widerrufen keine andere Sitzung. S-FIX-1 nennt diese Ereignisse nicht; wer eine Sitzung gestohlen hat, behält sie, nachdem der Inhaber einen Faktor entfernt oder ergänzt hat.
+
+**O-4 — Eine Plugin-Route erhält Klartext-Tokens und kann das Sitzungs-Cookie setzen.** Der `RequestContext` einer Plugin-Route trägt `sessionToken` und `pendingToken` im Klartext und einen `CookieWriter` mit `setSession`, und ein Feld `sessionToken` in der Ausgabe jeder Route wird ins Sitzungs-Cookie verschoben. 3.15 G sagt, ein Plugin habe keinen Zugriff auf Sitzungs-Tokens; ein bösartiges Plugin kann damit Sitzungen mitlesen und eine Sitzung unterschieben.
+
+**O-5 — Die automatische Verknüpfung bleibt, auch wenn der zweite Faktor scheitert.** Die automatische Verknüpfung schreibt die Identität, bevor der zweite Faktor des Kontos bestanden ist. Scheitert er, bleibt die Identität verknüpft; jede spätere Anmeldung über sie verlangt zwar den Faktor wieder, aber das Konto hat einen Weg hinein mehr, den sein Inhaber nicht angelegt hat.
+
+**O-6 — Der Kontoeimer hängt am Aufruf im Handler.** Eine Route, die einen Kontoeimer deklariert, zieht ihn nur, wenn ihr Handler `enforceAccountRateLimit` aufruft. Vergisst er das, protokolliert die Pipeline eine Warnung und lässt die Anfrage durch; die Deklaration allein schützt nichts.
+
+**O-7 — Lieferkette und veröffentlichtes Paket haben keine Anforderung.** Abhängigkeiten, Lockfile, der Inhalt des veröffentlichten Pakets und der Release-Workflow sind durch Gate-Prüfungen und Tests abgedeckt, aber durch keine Anforderung in Abschnitt 5.
+
+**O-8 — Die Prüfungen einer WebAuthn-Zeremonie außer der Challenge haben keine Anforderung.** Origin der `clientDataJSON`, RP-ID-Hash, Nutzeranwesenheit und Nutzerverifikation werden bei jeder Zeremonie geprüft, in `assertOriginIsExpected`, `assertRelyingPartyIsExpected` und `assertUserWasVerified`. S-REPLAY-5 verlangt nur die Challenge; was eine Antwort aus einem anderen Origin oder ohne Verifikation abweist, ist Code und keine Zusage.
+
+**O-9 — Dass Magic Link und Anbieter in den Zwischenzustand führen, steht nirgends fest.** S-FIX-4 verlangt den Zwischenzustand nach einem richtigen Kennwort, S-FIX-7 nach einem gemailten Reset. Dass ein Magic Link und eine Anmeldung über einen Anbieter bei einem Konto mit zweitem Faktor ebenfalls nur einen Zwischenzustand ergeben, ist Code (`redeemMagicLink`, `signInOrAskForTheSecondFactor`) und keine Anforderung.
+
+---
+
 ### 5.1 TIM — Zeitangriffe
 
 **(a) Die Fehlerklasse.** Konstante Laufzeit ist keine Eigenschaft der Vergleichsfunktion, sondern des gesamten Request-Pfades. Ein früher `return`, bevor das KDF läuft, erzeugt ein Signal von 50–250 ms und ist über das Netz mit wenigen Dutzend Messungen sichtbar; ein Early-Exit-Stringvergleich auf einem Geheimnis erzeugt ein Sub-Nanosekunden-Signal, das nur ein In-Process-Angreifer verwertet. Dazwischen liegen datenabhängige Datenbankpfade (Index-Treffer vs. Fehltreffer, zusätzlicher Join) im Bereich 0,1–2 ms. Der Angreifer nutzt das Signal nicht, um ein Passwort zu raten, sondern um eine Liste von 10 Mio. Adressen auf die paar Tausend zu reduzieren, die bei diesem Dienst tatsächlich Konten haben.
@@ -4975,6 +5017,502 @@ Bei der Ausarbeitung dieses Abschnitts und des Prüfplans wurden dreizehn Lücke
 - **S-INTEG-11:** Der Schalter ohne Wiederherstellung ist ein Bestandteil des Siegels und ändert sich ausschließlich durch `user.disableRecovery` und `user.enableRecovery`, ohne HTTP-Route, als versiegelte Änderung unter der Kontosperre. Das Einschalten löscht in derselben Transaktion jeden Wiederherstellungscode des Kontos und zieht die Generationen von `password_reset` und `magic_link` und die `attempt_generation` neu, das Ausschalten die beiden Generationen der Links; beide behalten die Epoche und widerrufen keine Sitzung; beide Aufrufe werden mit Ereignisnamen und `userId`, ohne Adresse, protokolliert und nicht gespeichert. Leert oder setzt ein Schreiber ohne den Wurzelschlüssel `recovery_disabled_at`, ist der Zustand gebrochen: Anmeldung, Sitzungsauflösung und die Einlösung eines Links lehnen ab und lösen den Alarm aus. Eine Neuversiegelung, deren gespeichertes Siegel den Stand nicht bestätigt, lehnt bei ausgeschaltetem Schalter mit `security_state_recovery_switch_unconfirmed` ab, solange der Aufrufer ihn nicht mit `recoveryDisabled` nennt, ebenso wenn das gespeicherte Siegel mit dem umgekehrten Schalter gilt; nennt er ihn, schreibt sie diesen Wert; endet sie mit eingeschaltetem Schalter, löscht sie jeden Wiederherstellungscode, und sie meldet den Schalter in ihrem Ergebnis. Ein Konto, das den Schalter nie eingeschaltet hat, behält Kodierung und Siegel. *(Abschnitt 3.18, Der Schalter ohne Wiederherstellung)*
 - **S-INTEG-12:** Eine wartende Wiederherstellung auf einen neuen Passkey — ihr gehaltener Passkey und ihr Aktivierungszeitpunkt — und die Generation des Zwecks `passkey_recovery` sind Bestandteile des Siegels; Beginn, Abbruch und Aktivierung sind versiegelte Änderungen unter der Kontosperre. Vor der Aktivierung meldet kein Anmelde- und kein Faktorweg mit dem gehaltenen Passkey an, und L-13 zählt ihn nicht. Die Aktivierung geschieht erst ab `activates_at` nach der Datenbankuhr und nur, wenn die geprüfte Lesung die Wiederherstellung noch hält, das Konto nicht deaktiviert und der Schalter aus ist; sie entfernt in einer Transaktion Kennwort, TOTP, jeden anderen Passkey, jeden Wiederherstellungscode, jede verknüpfte Identität und jede Sitzung, diese mit `beforeSessionRevoke`, zieht eine neue Epoche und neue Generationen aller Zwecke der Einmal-Tokens und der Versuche und lässt den gehaltenen Passkey als einzigen Weg hinein. Ein Schreiber ohne den Wurzelschlüssel, der die Wartezeit verkürzt, eine Wiederherstellung einem anderen Konto zuschreibt, pflanzt oder eine abgebrochene zurückschreibt, bricht den Zustand. Das Einschalten des Schalters bricht eine wartende Wiederherstellung ab, und Ein- wie Ausschalten ziehen die Generation von `passkey_recovery` neu. *(Abschnitt 3.18, Die Wiederherstellung auf einen neuen Passkey)*
 - **S-INTEG-13:** Mit `webauthn.attestation` gilt eine Attestierung nur als bestätigt, wenn sie eine volle Attestierung im Format `packed` ist, eine AAGUID nennt und ihre Kette ohne Abruf einer Sperrliste zu einer konfigurierten Wurzel führt, und `none`, eine Selbstattestierung und jedes andere Format nie; eine Registrierung fordert `attestation: "direct"` nur für ein Konto mit Liste oder mit `requestForEveryAccount` an, sonst `"none"`. Hält ein Konto eine Liste aus `user.limitAuthenticators`, wird jede Registrierung eines Passkeys, der sie nicht erfüllt, ohne Zeile abgelehnt — in einer Sitzung mit `authenticator_not_allowed`, in der Wiederherstellung mit `passkey_recovery_failed` —, und die Passkey-Anmeldung und der Passkey als zweiter Faktor lehnen einen solchen Passkey vor der Signaturprüfung mit derselben Antwort ab wie einen unbekannten. Die Liste und die AAGUID jedes Passkeys mit bestätigter Attestierung sind Bestandteile des Siegels: Ein Schreiber ohne den Wurzelschlüssel, der eine AAGUID hinzufügt, die Liste entfernt, ein Flag setzt oder eine AAGUID ändert, bricht den Zustand, und keine Neuversiegelung bestätigt eine Liste oder eine Attestierung, die das gespeicherte Siegel nicht bestätigt. Eine Liste, die dem Konto keinen nutzbaren Anmeldeweg lässt, wird ohne `allowNoUsableSignInMethod: true` mit `last_sign_in_method` abgelehnt (L-13). Keine Registrierung, mit oder ohne `webauthn.attestation`, übergibt dem Prüfer ein Zertifikat, das eine Sperrliste nennt, oder ein Attestierungsobjekt, das sie nicht streng lesen kann; eine solche Kette wird als Attestierung `none` geprüft und bleibt unbestätigt. Ohne Liste ändert sich sonst nichts. *(Abschnitt 3.18, Die bestätigte Attestierung und die Liste der Authenticatoren)*
+
+---
+
+### 5.22 Die Wege in ein Konto
+
+Ein Weg in ein Konto ist jeder Pfad, der in einer Sitzung endet, in einem hinzugefügten Anmeldeweg oder in einer Änderung von Adresse, Faktoren oder Wiederherstellung eines Kontos; dazu gehören das Vorlegen einer bestehenden Sitzung und der Zwischenzustand, weil beide über Zugang entscheiden. Jeder Weg trägt eine feste Kennung `W-…`; die Tabelle nennt je Wächter die Anforderung, die er umsetzt, die Datei und Funktion, die ihn durchsetzt, einen Test, der den legitimen Weg beweist, und einen Test, der den Angriff beweist. `— keiner —` heißt, dass es diesen Test noch nicht gibt; `— keine —` in der Spalte der Anforderung heißt, dass kein `S-` und kein `L-` den Wächter verlangt.
+
+Jeder Weg mit einer Route durchläuft außerdem die Wächter von `W-EVERY-ROUTE`. Dieselbe Karte liegt maschinenlesbar in `test/attacks/map.json`; `test/attacks/map.test.ts` hält beide gleich.
+
+Was nicht hineingehört: lesende Routen, die nichts ausgeben, das Zugang gewährt (`GET /session/list`, `GET /factor/webauthn/list`, `GET /factor/recovery/remaining`, `GET /identity/list`, `GET /username/available`, `GET /proof-of-work/challenge`), die Suchmethoden `user.findById`, `user.findByEmail`, `user.findByUsername`, `user.delete`, das ein Konto entfernt und keines öffnet, und `maintenance.sweep`, das nur Abgelaufenes löscht.
+
+#### `W-EVERY-ROUTE` — Was jede Route durchläuft
+
+Routen und Methoden: `toWebHandler`, `createServerMethod`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Der `Origin` muss gleich einem Eintrag von `origins` sein, bevor irgendetwas anderes läuft | S-CSRF-1 | `src/core/http/pipeline.ts:runRoute` | `test/http-origin.test.ts` | `test/csrf-every-route-both-paths.test.ts` |
+| Der Vergleich ist Gleichheit auf `new URL(x).origin`, ohne Präfix oder Muster | S-CSRF-2 | `src/core/http/origin.ts:isOriginAllowed` | `test/http-origin.test.ts` | `test/http-origin.test.ts` |
+| Der Eimer je IP-Präfix und Route wird vor dem Handler gezogen | S-RATE-1 | `src/core/http/pipeline.ts:enforceIpAddressRateLimit` | `test/limit-address-key.test.ts` | `test/limit-pipeline.test.ts` |
+| `X-Forwarded-For` zählt nur bei konfigurierten `trustedProxies` | S-RATE-3 | `src/core/limit/client-address.ts:resolveClientAddress` | `test/http-trusted-proxies.test.ts` | `test/http-trusted-proxies.test.ts` |
+| Der Kontoeimer ist auf den normalisierten Bezeichner geschlüsselt, gebildet vor der Auflösung des Kontos | S-RATE-7 | `src/core/http/pipeline.ts:createAccountBucket` | `test/limit-account.test.ts` | `test/limit-account.test.ts` |
+| Wo konfiguriert, wird der Arbeitsnachweis vor dem Kontoeimer, jeder KDF und jeder Mail ausgegeben | S-RATE-11 | `src/core/http/pipeline.ts:spendProofOfWorkBeforeTheHandler` | `test/proof-of-work-requests.test.ts` | `test/proof-of-work-review-attacks.test.ts` |
+| Eine Sitzung als Aufrufer kommt nur aus dem Cookie und wird durch eine Datenbankabfrage aufgelöst | S-CACHE-1 | `src/core/http/pipeline.ts:resolveSession` | `test/session-resolution.test.ts` | `test/session-resolution.test.ts` |
+| Eine Route mit `freshness: "required"` verlangt eine Sitzung jünger als `freshnessWindow` | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | `test/auth-password-routes.test.ts` | `test/session-lifecycle.test.ts` |
+| Nur die deklarierten Routen sehen das Zwischenzustands-Cookie | S-CACHE-4 | `src/core/http/pipeline.ts:createRequestContext` | `test/http-pending-visibility.test.ts` | `test/cache-pending-ignored-proof.test.ts` |
+| Zwei Cookies gleichen Namens werden abgewiesen statt eines auszuwählen | S-COOKIE-5 | `src/core/http/cookies.ts:readCookies` | `test/http-cookie-policy.test.ts` | `test/http-cookie-policy.test.ts` |
+| Was der Aufrufer über einen Fehler erfährt, entscheidet allein die Fehlerkarte | S-ENUM-6 | `src/core/http/error-map.ts:toVisibleFailure` | `test/http-error-map.test.ts` | `test/http-error-map.test.ts` |
+| Plugin-Code läuft erst nach Origin-Prüfung und Ratenbegrenzung | S-CSRF-6 | `src/core/http/pipeline.ts:runRoute` | `test/plugin-security-order.test.ts` | `test/plugin-security-order.test.ts` |
+
+#### `W-SESSION-USE` — Eine bestehende Sitzung vorlegen
+
+Routen und Methoden: `GET /session`, `session.resolve`, `session.resolveFromHeaders`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Gesucht wird nur nach `sha256(token)`, nie nach dem Klartext | S-TIM-4 | `src/core/session/service.ts:verifiedSession` | `test/session-token.test.ts` | — keiner — |
+| Leerlauf- und absolute Frist stehen in der einen Abfrage | S-CACHE-2 | `src/core/db/repositories/session.ts:findSessionByTokenHash` | `test/session-resolution.test.ts` | `test/session-resolution.test.ts` |
+| Eine Zeile, deren MAC nicht stimmt, ist keine Sitzung | S-INTEG-9 | `src/core/session/binding.ts:librarySessionBinding` | `test/integ-token-binding.test.ts` | `test/integ-token-tampered-columns.test.ts` |
+| Das Siegel wird aus derselben Abfrage geprüft, bevor die Sitzung benutzt wird | S-INTEG-4 | `src/core/security-state/runtime.ts:sessionStateCheckOf` | `test/security-state-checking.test.ts` | `test/security-state-checking.test.ts` |
+| Eine Zeile aus einer Epoche vor der letzten Massenwiderrufung löst nicht auf | S-INTEG-3 | `src/core/session/service.ts:verifiedSession` | `test/security-state-session-epoch.test.ts` | `test/security-state-session-epoch.test.ts` |
+| Ein deaktiviertes Konto endet bei der nächsten Anfrage mit `account_disabled` | S-CACHE-3 | `src/core/session/service.ts:resolveAndExtend` | `test/session-resolution.test.ts` | `test/session-resolution.test.ts` |
+| Das Sitzungs-Token sind 32 zufällige Bytes in base64url | S-RAND-2 | `src/core/session/token.ts:createSessionToken` | `test/session-token.test.ts` | `test/rand-session-token-proof.test.ts` |
+| Das Cookie trägt `__Host-`, `HttpOnly`, `Secure`, `SameSite=Lax` und keine `Domain` | S-COOKIE-1 | `src/core/http/cookies.ts:serializeCookie` | `test/http-cookie-policy.test.ts` | `test/cookie-option-surface-proof.test.ts` |
+| Das Cookie enthält nur das Token, kein Prüfergebnis | S-COOKIE-4 | `src/core/http/web-handler.ts:moveTokensIntoCookies` | `test/http-cookie-policy.test.ts` | `test/cookie-session-value-proof.test.ts` |
+
+#### `W-SESSION-REFRESH` — Eine Sitzung verlängern
+
+Routen und Methoden: `POST /session/refresh`, `session.refresh`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Die Verlängerung schiebt nur die Leerlauffrist, nie die absolute Frist | — keine — | `src/core/session/service.ts:resolveAndExtend` | `test/session-resolution.test.ts` | `test/session-review-deadlines.test.ts` |
+| Eine Verlängerung gibt kein neues Token aus | — keine — | `src/core/session/service.ts:createSessionService` | `test/session-resolution.test.ts` | — keiner — |
+| Eine abgelaufene Sitzung bleibt tot, auch für die Verlängerung | S-CACHE-2 | `src/core/db/repositories/session.ts:extendIdleDeadline` | `test/session-review-deadlines.test.ts` | `test/session-review-deadlines.test.ts` |
+
+#### `W-SESSION-END` — Sitzungen beenden
+
+Routen und Methoden: `POST /sign-out`, `POST /session/revoke`, `POST /session/revoke-others`, `POST /session/revoke-all`, `signOut`, `session.revoke`, `session.revokeAllOther`, `session.revokeAll`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| `revoke` wirkt nur auf Zeilen der aufrufenden Sitzung | S-OWNER-4 | `src/core/db/repositories/session.ts:deleteSessionOwnedBy` | `test/owner-revoke-proof.test.ts` | `test/owner-revoke-proof.test.ts` |
+| Eine fremde und eine erfundene Sitzungs-ID antworten gleich | S-OWNER-8 | `src/core/session/service.ts:createSessionService` | `test/owner-foreign-id-proof.test.ts` | `test/owner-foreign-id-proof.test.ts` |
+| Liste und Widerruf verlangen eine frische Sitzung | O-1 | `src/core/session/service.ts:actorOfFreshSession` | `test/session-lifecycle.test.ts` | `test/session-lifecycle.test.ts` |
+| `revokeAllOther` zieht eine neue Epoche, unter der nur die behaltene Sitzung neu gebunden wird | S-INTEG-3 | `src/core/auth/routes.ts:revokedUnderANewEpoch` | `test/security-state-kept-session.test.ts` | `test/integ-session-epoch-race.test.ts` |
+| Die Abmeldung löscht genau die vorgelegte Sitzung | — keine — | `src/core/session/service.ts:createSessionService` | `test/session-lifecycle.test.ts` | — keiner — |
+
+#### `W-PASSWORD-SIGNIN` — Anmeldung mit Kennwort
+
+Routen und Methoden: `POST /sign-in/password`, `signIn.password`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Der Kontoeimer wird vor allem anderen gezogen | S-RATE-7 | `src/core/password/routes.ts:passwordRoutes` | `test/limit-account.test.ts` | `test/limit-account.test.ts` |
+| Die Länge wird vor der Kontosuche geprüft, ohne KDF-Aufruf | S-DOS-2 | `src/core/password/policy.ts:acceptSubmittedPassword` | `test/auth-password-routes.test.ts` | `test/dos-oversized-password-proof.test.ts` |
+| Ein unbekannter Bezeichner prüft gegen einen Dummy-PHC derselben Parameter | S-TIM-2 | `src/core/password/verify.ts:checkPassword` | `test/tim-dummy-verifier-proof.test.ts` | `test/tim-dummy-verifier-proof.test.ts` |
+| Das KDF-Ergebnis wird in konstanter Zeit verglichen | S-TIM-3 | `src/core/keys/constant-time.ts:equalsInConstantTime` | `test/keys-constant-time.test.ts` | `test/tim-secret-comparison-proof.test.ts` |
+| Ein gebrochenes Siegel antwortet wie ein falsches Kennwort | S-INTEG-5 | `src/core/password/routes.ts:checkedCredential` | `test/security-state-checking.test.ts` | `test/security-state-checking.test.ts` |
+| Ein deaktiviertes Konto antwortet auf das richtige Kennwort wie auf ein falsches | S-ENUM-2 | `src/core/password/routes.ts:passwordRoutes` | `test/enum-sign-in-states-proof.test.ts` | `test/enum-sign-in-states-proof.test.ts` |
+| Mit zweitem Faktor entsteht ein Zwischenzustand statt einer Sitzung | S-FIX-4 | `src/core/password/routes.ts:signedIn` | `test/auth-factor-routes.test.ts` | — keiner — |
+| Die neue Sitzung ersetzt die vorgelegte in einer Transaktion | S-FIX-1 | `src/core/session/service.ts:createSessionService` | `test/signin-replaces-session.test.ts` | `test/signin-replaces-session.test.ts` |
+| Der Rehash läuft nach der Antwort und schreibt per Vergleich-und-Tausch unter der Kontosperre | S-RACE-6 | `src/core/password/routes.ts:rehashUnderTheLock` | `test/password-rehash-after-response.test.ts` | `test/race-rehash-compare-and-swap-proof.test.ts` |
+| Nach Fehlschlägen verlangt die Route einen Arbeitsnachweis, für bekannte und unbekannte Konten gleich | S-RATE-11 | `src/core/password/routes.ts:passwordRoutes` | `test/proof-of-work-sign-in.test.ts` | `test/proof-of-work-sign-in.test.ts` |
+| Gleichzeitige KDF-Aufrufe sind durch eine Semaphore begrenzt | S-DOS-3 | `src/core/password/semaphore.ts:createKdfSemaphore` | `test/password-kdf-semaphore.test.ts` | `test/dos-limit-before-kdf-proof.test.ts` |
+| Ein Veto von `beforeSignIn` oder `beforeSessionCreate` verhindert die Sitzung | S-OWNER-12 | `src/core/plugin/sign-in.ts:createSessionUnderHooks` | `test/plugin-sign-in-hooks.test.ts` | `test/plugin-sign-in-hooks.test.ts` |
+
+#### `W-PASSKEY-SIGNIN` — Anmeldung mit einem Passkey
+
+Routen und Methoden: `POST /sign-in/passkey/start`, `POST /sign-in/passkey/finish`, `signIn.passkey.start`, `signIn.passkey.finish`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Die Challenge gilt fünf Minuten, einmal, und nur für ihre Zeremonie | S-REPLAY-5 | `src/core/factor/webauthn/challenge.ts:createWebAuthnChallenges` | `test/webauthn-challenge.test.ts` | `test/webauthn-challenge.test.ts` |
+| Der Origin der `clientDataJSON` muss konfiguriert sein | O-8 | `src/core/factor/webauthn/verification.ts:assertOriginIsExpected` | `test/webauthn-authentication.test.ts` | `test/webauthn-authentication.test.ts` |
+| Der RP-ID-Hash muss stimmen | O-8 | `src/core/factor/webauthn/verification.ts:assertRelyingPartyIsExpected` | `test/webauthn-authentication.test.ts` | `test/webauthn-authentication.test.ts` |
+| Die Nutzerverifikation ist immer verlangt | O-8 | `src/core/factor/webauthn/verification.ts:assertUserWasVerified` | `test/webauthn-authentication.test.ts` | `test/webauthn-authentication.test.ts` |
+| Das Siegel wird zuerst geprüft und die Signatur gegen den Passkey dieser Lesung verifiziert | S-INTEG-4 | `src/core/factor/webauthn/service.ts:verifyCheckedAssertion` | `test/security-state-checking.test.ts` | `test/security-state-checking.test.ts` |
+| Unter einer Liste meldet sich nur ein bestätigt attestierter Authenticator an | S-INTEG-13 | `src/core/factor/webauthn/service.ts:verifyCheckedAssertion` | `test/verified-attestation-flow.test.ts` | `test/verified-attestation-review-flows.test.ts` |
+| Ein rückläufiger Zähler wird gemeldet und der höchste gespeichert | L-9 | `src/core/factor/webauthn/service.ts:countHasRegressed` | `test/webauthn-counter-race.test.ts` | `test/webauthn-counter-race.test.ts` |
+| Ein deaktiviertes Konto antwortet wie eine ungültige Assertion | L-4 | `src/core/factor/routes.ts:passkeyRoutes` | — keiner — | — keiner — |
+| Die neue Sitzung ersetzt die vorgelegte | S-FIX-1 | `src/core/session/service.ts:createSessionService` | `test/auth-webauthn-routes.test.ts` | `test/signin-replaces-session.test.ts` |
+| Nach Fehlschlägen je Adresse verlangt die Route einen Arbeitsnachweis | S-RATE-11 | `src/core/factor/routes.ts:passkeyRoutes` | `test/proof-of-work-sign-in.test.ts` | `test/proof-of-work-sign-in.test.ts` |
+
+#### `W-PENDING` — Der Zwischenzustand zwischen erstem und zweitem Faktor
+
+Routen und Methoden: `GET /pending`, `POST /pending/cancel`, `pending.resolve`, `pending.resolveFromHeaders`, `pending.cancel`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Der Zwischenzustand ist eine Zeile in `pending_authentication`, keine Sitzung | S-FIX-4 | `src/core/factor/pending/service.ts:createPendingAuthenticationService` | `test/factor-pending-state.test.ts` | `test/factor-pending-surface.test.ts` |
+| Er wird an keiner Stelle als Sitzung aufgelöst | S-CACHE-4 | `src/core/http/pipeline.ts:createRequestContext` | `test/http-pending-visibility.test.ts` | `test/cache-pending-ignored-proof.test.ts` |
+| Cookie und Zeile leben fünf Minuten | S-COOKIE-3 | `src/core/http/cookies.ts:createCookieCollector` | `test/factor-pending-state.test.ts` | `test/cookie-pending-expiry-proof.test.ts` |
+| Eine Zeile, deren MAC nicht stimmt, ist kein Zwischenzustand | S-INTEG-9 | `src/core/factor/pending/service.ts:createPendingAuthenticationService` | `test/integ-token-binding.test.ts` | `test/integ-token-tampered-columns.test.ts` |
+| Eine Massenwiderrufung macht den Zwischenzustand ungültig | S-INTEG-3 | `src/core/factor/pending/service.ts:createPendingAuthenticationService` | `test/integ-pending-epoch.test.ts` | `test/integ-pending-epoch.test.ts` |
+| Angeboten werden die Faktoren der geprüften Lesung, und ein seither entfernter Faktor verweigert | S-INTEG-4 | `src/core/factor/pending/service.ts:refuseAFactorGoneSinceTheCheck` | `test/spine-available-factors.test.ts` | `test/security-state-offered-factors.test.ts` |
+| Fünf Versuche je Zwischenzustand über alle Faktoren, gezählt vor der Prüfung | L-8 | `src/core/factor/pending/attempt-limit.ts:verifyUnderPendingAttemptLimit` | `test/totp-pending-attempts.test.ts` | `test/security-state-attempt-budget.test.ts` |
+| Ein deaktiviertes Konto antwortet wie ein unbekannter Zwischenzustand | L-4 | `src/core/factor/pending/service.ts:createPendingAuthenticationService` | — keiner — | — keiner — |
+| Abbrechen löscht die Zeile und das Cookie | — keine — | `src/core/auth/routes.ts:pendingRoutes` | `test/auth-pending-routes.test.ts` | — keiner — |
+
+#### `W-TOTP-SECOND-FACTOR` — TOTP als zweiter Faktor
+
+Routen und Methoden: `POST /factor/totp/verify`, `factor.totp.verify`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Der Kontoeimer des Kontos aus dem Zwischenzustand wird vor der Prüfung gezogen | S-RATE-7 | `src/core/factor/routes.ts:spendAccountToken` | `test/auth-factor-routes.test.ts` | — keiner — |
+| Das Geheimnis kommt aus der Lesung, die die Siegelprüfung verifiziert hat | S-INTEG-4 | `src/core/factor/totp/service.ts:createTotpService` | `test/security-state-checking.test.ts` | `test/security-state-checking.test.ts` |
+| Ein Code gilt höchstens einmal je Konto und Zeitschritt | S-REPLAY-4 | `src/core/factor/totp/repository.ts:createTotpRepository` | `test/totp-replay.test.ts` | `test/totp-replay.test.ts` |
+| Von 50 gleichzeitigen Einreichungen eines Codes gewinnt genau eine | S-RACE-3 | `src/core/factor/totp/repository.ts:createTotpRepository` | `test/totp-race.test.ts` | `test/totp-race.test.ts` |
+| Ein fehlender, unbestätigter oder falscher Faktor antwortet gleich | S-ENUM-2 | `src/core/factor/totp/service.ts:createTotpService` | `test/totp-concealment.test.ts` | `test/totp-concealment.test.ts` |
+| Die Zwischenzustandszeile wird in der Transaktion gelöscht, die die Sitzung einfügt | S-FIX-1 | `src/core/factor/pending/complete.ts:createSecondFactorCompletion` | `test/factor-pending-race.test.ts` | `test/factor-pending-race.test.ts` |
+
+#### `W-RECOVERY-SECOND-FACTOR` — Wiederherstellungscode als zweiter Faktor
+
+Routen und Methoden: `POST /factor/recovery/verify`, `factor.recovery.verify`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Gespeichert ist nur `HMAC-SHA256(pepper, code)` | S-REST-3 | `src/core/factor/recovery/pepper.ts:pepperRecoveryCode` | `test/recovery-codes.test.ts` | `test/rest-hash-proof.test.ts` |
+| Der Code wird unter der Kontosperre durch `DELETE … RETURNING` verbraucht und muss im Siegel stehen | S-RACE-4 | `src/core/factor/recovery/repository.ts:createRecoveryCodeRepository` | `test/auth-factor-routes.test.ts` | `test/recovery-race.test.ts` |
+| Bei ausgeschalteter Wiederherstellung antwortet jeder Code wie ein falscher | S-ENUM-9 | `src/core/factor/recovery/service.ts:createRecoveryCodeService` | `test/no-recovery-switch-seal.test.ts` | — keiner — |
+| Ein verbrauchter und ein erfundener Code antworten gleich | — keine — | `src/core/factor/recovery/service.ts:createRecoveryCodeService` | `test/auth-factor-routes.test.ts` | `test/auth-factor-routes.test.ts` |
+| Die Zwischenzustandszeile wird in der Transaktion gelöscht, die die Sitzung einfügt | S-FIX-1 | `src/core/factor/pending/complete.ts:createSecondFactorCompletion` | `test/factor-pending-race.test.ts` | `test/factor-pending-race.test.ts` |
+
+#### `W-PASSKEY-SECOND-FACTOR` — Passkey als zweiter Faktor
+
+Routen und Methoden: `POST /factor/webauthn/authenticate/start`, `POST /factor/webauthn/authenticate/finish`, `factor.webauthn.authenticate.start`, `factor.webauthn.authenticate.finish`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Die Challenge ist an Konto und Zeremonie gebunden | S-REPLAY-5 | `src/core/factor/webauthn/challenge.ts:createWebAuthnChallenges` | `test/auth-webauthn-routes.test.ts` | `test/webauthn-challenge.test.ts` |
+| Der Passkey muss dem Konto des Zwischenzustands gehören | S-OWNER-2 | `src/core/factor/webauthn/credential-repository.ts:createWebAuthnCredentialRepository` | `test/auth-webauthn-routes.test.ts` | — keiner — |
+| Origin, RP-ID, Nutzerverifikation und Siegel wie bei der Passkey-Anmeldung | S-INTEG-4 | `src/core/factor/webauthn/service.ts:verifyCheckedAssertion` | `test/auth-webauthn-routes.test.ts` | `test/security-state-checking.test.ts` |
+| Ein Passkey außerhalb der Liste antwortet wie ein unbekannter und fällt nie auf einen Faktor zurück | S-INTEG-13 | `src/core/factor/webauthn/service.ts:verifyCheckedAssertion` | `test/verified-attestation-flow.test.ts` | `test/verified-attestation-review-flows.test.ts` |
+| Der Versuch zählt im gemeinsamen Budget des Zwischenzustands | L-8 | `src/core/factor/pending/attempt-limit.ts:verifyUnderPendingAttemptLimit` | `test/totp-pending-attempts.test.ts` | `test/reset-second-factor-review-attacks.test.ts` |
+| Die Zwischenzustandszeile wird in der Transaktion gelöscht, die die Sitzung einfügt | S-FIX-1 | `src/core/factor/pending/complete.ts:createSecondFactorCompletion` | `test/factor-pending-race.test.ts` | `test/factor-pending-race.test.ts` |
+
+#### `W-MAGIC-LINK` — Der Magic Link
+
+Routen und Methoden: `POST /sign-in/magic-link/request`, `POST /sign-in/magic-link/redeem`, `signIn.magicLink.request`, `signIn.magicLink.redeem`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Bekannte und unbekannte Adresse laufen dieselben Anweisungen und senden genau einmal | S-TIM-6 | `src/core/flows/magic-link.ts:requestMagicLink` | `test/flows-review-enumeration.test.ts` | `test/flows-review-request-oracle-race.test.ts` |
+| Ein abgeschaltetes Konto nimmt den Zweig einer unbekannten Adresse | S-ENUM-9 | `src/core/flows/artefact.ts:ownerAMailedLinkMayReach` | `test/no-recovery-switch-mailed-paths.test.ts` | `test/no-recovery-switch-mailed-paths.test.ts` |
+| Das Token trägt 256 Bit aus dem einen Zufallsmodul | S-RAND-4 | `src/core/token/secret-token.ts:createSecretToken` | `test/token-random.test.ts` | `test/token-review-randomness.test.ts` |
+| Ein neues Token derselben Absicht löscht alle früheren | S-TOKEN-3 | `src/core/db/repositories/token.ts:createOneTimeTokenRepository` | `test/token-repository.test.ts` | `test/token-review-purpose-and-ownership.test.ts` |
+| Die Einlösung ist ein `DELETE … RETURNING` mit Absicht und Frist im Prädikat | S-REPLAY-2 | `src/core/token/one-time-token.ts:createOneTimeTokens` | `test/token-one-time-token.test.ts` | `test/replay-redeem-answers-proof.test.ts` |
+| Von 50 gleichzeitigen Einlösungen gewinnt genau eine | S-RACE-1 | `src/core/db/repositories/token.ts:createOneTimeTokenRepository` | `test/token-race.test.ts` | `test/token-race.test.ts` |
+| Ein Token einer anderen Absicht antwortet wie ein erfundenes | S-TOKEN-2 | `src/core/token/one-time-token.ts:createOneTimeTokens` | `test/token-review-purpose-and-ownership.test.ts` | `test/token-review-purpose-and-ownership.test.ts` |
+| Die MAC der Zeile und die Adresse, an die gemailt wurde, müssen noch stimmen | S-INTEG-9 | `src/core/flows/artefact.ts:refuseUnlessTheAddressIsStillTheAccounts` | `test/integ-token-address-binding.test.ts` | `test/integ-token-address-binding.test.ts` |
+| Das Konto kommt allein aus der gelöschten Zeile | S-TOKEN-4 | `src/core/flows/environment.ts:accountOrDisabledOfRedemption` | `test/token-target-account-proof.test.ts` | `test/token-target-account-proof.test.ts` |
+| Ein abgeschaltetes Konto verweigert den Link und verbraucht ihn nicht | S-ENUM-9 | `src/core/flows/environment.ts:refuseALinkWhileRecoveryIsDisabled` | `test/no-recovery-switch-mailed-paths.test.ts` | `test/no-recovery-switch-mailed-paths.test.ts` |
+| Ein deaktiviertes Konto verbraucht den Link und antwortet wie ein erfundenes Token | S-REPLAY-3 | `src/core/flows/environment.ts:accountOrDisabledOfRedemption` | `test/redeem-disabled-account.test.ts` | `test/redeem-disabled-account.test.ts` |
+| Mit zweitem Faktor entsteht ein Zwischenzustand statt einer Sitzung | O-9 | `src/core/flows/magic-link.ts:redeemMagicLink` | `test/flows-email-behaviour.test.ts` | — keiner — |
+| Die erste Bestätigung löscht ein in fremder Sitzung gesetztes Kennwort und alle Sitzungen | S-LINK-4 | `src/core/flows/confirmation.ts:confirmAddress` | `test/flows-review-first-confirmation.test.ts` | `test/flows-review-first-confirmation.test.ts` |
+| Die neue Sitzung ersetzt die vorgelegte | S-FIX-1 | `src/core/session/service.ts:createSessionService` | `test/signin-replaces-session.test.ts` | `test/signin-replaces-session.test.ts` |
+
+#### `W-PASSWORD-RESET-MAIL` — Kennwort-Reset per Mail
+
+Routen und Methoden: `POST /password/request-reset`, `POST /password/redeem-reset`, `password.requestReset`, `password.redeemReset`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Bekannte und unbekannte Adresse antworten byte-gleich | S-ENUM-5 | `src/core/flows/reset.ts:requestReset` | `test/flows-review-enumeration.test.ts` | `test/flows-review-enumeration.test.ts` |
+| Ein abgeschaltetes Konto nimmt den Zweig einer unbekannten Adresse | S-ENUM-9 | `src/core/flows/artefact.ts:ownerAMailedLinkMayReach` | `test/no-recovery-switch-mailed-paths.test.ts` | `test/no-recovery-switch-mailed-paths.test.ts` |
+| Die Einlösung ist ein `DELETE … RETURNING` mit Absicht und Frist | S-REPLAY-2 | `src/core/flows/artefact.ts:redeemOrRefuse` | `test/token-one-time-token.test.ts` | `test/replay-redeem-answers-proof.test.ts` |
+| Policy und KDF laufen, bevor das Token verbraucht wird | S-DOS-2 | `src/core/flows/reset.ts:redeemReset` | `test/reset-second-factor-flow.test.ts` | — keiner — |
+| Adresse, Token-Generation und Schalter werden unter der Kontosperre geprüft | S-INTEG-9 | `src/core/flows/reset.ts:redeemReset` | `test/integ-token-address-binding.test.ts` | `test/integ-token-address-binding.test.ts` |
+| Mit zweitem Faktor wird nur das Token verbraucht und nichts geschrieben | S-FIX-7 | `src/core/flows/reset.ts:replacePassword` | `test/reset-second-factor-flow.test.ts` | `test/reset-second-factor-review-attacks.test.ts` |
+| Kennwort, Widerruf und Sitzung entstehen erst beim zweiten Faktor, das neue Kennwort nur gebunden versiegelt | S-FIX-8 | `src/core/flows/reset.ts:completeResetBySecondFactor` | `test/reset-second-factor-flow.test.ts` | `test/reset-second-factor-integrity.test.ts` |
+| Eine Änderung des Kontos seit der Faktorprüfung verweigert den Abschluss | S-INTEG-5 | `src/core/flows/reset.ts:isTheStateTheFactorChecked` | `test/reset-second-factor-integrity.test.ts` | `test/reset-second-factor-integrity.test.ts` |
+| Der Reset widerruft alle Sitzungen, ohne Schalter | S-FIX-6 | `src/core/flows/reset.ts:replacePassword` | `test/flows-email-behaviour.test.ts` | `test/default-revocation-switch-proof.test.ts` |
+| Ein deaktiviertes Konto verbraucht das Token und antwortet wie ein erfundenes | S-REPLAY-3 | `src/core/flows/reset.ts:redeemReset` | `test/reset-token-disabled.test.ts` | `test/reset-token-disabled.test.ts` |
+
+#### `W-PASSWORD-RESET-RECOVERY-CODE` — Kennwort-Reset mit Wiederherstellungscode
+
+Routen und Methoden: `POST /password/redeem-reset-with-recovery-code`, `password.redeemResetWithRecoveryCode`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Der Kontoeimer wird vor jeder Ableitung gezogen | S-RATE-7 | `src/core/flows/reset.ts:redeemResetWithRecoveryCode` | `test/recovery-reset-rate.test.ts` | `test/recovery-reset-rate.test.ts` |
+| Ein unbekanntes Konto sperrt und verbraucht wie ein bekanntes | S-TIM-6 | `src/core/flows/reset.ts:redeemResetWithRecoveryCode` | `test/recovery-reset-disabled.test.ts` | `test/recovery-reset-disabled.test.ts` |
+| Der Code wird unter der Kontosperre verbraucht und muss im Siegel stehen | S-RACE-4 | `src/core/factor/recovery/repository.ts:createRecoveryCodeRepository` | `test/auth-factor-routes.test.ts` | — keiner — |
+| Bei ausgeschalteter Wiederherstellung antwortet jeder Code wie ein falscher | S-ENUM-9 | `src/core/flows/reset.ts:redeemResetWithRecoveryCode` | `test/no-recovery-switch-seal.test.ts` | — keiner — |
+| Der Reset widerruft alle Sitzungen | S-FIX-6 | `src/core/flows/reset.ts:replacePassword` | — keiner — | — keiner — |
+| Ein deaktiviertes Konto verbraucht den Code und antwortet wie ein falscher | S-OWNER-8 | `src/core/flows/reset.ts:redeemResetWithRecoveryCode` | `test/recovery-reset-disabled.test.ts` | `test/recovery-reset-disabled.test.ts` |
+| Ein weiterer zweiter Faktor des Kontos wird nicht verlangt | O-2 | `src/core/flows/reset.ts:redeemResetWithRecoveryCode` | `test/reset-second-factor-review-attacks.test.ts` | — keiner — |
+
+#### `W-PASSKEY-RECOVERY` — Wiederherstellung auf einen neuen Passkey
+
+Routen und Methoden: `POST /passkey-recovery/request`, `POST /passkey-recovery/start`, `POST /passkey-recovery/finish`, `GET /passkey-recovery`, `POST /passkey-recovery/cancel`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Unbekannte Adresse, abgeschaltetes Konto und Konto mit Passkey laufen einen Weg | S-ENUM-10 | `src/core/recovery/flow.ts:requestPasskeyRecovery` | `test/passkey-recovery-uniform.test.ts` | `test/passkey-recovery-uniform.test.ts` |
+| Link und ein Wiederherstellungscode werden zusammen verbraucht oder keiner | S-RACE-7 | `src/core/recovery/flow.ts:startPasskeyRecovery` | `test/passkey-recovery-flow.test.ts` | `test/passkey-recovery-review-attacks.test.ts` |
+| Deaktiviert, abgeschaltet oder schon wiederherstellend antwortet wie ein falscher Code | S-ENUM-10 | `src/core/recovery/flow.ts:refuseUnlessTheAccountMayBeRecovered` | `test/passkey-recovery-uniform.test.ts` | `test/passkey-recovery-uniform.test.ts` |
+| Die Challenge nennt ihr Konto, gilt nur zur Wiederherstellung und verlangt Nutzerverifikation | S-REPLAY-5 | `src/core/factor/webauthn/service.ts:createWebAuthnService` | `test/passkey-recovery-flow.test.ts` | `test/passkey-recovery-review-attacks.test.ts` |
+| Der neue Passkey wird bis zum Ende der Wartezeit versiegelt zurückgehalten | S-INTEG-12 | `src/core/recovery/flow.ts:registerUnderTheSeal` | `test/passkey-recovery-flow.test.ts` | `test/passkey-recovery-integrity.test.ts` |
+| Jede Sitzung des Kontos sieht die Wiederherstellung und bricht sie ab | S-LINK-9 | `src/core/recovery/flow.ts:cancelPasskeyRecovery` | `test/passkey-recovery-flow.test.ts` | `test/passkey-recovery-review-lifecycle.test.ts` |
+| Die Adresse wird nach dem Commit benachrichtigt | S-LINK-9 | `src/core/recovery/flow.ts:tellOfThePendingRecovery` | `test/passkey-recovery-flow.test.ts` | — keiner — |
+| Die Aktivierung ersetzt jeden Weg hinein und widerruft alle Sitzungen und Links | S-INTEG-12 | `src/core/recovery/activation.ts:activateDueRecovery` | `test/passkey-recovery-review-lifecycle.test.ts` | `test/passkey-recovery-review-lifecycle.test.ts` |
+| Ein Authenticator außerhalb der Liste wird nie zum Weg hinein | S-INTEG-13 | `src/core/factor/webauthn/service.ts:refuseAnAuthenticatorOutsideTheList` | `test/verified-attestation-review-flows.test.ts` | `test/verified-attestation-review-flows.test.ts` |
+| Mit `requireDiscoverableCredential` wird nur ein auffindbarer Passkey registriert | S-DEFAULT-8 | `src/core/factor/webauthn/verification.ts:assertClientReportsADiscoverableCredential` | `test/discoverable-registration-flow.test.ts` | `test/discoverable-registration-review-paths.test.ts` |
+
+#### `W-OAUTH-SIGNIN` — Anmeldung über OAuth und OIDC
+
+Routen und Methoden: `POST /sign-in/oauth/start`, `GET /sign-in/oauth/callback/:provider`, `POST /sign-in/oauth/callback/:provider`, `signIn.oauth.start`, `signIn.oauth.callback`, `signIn.oauth.callbackFormPost`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Der `state` liegt serverseitig, das Cookie hält nur den Zeiger, und beide müssen passen | S-CSRF-5 | `src/core/oauth/flow-secrets.ts:pointerBelongsToState` | `test/oauth-flow.test.ts` | `test/oauth-state-race.test.ts` |
+| Die Flusszeile wird einmal und vor ihrer Frist verbraucht | S-REPLAY-6 | `src/core/oauth/flow-repository.ts:createOAuthFlowRepository` | `test/oauth-flow-row.test.ts` | `test/oauth-flow-row.test.ts` |
+| PKCE `S256` ist Pflicht, der Verifier an die Flusszeile gebunden verschlüsselt | S-REPLAY-6 | `src/core/oauth/flow-secrets.ts:pkceChallengeOf` | `test/oauth-flow.test.ts` | `test/oauth-flow-row.test.ts` |
+| Der `iss` wird nach RFC 9207 geprüft | S-REPLAY-6 | `src/core/oauth/service.ts:assertIssuerMatches` | `test/oauth-flow.test.ts` | — keiner — |
+| Die `nonce` des ID-Tokens muss die gespeicherte sein | S-REPLAY-6 | `src/core/oauth/id-token.ts:claimsOfIdToken` | `test/oauth-flow.test.ts` | — keiner — |
+| Das ID-Token wird nur mit gelisteten asymmetrischen Algorithmen gegen das JWKS geprüft | S-KEY-7 | `src/core/oauth/id-token.ts:claimsOfIdToken` | `test/oauth-flow.test.ts` | `test/oauth-id-token-allow-list.test.ts` |
+| Verknüpft wird allein über `(provider, subject)`, das Subject ist nie eine Adresse | S-LINK-3 | `src/core/oauth/claims.ts:providerAccountOf` | `test/oauth-linking-matrix.test.ts` | `test/oauth-linking-matrix.test.ts` |
+| Die Identität muss in der versiegelten Lesung stehen | S-INTEG-4 | `src/core/oauth/service.ts:checkedIdentityOf` | `test/security-state-checking.test.ts` | `test/security-state-checking.test.ts` |
+| Mit zweitem Faktor entsteht ein Zwischenzustand statt einer Sitzung | O-9 | `src/core/oauth/service.ts:signInOrAskForTheSecondFactor` | `test/oauth-flow.test.ts` | — keiner — |
+| Ein deaktiviertes Konto beendet den Fluss | L-4 | `src/core/oauth/service.ts:assertTheAccountIsEnabled` | — keiner — | — keiner — |
+| Das Rückleitungsziel ist ein Pfad, nie eine URL | S-REDIR-2 | `src/core/oauth/redirect-path.ts:acceptedRedirectPath` | `test/oauth-redirect-corpus.test.ts` | `test/oauth-redirect-corpus.test.ts` |
+| Die Endpunkte des Anbieters kommen nur aus der Konfiguration | S-REDIR-6 | `src/core/oauth/providers.ts:resolveProviderTable` | `test/oauth-config-seam.test.ts` | `test/oauth-redirect-corpus.test.ts` |
+| Die neue Sitzung ersetzt die vorgelegte | S-FIX-1 | `src/core/session/service.ts:createSessionService` | `test/signin-replaces-session.test.ts` | `test/signin-replaces-session.test.ts` |
+
+#### `W-OAUTH-SIGNUP` — Konto anlegen über einen Anbieter
+
+Routen und Methoden: `GET /sign-in/oauth/callback/:provider`, `POST /sign-in/oauth/callback/:provider`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Keine Adresse und kein Benutzername wird erfunden | S-LINK-5 | `src/core/oauth/service.ts:createAccountFor` | `test/oauth-signup-username-email.test.ts` | `test/identity-invented-email.test.ts` |
+| Eine Adresse eines anderen Kontos beendet den Fluss vor dem Einfügen | S-LINK-1 | `src/core/oauth/service.ts:createAccountFor` | `test/oauth-linking-matrix.test.ts` | `test/oauth-signup-unique-race.test.ts` |
+| Eine Anbieterangabe bestätigt die Adresse nur bei vertrautem Anbieter | S-LINK-6 | `src/core/oauth/service.ts:createAccountFor` | `test/oauth-linking-matrix.test.ts` | `test/oauth-linking-matrix.test.ts` |
+| Das Konto wird mit seiner Identität in derselben Transaktion versiegelt | S-INTEG-3 | `src/core/oauth/service.ts:accountForSignIn` | `test/security-state-sealing.test.ts` | — keiner — |
+| `beforeUserCreate` kann das Anlegen verweigern | S-OWNER-12 | `src/core/oauth/service.ts:createAccountFor` | `test/plugin-oauth-sign-up-hooks-pool.test.ts` | — keiner — |
+
+#### `W-OAUTH-AUTO-LINK` — Automatische Verknüpfung mit einem bestehenden Konto
+
+Routen und Methoden: `GET /sign-in/oauth/callback/:provider`, `POST /sign-in/oauth/callback/:provider`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Anbieter meldet verifiziert, lokales Konto bestätigt, Anbieter vertraut — alle drei | S-LINK-2 | `src/core/oauth/linking.ts:automaticLinkIsAllowed` | `test/oauth-linking-matrix.test.ts` | `test/oauth-linking-matrix.test.ts` |
+| Die Adresse wird erst gesucht, wenn die beiden anderen Bedingungen gelten | S-LINK-1 | `src/core/oauth/linking.ts:accountAnAutomaticLinkMayJoin` | `test/oauth-linking-matrix.test.ts` | `test/oauth-linking-matrix.test.ts` |
+| Die Bedingungen werden unter der Kontosperre erneut geprüft | S-LINK-2 | `src/core/oauth/service.ts:theJoinableAccountUnderItsLock` | `test/oauth-anchor-before-lock.test.ts` | — keiner — |
+| Höchstens `limits.identitiesPerAccount` Identitäten | S-INTEG-10 | `src/core/security-state/limits.ts:assertBelowCredentialLimit` | `test/security-state-limits-cap.test.ts` | `test/security-state-limits-cap.test.ts` |
+| Ein zweiter Faktor des Kontos wird danach verlangt | O-9 | `src/core/oauth/service.ts:signInOrAskForTheSecondFactor` | — keiner — | — keiner — |
+| Die Verknüpfung wird geschrieben, bevor der zweite Faktor bestanden ist | O-5 | `src/core/oauth/service.ts:accountForSignIn` | — keiner — | — keiner — |
+
+#### `W-IDENTITY-LINK` — Eine Identität aus einer Sitzung verknüpfen
+
+Routen und Methoden: `POST /identity/link/start`, `GET /sign-in/oauth/callback/:provider`, `POST /sign-in/oauth/callback/:provider`, `identity.link.start`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Der Start verlangt eine frische Sitzung | O-1 | `src/core/oauth/routes.ts:linkStartOf` | `test/oauth-flow.test.ts` | — keiner — |
+| Die Flusszeile trägt Zielkonto und Startsitzung, der Rückruf liest kein Sitzungs-Cookie | S-TOKEN-4 | `src/core/oauth/flow-repository.ts:createOAuthFlowRepository` | `test/token-target-account-proof.test.ts` | `test/token-target-account-proof.test.ts` |
+| Der Verifier ist an das Zielkonto gebunden | S-INTEG-1 | `src/core/oauth/service.ts:pkceBindingOf` | `test/oauth-flow.test.ts` | `test/integ-envelope-attacks.test.ts` |
+| Ein schon verknüpftes Paar wird abgewiesen | S-LINK-1 | `src/core/oauth/service.ts:refuseIfAlreadyLinked` | `test/oauth-flow.test.ts` | `test/oauth-linking-matrix.test.ts` |
+| Die Verknüpfung ersetzt die Startsitzung durch eine neue | S-LINK-7 | `src/core/oauth/service.ts:linkInOneTransaction` | `test/oauth-flow.test.ts` | `test/signin-replaces-session.test.ts` |
+| Ein deaktiviertes Konto und die Identitätsgrenze verweigern | S-INTEG-10 | `src/core/oauth/service.ts:linkInOneTransaction` | `test/security-state-limits-cap.test.ts` | `test/security-state-limits-cap.test.ts` |
+
+#### `W-IDENTITY-UNLINK` — Eine Identität lösen
+
+Routen und Methoden: `POST /identity/unlink`, `identity.unlink`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Gelöst wird nur eine Zeile des aufrufenden Kontos | S-OWNER-5 | `src/core/identity/sign-in-methods.ts:removeSignInMethod` | `test/identity-unlink-ownership.test.ts` | `test/identity-unlink-ownership.test.ts` |
+| Eine fremde und eine erfundene Identität antworten gleich | S-OWNER-8 | `src/core/oauth/routes.ts:oauthRoutes` | `test/identity-unlink-ownership.test.ts` | `test/identity-unlink-ownership.test.ts` |
+| Der letzte Weg hinein wird nicht entfernt, auch nicht unter zwei gleichzeitigen Aufrufen | L-13 | `src/core/identity/sign-in-methods.ts:removeSignInMethod` | `test/identity-sign-in-methods.test.ts` | `test/identity-last-method-race.test.ts` |
+| Unter einer Liste zählt nur ein Passkey, der sie erfüllt | S-INTEG-13 | `src/core/identity/sign-in-methods.ts:countSignInMethods` | `test/verified-attestation-unlink.test.ts` | `test/verified-attestation-unlink.test.ts` |
+| Lösen verlangt eine frische Sitzung | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | — keiner — | — keiner — |
+| Lösen widerruft keine Sitzung und gibt keine neue aus | O-3 | `src/core/oauth/service.ts:createOAuthService` | — keiner — | — keiner — |
+
+#### `W-SIGN-UP` — Registrierung mit und ohne Kennwort
+
+Routen und Methoden: `POST /sign-up`, `POST /sign-up/passwordless`, `signUp.withPassword`, `signUp.withoutPassword`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Eine vergebene Adresse antwortet byte-gleich wie eine freie, über eine zurückgerollte Registrierung | S-ENUM-3 | `src/core/flows/sign-up.ts:registerOrCover` | `test/flows-review-enumeration.test.ts` | `test/flows-review-signup-race.test.ts` |
+| Die vergebene Adresse erhält genau eine Nachricht | S-ENUM-4 | `src/core/flows/sign-up.ts:announce` | `test/flows-email-behaviour.test.ts` | `test/flows-review-enumeration.test.ts` |
+| Die KDF läuft vor jeder Suche | S-TIM-6 | `src/core/flows/sign-up.ts:signUp` | `test/flows-review-signup-timing.test.ts` | `test/flows-review-signup-timing.test.ts` |
+| Ein neues Konto wird in seiner anlegenden Transaktion versiegelt | S-INTEG-3 | `src/core/flows/sign-up.ts:register` | `test/security-state-sealing.test.ts` | — keiner — |
+| Die neue Sitzung ersetzt die vorgelegte | S-FIX-1 | `src/core/session/service.ts:createSessionService` | `test/signin-replaces-session.test.ts` | `test/signin-replaces-session.test.ts` |
+| Ein Veto der Hooks läuft vor der Adresssuche | S-ENUM-3 | `src/core/flows/sign-up.ts:signUp` | `test/plugin-sign-in-hooks.test.ts` | — keiner — |
+
+#### `W-EMAIL-VERIFY` — Die Adresse bestätigen
+
+Routen und Methoden: `POST /email/request-verification`, `POST /email/redeem-verification`, `email.requestVerification`, `email.redeemVerification`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Die Anfrage nimmt keine Adresse, nur die des Kontos | S-ENUM-7 | `src/core/flows/address.ts:requestVerification` | — keiner — | — keiner — |
+| Die Einlösung ist ein `DELETE … RETURNING` mit Absicht | S-REPLAY-2 | `src/core/flows/artefact.ts:redeemOrRefuse` | `test/token-one-time-token.test.ts` | `test/replay-redeem-answers-proof.test.ts` |
+| Das Konto kommt allein aus der gelöschten Zeile | S-TOKEN-4 | `src/core/flows/environment.ts:accountOrDisabledOfRedemption` | `test/token-target-account-proof.test.ts` | `test/token-target-account-proof.test.ts` |
+| Die erste Bestätigung löscht ein in fremder Sitzung gesetztes Kennwort und alle Sitzungen | S-LINK-4 | `src/core/flows/confirmation.ts:confirmUnderTheLock` | `test/flows-review-first-confirmation.test.ts` | `test/flows-review-first-confirmation.test.ts` |
+
+#### `W-EMAIL-CHANGE` — Die Adresse ändern
+
+Routen und Methoden: `POST /email/request-change`, `POST /email/redeem-change`, `email.requestChange`, `email.redeemChange`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Die Anfrage verlangt eine frische Sitzung | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | — keiner — | — keiner — |
+| Die Anfrage antwortet gleich, ob die neue Adresse vergeben ist oder nicht | S-ENUM-5 | `src/core/flows/address.ts:requestChange` | `test/flows-email-behaviour.test.ts` | `test/flows-review-enumeration.test.ts` |
+| Die Eindeutigkeit wird bei der Einlösung wiederholt, ein Wettlauf antwortet wie eine vergebene Adresse | S-ENUM-5 | `src/core/flows/confirmation.ts:refuseAnAddressTakenMeanwhile` | `test/email-change-unique-race.test.ts` | `test/email-change-unique-race.test.ts` |
+| Die Links der alten Adresse werden zurückgezogen | S-INTEG-9 | `src/core/flows/address.ts:redeemChange` | `test/flows-address-change-withdraws.test.ts` | `test/integ-token-address-binding.test.ts` |
+| Die vorige Adresse erhält nach dem Commit genau eine Nachricht | S-LINK-8 | `src/core/flows/address.ts:noticeThePreviousAddress` | `test/address-change-notice-flow.test.ts` | `test/address-change-notice-review-flow.test.ts` |
+| Die Änderung widerruft keine andere Sitzung und gibt keine neue aus | O-3 | `src/core/flows/address.ts:redeemChange` | — keiner — | — keiner — |
+
+#### `W-USERNAME-CHANGE` — Den Benutzernamen ändern
+
+Routen und Methoden: `POST /username/change`, `username.change`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Die Änderung verlangt eine frische Sitzung | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | `test/auth-username-change.test.ts` | — keiner — |
+| Der Kontoeimer wird gezogen | S-RATE-7 | `src/core/auth/routes.ts:usernameRoutes` | `test/auth-username-change.test.ts` | — keiner — |
+| Geändert wird nur das Konto der aufgelösten Sitzung | S-OWNER-7 | `src/core/auth/routes.ts:usernameRoutes` | `test/auth-username-change.test.ts` | — keiner — |
+| Der eindeutige Index entscheidet, ein Wettlauf antwortet `username_taken` | — keine — | `src/core/auth/routes.ts:usernameRoutes` | `test/auth-username-change.test.ts` | `test/auth-username-change.test.ts` |
+
+#### `W-PASSWORD-SET` — Ein Kennwort zu einem Konto ohne Kennwort hinzufügen
+
+Routen und Methoden: `POST /password/set`, `password.set`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Verlangt eine frische Sitzung | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | `test/auth-password-routes.test.ts` | `test/auth-password-routes.test.ts` |
+| Ein bestehendes Kennwort wird nie ohne das aktuelle ersetzt | — keine — | `src/core/password/set-credential.ts:refuseUnlessTheReadHoldsTheCheckedPassword` | `test/auth-password-routes.test.ts` | `test/password-set-race.test.ts` |
+| Alle anderen Sitzungen werden widerrufen und eine neue ausgegeben | S-FIX-6 | `src/core/password/set-credential.ts:replacePasswordOfSession` | `test/auth-password-routes.test.ts` | `test/password-change-concurrent-writers.test.ts` |
+| Eine von einer gleichzeitigen Änderung widerrufene Sitzung wird nicht neu ausgegeben | S-RACE-5 | `src/core/password/set-credential.ts:refuseUnlessCallingSessionIsAmong` | `test/password-change-concurrent-writers.test.ts` | `test/password-change-concurrent-writers.test.ts` |
+| Policy und Länge vor der KDF | S-DOS-1 | `src/core/password/policy.ts:acceptNewPassword` | `test/password-policy.test.ts` | `test/dos-oversized-password-proof.test.ts` |
+
+#### `W-PASSWORD-CHANGE` — Das Kennwort ändern
+
+Routen und Methoden: `POST /password/change`, `password.change`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Verlangt eine frische Sitzung | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | `test/auth-password-routes.test.ts` | `test/auth-password-routes.test.ts` |
+| Das aktuelle Kennwort läuft durch dieselbe Prüffolge wie die Anmeldung | S-TIM-1 | `src/core/password/routes.ts:passwordRoutes` | `test/auth-password-routes.test.ts` | `test/auth-password-routes.test.ts` |
+| Das geprüfte Kennwort muss unter der Sperre noch das gespeicherte sein | S-INTEG-4 | `src/core/password/set-credential.ts:refuseUnlessTheReadHoldsTheCheckedPassword` | `test/password-change-concurrent-writers.test.ts` | `test/password-set-race.test.ts` |
+| Alle anderen Sitzungen werden widerrufen, ohne Schalter | S-FIX-6 | `src/core/password/set-credential.ts:replacePasswordOfSession` | `test/auth-password-routes.test.ts` | `test/default-revocation-switch-proof.test.ts` |
+| Eine neue Sitzung ersetzt die aufrufende in derselben Transaktion | S-RACE-5 | `src/core/password/set-credential.ts:replacePasswordOfSession` | `test/auth-password-routes.test.ts` | `test/race-credential-change-rollback-proof.test.ts` |
+
+#### `W-TOTP-ENROL` — TOTP einrichten
+
+Routen und Methoden: `POST /factor/totp/enroll/start`, `POST /factor/totp/enroll/finish`, `factor.totp.enroll.start`, `factor.totp.enroll.finish`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Verlangt eine frische Sitzung | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | `test/totp-enrolment.test.ts` | — keiner — |
+| Ein unbestätigtes Geheimnis zählt nicht als Faktor | — keine — | `src/core/factor/totp/service.ts:createTotpService` | `test/spine-available-factors.test.ts` | `test/totp-enrolment.test.ts` |
+| Das Geheimnis liegt AES-256-GCM verschlüsselt und an Konto gebunden | S-REST-4 | `src/core/factor/totp/service.ts:createTotpService` | `test/totp-enrolment.test.ts` | `test/integ-envelope-binding.test.ts` |
+| Die Bestätigung verlangt einen gültigen Code und verbraucht seinen Zeitschritt | S-REPLAY-4 | `src/core/factor/totp/service.ts:createTotpService` | `test/totp-enrolment.test.ts` | `test/totp-enrolment.test.ts` |
+| Einrichten gibt keine neue Sitzung aus und widerruft keine | O-3 | `src/core/factor/totp/service.ts:createTotpService` | — keiner — | — keiner — |
+
+#### `W-TOTP-REMOVE` — TOTP entfernen
+
+Routen und Methoden: `POST /factor/totp/remove`, `factor.totp.remove`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Verlangt eine frische Sitzung | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | — keiner — | — keiner — |
+| Entfernen verlangt einen gültigen Code des Faktors | S-REPLAY-4 | `src/core/factor/totp/service.ts:createTotpService` | `test/totp-enrolment.test.ts` | — keiner — |
+| Der Kontoeimer wird vor der Prüfung gezogen | S-RATE-7 | `src/core/factor/routes.ts:spendAccountToken` | — keiner — | — keiner — |
+| Entfernen widerruft keine andere Sitzung | O-3 | `src/core/factor/totp/service.ts:createTotpService` | — keiner — | — keiner — |
+
+#### `W-PASSKEY-REGISTER` — Einen Passkey in einer Sitzung registrieren
+
+Routen und Methoden: `POST /factor/webauthn/register/start`, `POST /factor/webauthn/register/finish`, `factor.webauthn.register.start`, `factor.webauthn.register.finish`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Verlangt eine frische Sitzung | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | `test/auth-webauthn-routes.test.ts` | — keiner — |
+| Die Challenge ist an Konto und Registrierung gebunden | S-REPLAY-5 | `src/core/factor/webauthn/challenge.ts:createWebAuthnChallenges` | `test/webauthn-registration.test.ts` | `test/webauthn-challenge.test.ts` |
+| Origin, RP-ID und Nutzeranwesenheit werden geprüft | O-8 | `src/core/factor/webauthn/service.ts:createWebAuthnService` | `test/webauthn-registration.test.ts` | — keiner — |
+| Mit `requireDiscoverableCredential` wird nur ein auffindbarer Passkey registriert | S-DEFAULT-8 | `src/core/factor/webauthn/verification.ts:assertClientReportsADiscoverableCredential` | `test/discoverable-registration-flow.test.ts` | `test/discoverable-registration-flow.test.ts` |
+| Unter einer Liste nur ein bestätigt attestierter Authenticator | S-INTEG-13 | `src/core/factor/webauthn/service.ts:refuseAnAuthenticatorOutsideTheList` | `test/verified-attestation-flow.test.ts` | `test/verified-attestation-flow.test.ts` |
+| Höchstens `limits.passkeysPerAccount` Passkeys | S-INTEG-10 | `src/core/security-state/limits.ts:assertBelowCredentialLimit` | `test/security-state-limits-cap.test.ts` | `test/security-state-limits-cap.test.ts` |
+| Registrieren gibt keine neue Sitzung aus und widerruft keine | O-3 | `src/core/factor/webauthn/service.ts:createWebAuthnService` | — keiner — | — keiner — |
+
+#### `W-PASSKEY-REMOVE` — Einen Passkey entfernen oder umbenennen
+
+Routen und Methoden: `POST /factor/webauthn/remove`, `POST /factor/webauthn/rename`, `factor.webauthn.remove`, `factor.webauthn.rename`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Entfernt wird nur ein Passkey des aufrufenden Kontos, ein fremder antwortet wie ein erfundener | S-OWNER-3 | `src/core/identity/sign-in-methods.ts:removeSignInMethod` | `test/webauthn-ownership.test.ts` | `test/webauthn-ownership.test.ts` |
+| Der letzte Weg hinein wird nicht entfernt | L-13 | `src/core/factor/webauthn/service.ts:refuseRemovingTheLastUsablePasskey` | `test/webauthn-ownership.test.ts` | `test/identity-last-method-race.test.ts` |
+| Umbenennen wirkt nur auf eigene Zeilen | S-OWNER-8 | `src/core/factor/webauthn/credential-repository.ts:createWebAuthnCredentialRepository` | `test/webauthn-ownership.test.ts` | `test/webauthn-ownership.test.ts` |
+| Entfernen verlangt eine frische Sitzung | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | — keiner — | — keiner — |
+| Entfernen widerruft keine andere Sitzung | O-3 | `src/core/factor/webauthn/service.ts:createWebAuthnService` | — keiner — | — keiner — |
+
+#### `W-RECOVERY-CODES-GENERATE` — Wiederherstellungscodes erzeugen
+
+Routen und Methoden: `POST /factor/recovery/generate`, `factor.recovery.generate`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Verlangt eine frische Sitzung | O-1 | `src/core/http/pipeline.ts:assertSessionIsFresh` | — keiner — | — keiner — |
+| Zehn Codes zu 160 Bit, paarweise verschieden | S-RAND-3 | `src/core/factor/recovery/code.ts:createRecoveryCodeSet` | `test/recovery-codes.test.ts` | `test/recovery-codes.test.ts` |
+| Ein neuer Satz ersetzt den alten in derselben Transaktion | S-REST-3 | `src/core/factor/recovery/service.ts:createRecoveryCodeService` | `test/recovery-codes.test.ts` | — keiner — |
+| Bei ausgeschalteter Wiederherstellung wird kein Code erzeugt | S-INTEG-11 | `src/core/factor/recovery/service.ts:createRecoveryCodeService` | `test/no-recovery-switch-mailed-paths.test.ts` | `test/no-recovery-switch-mailed-paths.test.ts` |
+
+#### `W-ADMIN-DISABLE` — Ein Konto deaktivieren und wieder freigeben
+
+Routen und Methoden: `user.disable`, `user.enable`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Nur im Prozess der Anwendung, ohne Route | — keine — | `src/core/auth/instance.ts:setDisabledUnderTheSeal` | `test/session-resolution.test.ts` | — keiner — |
+| Die Änderung ist eine versiegelte Änderung unter der Kontosperre | S-INTEG-3 | `src/core/auth/instance.ts:setDisabledUnderTheSeal` | `test/security-state-sealing.test.ts` | — keiner — |
+| Jede Sitzung endet bei der nächsten Anfrage | S-CACHE-3 | `src/core/session/service.ts:resolveAndExtend` | `test/session-resolution.test.ts` | `test/session-resolution.test.ts` |
+
+#### `W-ADMIN-RECOVERY-SWITCH` — Den Schalter ohne Wiederherstellung setzen
+
+Routen und Methoden: `user.disableRecovery`, `user.enableRecovery`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Der Schalter ist eine versiegelte Änderung ohne Route | S-INTEG-11 | `src/core/security-state/recovery-switch.ts:setRecoveryDisabled` | `test/no-recovery-switch-seal.test.ts` | `test/no-recovery-switch-review-writer.test.ts` |
+| Einschalten löscht die Codes und zieht jeden gemailten Link zurück | S-INTEG-11 | `src/core/security-state/recovery-switch.ts:setRecoveryDisabled` | `test/no-recovery-switch-seal.test.ts` | `test/no-recovery-switch-mailed-paths.test.ts` |
+| Eine wartende Wiederherstellung wird mit abgebrochen | S-INTEG-12 | `src/core/security-state/recovery-switch.ts:setRecoveryDisabled` | `test/passkey-recovery-integrity.test.ts` | — keiner — |
+
+#### `W-ADMIN-AUTHENTICATOR-LIMIT` — Die Liste der Authenticatoren setzen und aufheben
+
+Routen und Methoden: `user.limitAuthenticators`, `user.liftAuthenticatorLimit`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Eine Liste ohne konfigurierte Wurzeln wird abgewiesen | S-INTEG-13 | `src/core/auth/instance.ts:allowlistToLimitTo` | `test/verified-attestation-flow.test.ts` | `test/verified-attestation-flow.test.ts` |
+| Ein Konto ohne nutzbaren Weg hinein wird nur auf ausdrücklichen Wunsch hinterlassen | S-INTEG-13 | `src/core/security-state/authenticator-allowlist.ts:setAuthenticatorAllowlist` | `test/verified-attestation-flow.test.ts` | — keiner — |
+| Die Liste ist eine versiegelte Änderung, ein Schreiber kann sie nicht erweitern | S-INTEG-13 | `src/core/security-state/authenticator-allowlist.ts:setAuthenticatorAllowlist` | `test/verified-attestation-flow.test.ts` | `test/verified-attestation-review-flows.test.ts` |
+
+#### `W-ADMIN-RESEAL` — Versiegeln und neu versiegeln durch den Betreiber
+
+Routen und Methoden: `maintenance.sealSecurityState`, `maintenance.resealSecurityState`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Nur die Neuversiegelung mit nicht leerem Grund versiegelt einen gebrochenen Zustand | S-INTEG-7 | `src/core/auth/security-state-maintenance.ts:resealAccount` | `test/security-state-reseal.test.ts` | `test/security-state-reseal.test.ts` |
+| Die Neuversiegelung meldet alle Sitzungen ab | S-INTEG-7 | `src/core/auth/security-state-maintenance.ts:resealUnderAccountLock` | `test/security-state-reseal.test.ts` | — keiner — |
+| Ein von einem Schreiber gelöschter Schalter wird nicht bestätigt | S-INTEG-11 | `src/core/auth/security-state-maintenance.ts:withTheConfirmedSwitch` | `test/no-recovery-switch-reseal.test.ts` | `test/no-recovery-switch-reseal.test.ts` |
+| Eine Liste oder Attestierung, die das Siegel nicht bestätigt, wird nicht bestätigt | S-INTEG-13 | `src/core/auth/security-state-maintenance.ts:withTheConfirmedAllowlist` | `test/verified-attestation-review-flows.test.ts` | `test/verified-attestation-review-flows.test.ts` |
+| Die Erstversiegelung ist idempotent und fortsetzbar | S-INTEG-8 | `src/core/auth/security-state-maintenance.ts:sealOneAccount` | `test/security-state-maintenance.test.ts` | `test/security-state-maintenance-tamper.test.ts` |
+
+#### `W-TOKEN-RESOLVE` — Einen gemailten Link auflösen, ohne ihn zu verbrauchen
+
+Routen und Methoden: `oneTimeToken.resolve`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Nur im Prozess der Anwendung, ohne Route | S-TOKEN-7 | `src/core/auth/instance.ts:oneTimeTokenSurfaceIn` | `test/token-resolution-surface.test.ts` | — keiner — |
+| Antwortet nur, wo die Einlösung wirken würde, sonst `null` | S-TOKEN-7 | `src/core/token/resolution.ts:createOneTimeTokenResolution` | `test/token-resolution-resolve.test.ts` | `test/token-resolution-review-oracle.test.ts` |
+| Eine gefälschte Zeile antwortet wie eine fehlende | S-INTEG-9 | `src/core/token/resolution.ts:createOneTimeTokenResolution` | `test/token-resolution-resolve.test.ts` | `test/token-resolution-review-oracle.test.ts` |
+
+#### `W-PLUGIN` — Was ein Plugin an Sitzungen und Faktoren erreicht
+
+Routen und Methoden: `VelvePlugin.hooks`, `VelvePlugin.routes`, `VelvePlugin.securityStateAnchor`, `FrozenContext.repositories`.
+
+| Wächter | Anforderung | Durchgesetzt in | Legitimer Weg | Angriff |
+|---|---|---|---|---|
+| Ein Hook kann verweigern oder beobachten, nie die Antwort ersetzen | S-OWNER-12 | `src/core/plugin/sign-in.ts:createSessionUnderHooks` | `test/plugin-sign-in-hooks.test.ts` | `test/plugin-boundary.test.ts` |
+| Der eingefrorene Kontext hat keine schreibende Methode auf Konto, Kennwort oder Faktor | S-OWNER-10 | `src/core/plugin/context.ts:createFrozenRepositories` | `test/plugin-frozen-context.test.ts` | `test/plugin-frozen-context.test.ts` |
+| Plugin-SQL läuft unter einer Rolle ohne Rechte auf den Kerntabellen | S-OWNER-10 | `src/core/plugin/own-tables.ts:createOwnTables` | `test/plugin-sql-role.test.ts` | `test/plugin-sql-role.test.ts` |
+| Eine Plugin-Route kann keine Kernroute überschreiben | S-OWNER-11 | `src/core/plugin/registry.ts:assertNoCoreRouteIsOverwritten` | `test/plugin-route-conflict-contributors.test.ts` | `test/plugin-route-conflict-contributors.test.ts` |
+| Eine Plugin-Route kann sich nicht von der Origin-Prüfung ausnehmen | S-CSRF-6 | `src/core/plugin/registry.ts:assertNoRouteExemptsItselfFromTheOriginCheck` | `test/plugin-security-order.test.ts` | `test/plugin-security-order.test.ts` |
+| Kein Plugin bringt einen Sitzungsauflöser oder Cache mit | S-CACHE-5 | `src/core/plugin/registry.ts:assertNoFieldOutsideTheInterface` | `test/plugin-boundary.test.ts` | `test/plugin-boundary.test.ts` |
+| Ein Anker setzt eine Untergrenze und verweigert einen zurückgesetzten Zustand | S-INTEG-6 | `src/core/security-state/anchor.ts:consultAnchors` | `test/security-state-anchor-port.test.ts` | `test/security-state-anchor-rollback.test.ts` |
+| Ein Plugin-Handler erhält das Klartext-Sitzungs-Token und einen Cookie-Schreiber | O-4 | `src/core/http/pipeline.ts:createRequestContext` | — keiner — | — keiner — |
 
 ---
 
