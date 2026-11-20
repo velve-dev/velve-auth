@@ -130,6 +130,12 @@ describe("the start of an instance (S-DEFAULT-8)", () => {
 		).toThrow(InvalidWebAuthnConfigError);
 	});
 
+	it("refuses to start with a switch that is no boolean", () => {
+		expect(
+			started({ ...webauthn, requireDiscoverableCredential: "yes" as unknown as boolean }),
+		).toThrow(InvalidWebAuthnConfigError);
+	});
+
 	it("reports turning the switch on as no weakening, and the preferred setting still as one", () => {
 		const quiet = createLogSink();
 		started({ ...webauthn, requireDiscoverableCredential: true }, { log: quiet.write })();

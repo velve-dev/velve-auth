@@ -269,12 +269,12 @@ describe("the registration that ends a recovery (S-DEFAULT-8, S-ENUM-10)", () =>
 		});
 
 		const refused = await finishRecovery(bench, underway.challengeToken, discoverable(attested));
+		const unknown = await finishRecovery(bench, "an-unknown-challenge", discoverable(attested));
 
-		expect([refused.status, await errorCodeOf(refused)]).toStrictEqual([
-			400,
-			"passkey_recovery_failed",
-		]);
+		expect(refused.status).toBe(400);
+		expect(await refused.text()).toBe(await unknown.text());
 		expect(await countOf(bench, "passkey_recovery", underway.userId)).toBe(0);
+		expect(await countOf(bench, "webauthn_credential", underway.userId)).toBe(0);
 	});
 
 	it("replaces every way in with the new passkey when the waiting period is zero", async () => {
