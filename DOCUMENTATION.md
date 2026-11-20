@@ -170,6 +170,7 @@ The identity. Deliberately minimal: no profile data.
 | `username_key` | `text` | comparison form, NFKC + casefold; unique where not null |
 | `disabled_at` | `timestamptz` | set means the account is disabled |
 | `recovery_disabled_at` | `timestamptz` | set means the account has turned recovery off ([The no-recovery switch](#the-no-recovery-switch)); added by migration 6 |
+| `allowed_aaguids` | `uuid[]` | the authenticator allowlist, null while none is set and never empty ([Verified attestation and the authenticator allowlist](#verified-attestation-and-the-authenticator-allowlist)); added by migration 8 |
 | `imported_from` | `text` | `supabase`, `clerk`, `auth0`, `firebase` or `nextauth` |
 | `imported_at` | `timestamptz` | when the import ran |
 | `created_at`, `updated_at` | `timestamptz` | |
@@ -324,6 +325,7 @@ One row per code, never a blob.
 | `aaguid` | `uuid` | |
 | `backup_eligible`, `backup_state` | `boolean` | eligible means a synchronised passkey |
 | `user_verified_at_registration` | `boolean` | |
+| `attestation_verified` | `boolean` | default false; true only with an `aaguid`, when the attestation chain verified against a configured root ([Verified attestation and the authenticator allowlist](#verified-attestation-and-the-authenticator-allowlist)); added by migration 8 |
 | `label` | `text` | |
 | `created_at`, `last_used_at` | `timestamptz` | |
 
@@ -396,6 +398,7 @@ per account, added by migration 7. No sign-in path reads this table; see
 | `user_id` | `uuid` | primary key, cascades from `velve.user` |
 | `credential_id` | `bytea` | unique; refused where a credential or another recovery already has it |
 | `public_key`, `sign_count`, `transports`, `aaguid`, `backup_eligible`, `backup_state`, `user_verified_at_registration`, `label` | | as in `velve.webauthn_credential`, moved there unchanged by the activation |
+| `attestation_verified` | `boolean` | as in `velve.webauthn_credential`, added by migration 8 and moved with the passkey |
 | `created_at` | `timestamptz` | when the passkey was registered |
 | `activates_at` | `timestamptz` | when it may replace every other way in, by the database clock; sealed in whole microseconds |
 
@@ -453,9 +456,10 @@ the two byte for byte.
 | `0005_pending_password_reset.sql` | 5 | adds the nullable `new_password_phc` and `new_password_key_version` to `velve.pending_authentication`, with the constraint `pending_authentication_new_password_whole` that sets both or neither; rewrites no row, so nobody is signed out and no pending state ends |
 | `0006_recovery_disabled.sql` | 6 | adds the nullable `recovery_disabled_at` to `velve.user`, the [no-recovery switch](#the-no-recovery-switch); rewrites no row, so nobody is signed out and no seal changes |
 | `0007_passkey_recovery.sql` | 7 | adds `passkey_recovery_generation` with default 1 to `velve.security_state` and the table `velve.passkey_recovery`, the [recovery to a new passkey](#recovery-to-a-new-passkey); rewrites no row, so nobody is signed out and no seal changes |
+| `0008_verified_attestation.sql` | 8 | adds the nullable `allowed_aaguids` to `velve.user` and `attestation_verified` with default false to `velve.webauthn_credential` and `velve.passkey_recovery`, the [Verified attestation and the authenticator allowlist](#verified-attestation-and-the-authenticator-allowlist); rewrites no row, so nobody is signed out and no seal changes |
 
 Exactly one of the three version-2 files is applied — the one matching the
-configured identity mode. Migrations 3 to 7 are the same in every mode; migration 4
+configured identity mode. Migrations 3 to 8 are the same in every mode; migration 4
 signs every user out, because no existing token row carries the MAC it adds. Changing the mode of a database that has already
 migrated is a schema change of its own; the runner will report the recorded
 migration 2 as changed rather than silently swapping the constraint.
@@ -1600,7 +1604,7 @@ would keep it.
 
 The method throws where the client returns a result (3.15 E), and it throws
 exactly what a request would have answered: a `VelveError` carrying one of the
-30 codes, mapped and logged by the same code as the HTTP path. An application
+31 codes, mapped and logged by the same code as the HTTP path. An application
 that catches it and forwards `error.code` into its own response publishes
 nothing the HTTP answer would not have published.
 
@@ -1723,7 +1727,7 @@ the second.
 
 ### Error codes
 
-Every failure of the core carries one of 30 stable codes. The status, the
+Every failure of the core carries one of 31 stable codes. The status, the
 message and the mapping from internal reason to visible code live in
 `src/core/http/error-map.ts`, and no other module decides what a caller sees. A
 plugin adds codes of its own without widening that union; they are described
@@ -1746,6 +1750,7 @@ under [A plugin's own codes](#a-plugins-own-codes) below.
 | `internal_error` | 500 | `passkey_limit_reached` | 409 |
 | `identity_limit_reached` | 409 | `recovery_disabled` | 409 |
 | `passkey_recovery_failed` | 400 | `webauthn_credential_not_discoverable` | 400 |
+| `authenticator_not_allowed` | 403 | | |
 
 This table is the whole of `VelveErrorCode`. It does not list a plugin's codes,
 which are not part of that union and are resolved separately.
@@ -4676,6 +4681,10 @@ interface WebAuthnConfig {
   origins: readonly string[]
   userVerification?: "required" | "preferred"   // "required"
   requireDiscoverableCredential?: boolean       // false
+  attestation?: {                               // absent: no attestation, no allowlist
+    trustedRoots: readonly (string | Uint8Array)[]  // PEM text or DER bytes
+    requestForEveryAccount?: boolean            // false
+  }
 }
 ```
 
@@ -4686,6 +4695,7 @@ interface WebAuthnConfig {
 | `origins` | every origin a ceremony may come from. An array, because a relying party legitimately has a web origin and a native one. |
 | `userVerification` | what **registration** asks the authenticator for. It does not govern sign-in. |
 | `requireDiscoverableCredential` | `true` refuses every registration, in a session and at the end of a recovery, whose client does not report a discoverable credential. Needs `userVerification: "required"`. See [Discoverable registration](#discoverable-registration). |
+| `attestation` | the roots an attestation chain must end in, which turn verified attestation and the authenticator allowlist on. Absent, no registration asks for attestation and nothing changes. See [Verified attestation and the authenticator allowlist](#verified-attestation-and-the-authenticator-allowlist). |
 
 `"discouraged"` is deliberately absent from the type. A second factor without
 user verification is not one, and Better Auth's `requireUserVerification: false`
@@ -4890,6 +4900,7 @@ interface WebAuthnCredential {
   isBackupEligible: boolean
   isCurrentlyBackedUp: boolean
   wasUserVerifiedAtRegistration: boolean
+  attestationVerified: boolean
   createdAt: Date
   lastUsedAt: Date | null
 }
@@ -4904,6 +4915,7 @@ interface WebAuthnCredential {
 | `isBackupEligible` | the `BE` flag: `true` means a synchronised passkey, `false` means device-bound |
 | `isCurrentlyBackedUp` | the `BS` flag: whether it is currently synchronised |
 | `wasUserVerifiedAtRegistration` | whether the authenticator verified the user when the credential was created |
+| `attestationVerified` | whether its full attestation chained to a root in `webauthn.attestation.trustedRoots` when it was registered; always `false` without that option, see [Verified attestation and the authenticator allowlist](#verified-attestation-and-the-authenticator-allowlist) |
 | `lastUsedAt` | `null` until the credential has completed a sign-in |
 
 #### Building a policy on `BE` and `BS`
@@ -4974,6 +4986,7 @@ unusable before that.
 | `aaguid` | `uuid` | `NULL` when the authenticator reported all zeros |
 | `backup_eligible`, `backup_state` | `boolean` | `BE` and `BS`, rewritten on every sign-in |
 | `user_verified_at_registration` | `boolean` | |
+| `attestation_verified` | `boolean` | whether the attestation chain verified at registration; the surface shows it as `attestationVerified` ([Verified attestation and the authenticator allowlist](#verified-attestation-and-the-authenticator-allowlist)) |
 | `label` | `text` | `NULL` only for imported rows; the surface shows `""` |
 | `created_at`, `last_used_at` | `timestamptz` | |
 
@@ -6383,7 +6396,7 @@ none either; see
 | `auth.signOut` | one method; deletes exactly one session row, and an unknown token is not an error |
 | `auth.session` | `resolve`, `resolveFromHeaders`, `list`, `revoke`, `revokeAllOther`, `revokeAll`, `refresh` |
 | `auth.pending` | `resolve`, `resolveFromHeaders`, `cancel` |
-| `auth.user` | `findById`, `findByEmail` (only in `"email"` and `"username_email"`), `findByUsername` (only in `"username"` and `"username_email"`), `disable`, `enable`, `disableRecovery`, `enableRecovery` ([The no-recovery switch](#the-no-recovery-switch)), `delete` |
+| `auth.user` | `findById`, `findByEmail` (only in `"email"` and `"username_email"`), `findByUsername` (only in `"username"` and `"username_email"`), `disable`, `enable`, `disableRecovery`, `enableRecovery` ([The no-recovery switch](#the-no-recovery-switch)), `limitAuthenticators`, `liftAuthenticatorLimit` ([Verified attestation and the authenticator allowlist](#verified-attestation-and-the-authenticator-allowlist)), `delete` |
 | `auth.username` | `isAvailable`, `change` — present only in `"username"` and `"username_email"` |
 | `auth.oneTimeToken` | `resolve` — present only in `"email"` and `"username_email"`; no route, see [Resolving a one-time token](#resolving-a-one-time-token) |
 | `auth.passkeyRecovery` | `request`, `start`, `finish`, `pending`, `cancel` — present only in `"email"` and `"username_email"` and only with `webauthn.recovery`, see [Recovery to a new passkey](#recovery-to-a-new-passkey) |
@@ -8066,7 +8079,7 @@ if (!answer.ok) {
 
 The `switch` is exhaustive and the compiler checks it, because `answer.error.code`
 is narrowed to the codes **that route** declares and not to the union of all
-thirty.
+thirty-one.
 
 A call returns a result rather than throwing, and the asymmetry with the server
 is on purpose: on the server a call sits in a request handler with a central
@@ -8185,7 +8198,7 @@ try {
 ```
 
 `VelveError` rebuilds its message from its own copy of the error table rather
-than from the wire. For the thirty core codes the two are the same table and
+than from the wire. For the thirty-one core codes the two are the same table and
 the strings are identical; for a code this build of the package does not know,
 `unwrap` throws with `internal_error`'s message and the response's status is
 lost. The un-unwrapped path always keeps what the server said, in
@@ -8895,6 +8908,7 @@ Beyond `invalid_input`, `rate_limited`, `origin_not_allowed` and
 | `webauthn_challenge_invalid` | 400 | a challenge absent, expired or issued for the other ceremony |
 | `webauthn_credential_rejected` | 401 | an unknown credential, a bad signature, a wrong relying party or origin, or a user not verified |
 | `webauthn_credential_not_discoverable` | 400 | with `webauthn.requireDiscoverableCredential`, a registration whose client reports no discoverable credential ([Discoverable registration](#discoverable-registration)) |
+| `authenticator_not_allowed` | 403 | under an authenticator allowlist, a registration in a session whose authenticator does not satisfy it ([Verified attestation and the authenticator allowlist](#verified-attestation-and-the-authenticator-allowlist)) |
 | `last_sign_in_method` | 409 | removing the account's last way in |
 | `username_taken` | 409 | the unique index refused the new name |
 | `username_invalid` | 400 | the name fails the configured rules |
@@ -10397,6 +10411,7 @@ while such an account exists.
 ```ts
 resealSecurityState(input: {
   userId: string; reason: string; recoveryDisabled?: boolean
+  authenticatorAllowlist?: readonly string[] | null
 }): Promise<SealedSecurityState>
 interface SealedSecurityState {
   readonly version: number; readonly sessionEpoch: number
@@ -10408,6 +10423,9 @@ interface SealedSecurityState {
   readonly passkeyCredentialIds: readonly string[]          // base64url
   readonly identities: readonly { readonly provider: string; readonly subject: string }[]
   readonly recoveryCodeCount: number
+  readonly passkeyRecovery: { readonly credentialId: string; readonly activatesAt: Date } | null
+  readonly authenticatorAllowlist: readonly string[] | null
+  readonly attestedPasskeyCredentialIds: readonly string[]  // base64url
 }
 ```
 
@@ -10421,6 +10439,11 @@ a passkey or identity a writer inserted included.
 | `userId` | the account |
 | `reason` | why, non-empty; it is logged at `warn` with the account and the new version, to the configured `log` or, without one, to the console, and it is not stored |
 | `recoveryDisabled` | the [no-recovery switch](#the-no-recovery-switch) the reseal writes and ratifies; name it for every broken state, `false` for an account that never turned the switch on. Without it the reseal keeps a switch that is on, and refuses one that is off unless the stored seal confirms the state. A reseal that ends with the switch on deletes the account's recovery codes |
+| `authenticatorAllowlist` | the authenticator allowlist the reseal writes and ratifies, the AAGUIDs or `null` for none ([Verified attestation and the authenticator allowlist](#verified-attestation-and-the-authenticator-allowlist)). Without it the reseal keeps the list the rows hold where the stored seal confirms the state, and refuses where it does not and the account holds a list or a verified attestation or `webauthn.attestation` is configured. Every reseal of a state the stored seal does not confirm resets every `attestation_verified` of the account, so no passkey satisfies a list until it is registered again (E-3851) |
+
+`authenticatorAllowlist` in the result is the list the reseal ratified, and
+`attestedPasskeyCredentialIds` the credential ids, in base64url, whose verified
+attestation it kept; after a reseal of an unconfirmed state that is always empty.
 
 The new version lies above the stored one and above every anchor's floor, and the
 anchors learn it. The session epoch is drawn afresh and differs from the current
@@ -10439,6 +10462,7 @@ It refuses with a `SecurityStateMaintenanceError` and changes nothing:
 | `security_state_envelope_unreadable` | the account has no seal row and an envelope its conversion cannot open; the alarm `envelope_binding_mismatch` is raised, and the reseal repairs no envelope |
 | `security_state_changed_during_reseal` | the seal row changed under the account lock, which only a writer outside the library can do |
 | `security_state_recovery_switch_unconfirmed` | `recoveryDisabled` is given and not a boolean; or it is not given, the no-recovery switch is off in the rows and the stored seal does not confirm the state (it does not hold, lies below an anchor's floor, or is missing in mode `"required"`); or it is not given and the stored seal holds with the switch the other way round |
+| `security_state_authenticator_allowlist_unconfirmed` | `authenticatorAllowlist` is given and neither `null` nor a non-empty list of AAGUIDs other than the all-zero one; or it is not given, the stored seal does not confirm the state, and the account holds a list or a verified attestation or `webauthn.attestation` is configured |
 
 An account at the largest version is recovered by hand: delete its sessions and
 its seal row by SQL and let `sealSecurityState()` seal it in mode `"migrating"`.
@@ -11485,7 +11509,272 @@ application has to put it in:
 
 ## Verified attestation and the authenticator allowlist
 
-> Reserved for the `verified-attestation` feature of release 3.0.0 and not written yet. Only that feature writes into this chapter (`CLAUDE.md` §5), and its writer deletes this note when filling it.
+An application can limit an account to authenticators of particular models — a
+staff account to the security keys the organisation hands out, say — and have
+that limit hold at registration and at every passkey sign-in. The model of an
+authenticator is its AAGUID, and an AAGUID alone proves nothing: any software
+authenticator can claim any AAGUID. So a passkey satisfies a list only when its
+**attestation** — a certificate chain the authenticator presents when the
+credential is created — verifies against root certificates the application
+configures, for example a manufacturer's FIDO roots, and names an AAGUID on
+the list (S-INTEG-13).
+
+Both are off until `webauthn.attestation` is configured. Without it no
+registration asks for attestation, `attestationVerified` is always `false`,
+`user.limitAuthenticators` is refused and nothing else changes.
+
+### Configuration
+
+```ts
+const auth = createVelveAuth({
+  // ...
+  webauthn: {
+    relyingPartyId: "example.com",
+    relyingPartyName: "Example",
+    origins: ["https://example.com"],
+    userVerification: "required",
+    attestation: {
+      trustedRoots: [manufacturerRootPem],  // PEM text or DER bytes, one certificate each
+      requestForEveryAccount: true,       // optional, default false
+    },
+  },
+});
+```
+
+| Option | Type | Default | Meaning |
+|---|---|---|---|
+| `webauthn.attestation.trustedRoots` | `readonly (string \| Uint8Array)[]` | — | the root certificates an attestation chain must end in. Each entry is one certificate, as PEM text (`-----BEGIN CERTIFICATE-----`) or as DER bytes. Never empty. |
+| `webauthn.attestation.requestForEveryAccount` | `boolean` | `false` | `true` asks every registration for attestation, not only one for an account with a list. |
+
+The block's type is exported from `@velve/auth` as `WebAuthnAttestationConfig`.
+
+The library downloads nothing: no FIDO Metadata Service, no revocation list. The
+roots are what you put here, and the application decides which manufacturers it
+trusts (E-3843). The library never initialises the dependency's `MetadataService`, which
+is the only part of it that downloads metadata; if your application initialises
+it itself, that download is yours. `@simplewebauthn/server` verifies the chain with its own
+`validateCertificatePath`; the library does not touch the dependency's global
+`SettingsService`, so another instance in the same process, or your own use of
+the dependency, keeps its own roots.
+
+A configuration that cannot mean what it says does not start. `createVelveAuth`
+throws `InvalidWebAuthnConfigError` with one of these codes:
+
+| `code` | Cause |
+|---|---|
+| `attestation_not_an_object` | `webauthn.attestation` is present and not an object. |
+| `attestation_roots_empty` | `trustedRoots` is missing, not an array, or empty. |
+| `attestation_root_unreadable` | an entry is neither PEM text of exactly one X.509 certificate nor DER bytes of one. |
+| `attestation_root_names_a_revocation_list` | a root names a CRL distribution point. The verifier fetches every revocation list a certificate names, and this library reaches no host it was not told to (E-3844). |
+| `attestation_request_for_every_account_not_a_boolean` | `requestForEveryAccount` is present and neither `true` nor `false`. |
+
+### What every registration does before it is verified
+
+`@simplewebauthn/server`, while it checks the certificate chain of an
+attestation, fetches the revocation list any of those certificates names — a
+URL the client chose — before it has refused anything. Since the client sends
+the chain, every registration reads the attestation object itself first, with
+and without `webauthn.attestation`, in a session and at the end of a recovery.
+
+**Refused**, as an ordinary rejection with no row written (E-3854): an object
+larger than 32 KiB; one carrying more than eight certificates; one the library
+cannot read strictly anywhere — the CBOR map with `fmt`, `attStmt` and
+`authData`, an `x5c` that is not a list of certificates, the JWS of
+`android-safetynet` whose header or payload is not strict base64url or whose
+header chain is not strict base64, and any certificate that does not parse. In a
+session the answer is `webauthn_credential_rejected` (401), in a recovery
+`passkey_recovery_failed` (400); the log names `attestation_unreadable`.
+
+**Read as no attestation** (E-3855): an object whose chain — in `x5c` (`packed`,
+`fido-u2f`, `android-key`, `apple`, `tpm`) or in the JWS header of
+`android-safetynet` — holds a certificate naming a CRL distribution point. The
+verifier is given, instead, an object of format `none` with an empty
+statement and byte for byte the same authenticator data, so the authenticator
+data, the credential key, the flags, the challenge, the origin and the relying
+party are checked exactly as always, and nothing is fetched. The credential
+registers with `attestationVerified: false`; where a list applies it is refused
+as any unverified authenticator is, with `authenticator_not_allowed`.
+
+Attestations of every format without such a URL reach their verifier
+unchanged. Of the formats, the dependency reaches the fetch by default for
+`apple`, `android-key` and `android-safetynet`, whose roots it presets; for
+`packed`, `fido-u2f` and `tpm` it does so only where an application has set the
+dependency's global roots itself. Versions before 3.0.0 hand every chain to the
+verifier: upgrade.
+
+### What a registration asks for
+
+Every registration — `factor.webauthn.register.*` in a session and the
+registration at the end of a [recovery to a new passkey](#recovery-to-a-new-passkey) —
+asks the authenticator for `attestation: "direct"` when the account holds a
+list or `requestForEveryAccount` is `true`, and for `"none"` otherwise, exactly
+as before. `"enterprise"` is never asked for: it identifies the individual
+device and is honoured only for relying parties a browser vendor or an
+enterprise policy has listed (E-3841). The list a registration in a session asks
+for is read from the account's verified security state.
+
+If your accounts start with a passkey and get a list later, set
+`requestForEveryAccount: true`: a passkey registered without attestation can
+never satisfy a list, because its chain cannot be verified after the fact.
+
+### Which attestation counts as verified
+
+After the registration has been verified in full — origin, relying party,
+challenge, signature, user presence and verification — its attestation counts
+as **verified** when all of these hold (E-3842):
+
+- the format is `packed` with an `x5c` chain, a *full* attestation whose leaf
+  certificate signed the authenticator data and the client data;
+- the authenticator names an AAGUID that is not all zeros;
+- the chain leads to one of `trustedRoots`.
+
+A chain that names a CRL distribution point never gets this far: the
+registration verifies it as an attestation of format `none` (see above), so it
+never counts as verified.
+
+`none`, a self attestation (`packed` without `x5c`) and every other format —
+`tpm`, `android-key`, `apple`, `fido-u2f`, `android-safetynet` — never count.
+A registration that does not count is still accepted where no list applies; it
+is stored with `attestationVerified: false`. The result is stored next to the
+AAGUID in `velve.webauthn_credential.attestation_verified` and reported by
+`factor.webauthn.list` as `attestationVerified`.
+
+### `auth.user.limitAuthenticators({ userId, aaguids, allowNoUsableSignInMethod })`
+
+```ts
+await auth.user.limitAuthenticators({
+  userId,
+  aaguids: ["2fc0579f-8113-47ea-b116-bb5a8db9202a"], // the models the account may use
+});
+await auth.user.liftAuthenticatorLimit({ userId });
+```
+
+Server-only, like the [no-recovery switch](#the-no-recovery-switch): no route,
+no client call, and the application calls it after its own authorisation
+decision.
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `userId` | `string` | the account |
+| `aaguids` | `readonly string[]` | the AAGUIDs a passkey must be attested as. Case does not matter, repeats are dropped; never empty, never the all-zero AAGUID. |
+| `allowNoUsableSignInMethod` | `boolean`, optional | `true` sets a list even when it leaves the account no usable sign-in method. |
+
+`liftAuthenticatorLimit({ userId })` removes the list; every passkey of the
+account signs in again.
+
+Both are sealed changes under the account lock (3.18). They keep the session
+epoch, so nobody is signed out, and they are logged at `warn` on `log` — on the
+console without one — as `account authenticators limited` with `userId` and the
+list, and `account authenticator limit lifted` (E-3849). The list itself is
+stored in `velve.user.allowed_aaguids` and nowhere else.
+
+`limitAuthenticators` throws `VelveError` with:
+
+| Code | When |
+|---|---|
+| `invalid_input` | `aaguids` is empty or holds something that is not an AAGUID or the all-zero one; `allowNoUsableSignInMethod` is not a boolean; the account does not exist; `webauthn.attestation` is not configured, since no passkey could ever satisfy a list. |
+| `last_sign_in_method` | the account would be left without a usable way in — no password, no linked identity and no passkey that satisfies the new list — and `allowNoUsableSignInMethod` is not `true` (L-13, E-3850). |
+
+Passkeys outside the list are **kept**: they stop working for registration
+and sign-in while the list is set and work again once it is lifted (E-3847).
+Remove them with `factor.webauthn.remove` if you want them gone.
+
+A recovery to a new passkey that is waiting for its activation time and whose
+passkey does not satisfy the new list is withdrawn in the same transaction;
+the owner can start a new one.
+
+#### Starting an account that must use listed keys
+
+An account that so far signed in with a passkey that was not attested gets the
+list with `allowNoUsableSignInMethod: true`. Its sessions stay valid, so the
+user registers a listed key in a session they already have, and from then on
+only that key signs in:
+
+```ts
+await auth.user.limitAuthenticators({ userId, aaguids, allowNoUsableSignInMethod: true });
+// the user, in an existing session: factor.webauthn.register.start / finish
+```
+
+With `requestForEveryAccount: true` the first passkey is already attested, and
+the list can be set at once without the override.
+
+### What the list does
+
+A passkey **satisfies** the list when its attestation is verified and its
+AAGUID is on the list. Without a list every passkey satisfies it.
+
+| Path | A passkey that does not satisfy the list |
+|---|---|
+| `factor.webauthn.register.finish` | refused with `authenticator_not_allowed` (403); no row; the challenge is spent |
+| `passkeyRecovery.finish` | refused with `passkey_recovery_failed` (400), byte for byte like an unknown challenge (S-ENUM-10); no row; the challenge stays valid until it expires |
+| `signIn.passkey.finish` | refused before the signature is checked, as `webauthn_credential_rejected` (401), byte for byte like a passkey nobody registered; the counter does not move |
+| `factor.webauthn.authenticate.finish` | the same, as the second factor |
+| activation of a waiting recovery | not activated |
+| `factor.webauthn.remove` | removing the **last** passkey that satisfies the list is refused with `last_sign_in_method` when the account has no password and no identity |
+| `identity.unlink` and every other removal L-13 guards | a passkey outside the list is not counted as a way in, so unlinking the last identity of an account whose passkeys all lie outside it is refused with `last_sign_in_method` (E-3853) |
+
+An account whose only second factor is a passkey outside the list still needs
+a second factor; it does not fall back to the password alone.
+
+`authenticator_not_allowed` is visible only in a session of the account itself,
+so it tells the owner nothing about anyone else (E-3848). At sign-in the list
+is no oracle: a passkey outside it is answered as an unknown one.
+
+### What the seal covers
+
+The list and the AAGUID of every passkey whose attestation is verified — the
+held one of a waiting recovery included — are part of the account's sealed
+security state (3.18). A writer on the database without the root key who adds
+an AAGUID to the list, removes it, sets `attestation_verified` or changes the
+AAGUID of a verified passkey breaks the state: every sign-in is refused and the
+alarm `seal_mismatch` is raised. An account without a list and without a
+verified attestation keeps the encoding and the seal it had before migration 8,
+so the upgrade signs nobody out (E-3846).
+
+`maintenance.resealSecurityState` ratifies neither a list nor an attestation
+the stored seal does not confirm (E-3851):
+
+- Where the seal does not confirm the state and the account holds a list or a
+  verified attestation, or `webauthn.attestation` is configured, the reseal
+  refuses with `SecurityStateMaintenanceError` code
+  `security_state_authenticator_allowlist_unconfirmed` until you name the list
+  with the new parameter `authenticatorAllowlist` — the AAGUIDs, or `null` for
+  none. A malformed list is refused with the same code.
+- Every reseal of a state the seal does not confirm resets every
+  `attestation_verified` of the account, because an attestation is verified
+  once at registration and cannot be verified again. A listed account then has
+  no passkey that satisfies its list: lift the list, or let the user register
+  the key again.
+- `SealedSecurityState` reports `authenticatorAllowlist` and
+  `attestedPasskeyCredentialIds`, the credential ids (base64url) whose verified
+  attestation the reseal kept.
+
+```ts
+await auth.maintenance.resealSecurityState({
+  userId,
+  reason: "incident 2026-11-20",
+  recoveryDisabled: false,
+  authenticatorAllowlist: ["2fc0579f-8113-47ea-b116-bb5a8db9202a"],
+});
+```
+
+### Upgrading
+
+Run migration 8 (`0008_verified_attestation.sql`) before configuring
+`webauthn.attestation`. It adds `velve.user.allowed_aaguids` and
+`attestation_verified` to `velve.webauthn_credential` and
+`velve.passkey_recovery`, rewrites no row and changes no seal. Every passkey
+registered before has `attestationVerified: false`.
+
+### What it does not do
+
+- Only full `packed` attestation counts. Windows Hello (`tpm`), Android
+  (`android-key`) and Apple (`apple`) attestations never satisfy a list.
+- No revocation check, and a chain in which any certificate names a CRL
+  distribution point counts as unverified even when it is genuine.
+- No metadata: the library does not know which AAGUID names which product, and
+  does not read the FIDO Metadata Service's status reports.
+- A list ends no session; revoke sessions yourself if a list should.
 
 ## Using it with an AI coding agent
 

@@ -68,6 +68,11 @@ export function actorOfRecoverySwitch(userId: string): Actor {
 	return userId as Actor;
 }
 
+//the authenticator allowlist has no route and runs on the application's own authorisation decision (E-3849)
+export function actorOfAuthenticatorAllowlist(userId: string): Actor {
+	return userId as Actor;
+}
+
 //a recovery registration learns its account only from the challenge its start bound to it (E-3765)
 export type ConsumedRecoveryChallenge = { readonly userId: UserId } & {
 	readonly [consumedRecoveryChallengeBrand]: "produced by recovery challenge consumption";

@@ -50,16 +50,22 @@ function excludedIdentityId(removal: SignInMethodRemoval | undefined): string | 
 	return removal?.method === "linked_identity" ? rowIdentifierOrNull(removal.identityId) : null;
 }
 
-//a confirmed address and recovery codes are no sign-in names
+//a confirmed address, recovery codes and a passkey outside the account's allowlist are no way in (E-3853)
 export async function countSignInMethods(query: SignInMethodQuery): Promise<SignInMethodCount> {
 	const password = qualifiedTableName(query.schema, "password_credential");
 	const webauthn = qualifiedTableName(query.schema, "webauthn_credential");
 	const identity = qualifiedTableName(query.schema, "identity");
+	const users = qualifiedTableName(query.schema, "user");
 	const [row] = await query.driver.query<CountRow>(
 		`SELECT (SELECT count(*) FROM ${password}
 		           WHERE user_id = $1 AND NOT $2::boolean)::int AS password,
-		        (SELECT count(*) FROM ${webauthn}
-		           WHERE user_id = $1 AND ($3::uuid IS NULL OR id <> $3::uuid))::int
+		        (SELECT count(*) FROM ${webauthn} passkey
+		           WHERE passkey.user_id = $1 AND ($3::uuid IS NULL OR passkey.id <> $3::uuid)
+		             AND NOT EXISTS (
+		               SELECT 1 FROM ${users} account
+		               WHERE account.id = $1 AND account.allowed_aaguids IS NOT NULL
+		                 AND NOT (passkey.attestation_verified
+		                   AND passkey.aaguid = ANY (account.allowed_aaguids))))::int
 		          AS webauthn_credentials,
 		        (SELECT count(*) FROM ${identity}
 		           WHERE user_id = $1 AND ($4::uuid IS NULL OR id <> $4::uuid))::int

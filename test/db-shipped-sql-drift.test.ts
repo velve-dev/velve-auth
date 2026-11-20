@@ -9,6 +9,7 @@ import { pendingPasswordResetSchema } from "../src/core/db/migrations/pending-pa
 import { recoveryDisabledSchema } from "../src/core/db/migrations/recovery-disabled.js";
 import { securityStateSchema } from "../src/core/db/migrations/security-state.js";
 import { tokenMacSchema } from "../src/core/db/migrations/token-mac.js";
+import { verifiedAttestationSchema } from "../src/core/db/migrations/verified-attestation.js";
 
 const migrationsDirectory = new URL("../migrations/", import.meta.url);
 
@@ -32,6 +33,7 @@ const everyShippedMigration = [
 	pendingPasswordResetSchema,
 	recoveryDisabledSchema,
 	passkeyRecoverySchema,
+	verifiedAttestationSchema,
 ];
 
 describe("the SQL the operator reads and the SQL the runner executes", () => {
@@ -46,6 +48,7 @@ describe("the SQL the operator reads and the SQL the runner executes", () => {
 			"0005_pending_password_reset.sql",
 			"0006_recovery_disabled.sql",
 			"0007_passkey_recovery.sql",
+			"0008_verified_attestation.sql",
 		]);
 	});
 
@@ -71,6 +74,7 @@ describe("the SQL the operator reads and the SQL the runner executes", () => {
 			["0005_pending_password_reset.sql", pendingPasswordResetSchema.sql],
 			["0006_recovery_disabled.sql", recoveryDisabledSchema.sql],
 			["0007_passkey_recovery.sql", passkeyRecoverySchema.sql],
+			["0008_verified_attestation.sql", verifiedAttestationSchema.sql],
 		];
 
 		for (const [name, embedded] of pairs) {
@@ -90,7 +94,7 @@ describe("the SQL the operator reads and the SQL the runner executes", () => {
 
 	it("ships a plan whose version numbers are the file prefixes", () => {
 		expect(coreMigrations("email").map((migration) => migration.version)).toEqual([
-			1, 2, 3, 4, 5, 6, 7,
+			1, 2, 3, 4, 5, 6, 7, 8,
 		]);
 		expect(coreMigrations("username").map((migration) => migration.name)).toEqual([
 			"initial_schema",
@@ -100,6 +104,7 @@ describe("the SQL the operator reads and the SQL the runner executes", () => {
 			"pending_password_reset",
 			"recovery_disabled",
 			"passkey_recovery",
+			"verified_attestation",
 		]);
 	});
 });

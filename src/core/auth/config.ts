@@ -1,5 +1,6 @@
 import type { Driver } from "../db/driver.js";
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
+import type { WebAuthnAttestationConfig } from "../factor/webauthn/config.js";
 import type { Clock } from "../http/environment.js";
 import type { BucketRule } from "../http/rate-limit.js";
 import type { IdentityConfigurationInput } from "../identity/configuration.js";
@@ -60,6 +61,8 @@ export interface WebAuthnConfig {
 	readonly userVerification: "required" | "preferred";
 	/** refuses every registration whose client does not report a discoverable credential, and is off while absent */
 	readonly requireDiscoverableCredential?: boolean;
+	/** the roots an attestation chain must end in, which turn verified attestation and the authenticator allowlist on */
+	readonly attestation?: WebAuthnAttestationConfig;
 	/** turns the recovery to a new passkey on, which is off while this is absent */
 	readonly recovery?: PasskeyRecoveryConfig;
 }

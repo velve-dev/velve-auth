@@ -24,6 +24,8 @@ interface ReadPasskey {
 	readonly credentialId: Uint8Array<ArrayBuffer>;
 	readonly publicKey: Uint8Array<ArrayBuffer>;
 	readonly signCount: number;
+	/** the AAGUID the passkey's verified attestation names, or null where none verified */
+	readonly attestedAaguid: string | null;
 }
 
 /** an identity as the one read returned it, its stored provider tokens included for the envelope rewrite */
@@ -63,6 +65,8 @@ export interface ReadPasskeyRecovery {
 	readonly activatesAtMicros: number;
 	readonly credentialId: Uint8Array<ArrayBuffer>;
 	readonly publicKey: Uint8Array<ArrayBuffer>;
+	/** the AAGUID the held back passkey's verified attestation names, or null where none verified */
+	readonly attestedAaguid: string | null;
 	readonly due: boolean;
 }
 
@@ -81,6 +85,7 @@ export interface SecurityStateRead {
 	readonly identities: readonly ReadIdentity[];
 	readonly recoveryCodes: readonly ReadRecoveryCode[];
 	readonly passkeyRecovery: ReadPasskeyRecovery | null;
+	readonly authenticatorAllowlist: readonly string[] | null;
 }
 
 /** what checking one read found, each failure named as the alarm names it */
@@ -102,6 +107,7 @@ export function securityStateDocumentOf(schema: string, accountIdSql: string): s
   'email_verified', account.email_verified_at IS NOT NULL,
   'disabled', account.disabled_at IS NOT NULL,
   'recovery_disabled', account.recovery_disabled_at IS NOT NULL,
+  'authenticator_allowlist', to_jsonb(account.allowed_aaguids),
   'seal', CASE WHEN seal.user_id IS NULL THEN NULL ELSE jsonb_build_object(
     'version', seal.version::text,
     'digest', encode(seal.digest, 'hex'),
@@ -132,7 +138,9 @@ export function securityStateDocumentOf(schema: string, accountIdSql: string): s
       'id', passkey.id::text,
       'credential_id', encode(passkey.credential_id, 'hex'),
       'public_key', encode(passkey.public_key, 'hex'),
-      'sign_count', passkey.sign_count::text)), '[]'::jsonb)
+      'sign_count', passkey.sign_count::text,
+      'attested_aaguid', CASE WHEN passkey.attestation_verified THEN passkey.aaguid::text END)),
+      '[]'::jsonb)
     FROM ${table("webauthn_credential")} passkey WHERE passkey.user_id = account.id),
   'identities', (SELECT coalesce(jsonb_agg(jsonb_build_object(
       'id', linked.id::text,
@@ -154,6 +162,7 @@ export function securityStateDocumentOf(schema: string, accountIdSql: string): s
       ELSE '-9007199254740991' END,
     'credential_id', encode(recovery.credential_id, 'hex'),
     'public_key', encode(recovery.public_key, 'hex'),
+    'attested_aaguid', CASE WHEN recovery.attestation_verified THEN recovery.aaguid::text END,
     'due', recovery.activates_at <= now()) END
 )::text
 FROM ${table("user")} account
@@ -171,6 +180,7 @@ export function securityStateReadStatement(schema: string): string {
 
 const HEX = /^(?:[0-9a-f]{2})*$/;
 const DECIMAL = /^-?(0|[1-9][0-9]*)$/;
+const AAGUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 class UnreadableStateError extends Error {
 	constructor(field: string) {
@@ -296,6 +306,31 @@ function signCountOf(value: unknown): number {
 	return Math.min(Number(spelled), Number.MAX_SAFE_INTEGER);
 }
 
+//an aaguid is read only in the one spelling the encoding normalises to
+function aaguidOrNull(value: unknown, field: string): string | null {
+	if (value === null || value === undefined) {
+		return null;
+	}
+	const spelled = text(value, field);
+	if (!AAGUID.test(spelled)) {
+		throw new UnreadableStateError(field);
+	}
+	return spelled;
+}
+
+function allowlistOf(value: unknown): readonly string[] | null {
+	if (value === null || value === undefined) {
+		return null;
+	}
+	return list(value, "authenticator allowlist").map((entry) => {
+		const aaguid = aaguidOrNull(entry, "allowed aaguid");
+		if (aaguid === null) {
+			throw new UnreadableStateError("allowed aaguid");
+		}
+		return aaguid;
+	});
+}
+
 function passkeyRecoveryOf(value: unknown): ReadPasskeyRecovery | null {
 	if (value === null) {
 		return null;
@@ -305,6 +340,7 @@ function passkeyRecoveryOf(value: unknown): ReadPasskeyRecovery | null {
 		activatesAtMicros: exactInteger(recovery.activates_at_us, "recovery activation time"),
 		credentialId: bytes(recovery.credential_id, "recovery credential id"),
 		publicKey: bytes(recovery.public_key, "recovery public key"),
+		attestedAaguid: aaguidOrNull(recovery.attested_aaguid, "recovery attested aaguid"),
 		due: flag(recovery.due, "recovery due"),
 	};
 }
@@ -328,6 +364,7 @@ function stateOf(spelled: string): SecurityStateRead {
 				credentialId: bytes(passkey.credential_id, "credential id"),
 				publicKey: bytes(passkey.public_key, "public key"),
 				signCount: signCountOf(passkey.sign_count),
+				attestedAaguid: aaguidOrNull(passkey.attested_aaguid, "attested aaguid"),
 			};
 		}),
 		identities: list(state.identities, "identities").map((value) => {
@@ -353,6 +390,7 @@ function stateOf(spelled: string): SecurityStateRead {
 			};
 		}),
 		passkeyRecovery: passkeyRecoveryOf(state.passkey_recovery),
+		authenticatorAllowlist: allowlistOf(state.authenticator_allowlist),
 	};
 }
 
@@ -399,7 +437,11 @@ export function sealedComponentsOf(read: SecurityStateRead): SealedComponents {
 						secretSha256: sha256(read.totp.secretEnc),
 						keyVersion: read.totp.keyVersion,
 					},
-		passkeys: read.passkeys.map(({ credentialId, publicKey }) => ({ credentialId, publicKey })),
+		passkeys: read.passkeys.map(({ credentialId, publicKey, attestedAaguid }) => ({
+			credentialId,
+			publicKey,
+			attestedAaguid,
+		})),
 		identities: read.identities.map(({ provider, subject }) => ({ provider, subject })),
 		recoveryCodes: read.recoveryCodes.map(({ keyVersion, codeHmac }) => ({ keyVersion, codeHmac })),
 		passkeyRecovery:
@@ -409,7 +451,9 @@ export function sealedComponentsOf(read: SecurityStateRead): SealedComponents {
 						activatesAtMicros: read.passkeyRecovery.activatesAtMicros,
 						credentialId: read.passkeyRecovery.credentialId,
 						publicKey: read.passkeyRecovery.publicKey,
+						attestedAaguid: read.passkeyRecovery.attestedAaguid,
 					},
+		authenticatorAllowlist: read.authenticatorAllowlist,
 	};
 }
 
@@ -470,4 +514,13 @@ export async function checkSecurityState(
 		digest: read.seal.digest,
 	});
 	return { verdict, read };
+}
+
+/** whether a passkey with this verified attestation may sign in to an account under this allowlist */
+export function satisfiesTheAllowlist(
+	allowlist: readonly string[] | null,
+	attestedAaguid: string | null,
+): boolean {
+	//an aaguid no chain verified never satisfies a list as any software authenticator can claim it (S-INTEG-13)
+	return allowlist === null || (attestedAaguid !== null && allowlist.includes(attestedAaguid));
 }

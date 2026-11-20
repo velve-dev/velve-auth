@@ -43,7 +43,7 @@ Velve Auth ist eine Anmeldebibliothek für TypeScript und PostgreSQL, die im Pro
 
 **Die Laufzeit.** Reines TypeScript, kein eigenes Rust/WASM-Modul, sechs Abhängigkeiten ohne native Bindungen. Gemessen auf 2 vCPU, also Größenordnung statt Absolutwert: Argon2id bei OWASP-Parametern kostet 263 ms in JavaScript gegen 76 ms in WASM — aber WASM scheitert in Cloudflare Workers an `Wasm code generation disallowed by embedder` und ist auf Caprock unerprobt (SCHÄTZUNG), und ein eigenes Rust-Modul wäre gegenüber fertigem WASM nur 1,6-mal schneller, um den Preis einer zweiten Werkzeugkette und eines unprüfbaren Binärblobs. Der entscheidende Befund: `@noble/hashes`, `hash-wasm` und eine Rust-WASI-Variante erzeugen **bytegleiche** Argon2id-Hashes. Die Rechenmaschine ist damit austauschbar, ohne einen einzigen gespeicherten Hash anzufassen.
 
-**Die Absicherung.** 144 Sicherheitsanforderungen in neunzehn Fehlerklassen, jede mit mindestens einem Testfall und einer vorab festgelegten Zahl als Schwelle; 148 Testfälle, von denen 129 jeden Commit blockieren. Fünfzehn der 33 Better-Auth-Advisories sind unmittelbar auf Velve Auth übertragbar und werden von benannten Anforderungen ausgeschlossen; achtzehn sind nicht anwendbar, weil die betroffene Funktion nicht existiert.
+**Die Absicherung.** 145 Sicherheitsanforderungen in neunzehn Fehlerklassen, jede mit mindestens einem Testfall und einer vorab festgelegten Zahl als Schwelle; 149 Testfälle, von denen 130 jeden Commit blockieren. Fünfzehn der 33 Better-Auth-Advisories sind unmittelbar auf Velve Auth übertragbar und werden von benannten Anforderungen ausgeschlossen; achtzehn sind nicht anwendbar, weil die betroffene Funktion nicht existiert.
 
 **Ehrlich benannte Grenzen.** In der Konfiguration `username` gibt es kein Zurücksetzen per E-Mail — die Bibliothek verweigert dort den Start, wenn keine Wiederherstellungscodes konfiguriert sind. Benutzernamen sind per Definition aufzählbar, sobald eine Verfügbarkeitsprüfung angeboten wird; das steht im Datenblatt statt als stille Lücke im Code. Der verschlüsselte Kennwortspeicher bedeutet: Schlüsselverlust ist Kennwortverlust. Importierte bcrypt-Hashes prüfen nur die ersten 72 Byte, bis der Rehash sie ersetzt hat. Ein Schreiber auf der Datenbank, der auch den Wurzelschlüssel hat, hat alles, und ohne den Anker aus Abschnitt 3.18 kann er ein Konto auf einen alten, in sich stimmigen Stand zurücksetzen. Und ob Node auf Caprock startet und der gewählte PostgreSQL-Treiber dort funktioniert, ist die einzige nennenswerte ungeprüfte Annahme des ganzen Entwurfs.
 
@@ -55,8 +55,8 @@ Velve Auth ist eine Anmeldebibliothek für TypeScript und PostgreSQL, die im Pro
 2. Sprache und Laufzeit — die Bewertung, die Messungen, die Empfehlung
 3. Zielarchitektur — Paketstruktur, Schema, Sitzungen, Prüfpfad, Identität, zweiter Faktor, Tokens, Schlüssel, Ratenbegrenzung, Drittanbieter, Plugins, öffentliche Schnittstelle, Fehlerbehandlung, entschiedene Lücken, Integrität des Sicherheitszustands
 4. Migrationsmodul — fünf Quellen, je Quellschema, Zuordnung, Hash-Übernahme, Verluste, Folgearbeit
-5. Sicherheitsanforderungen — 144 Anforderungen in neunzehn Fehlerklassen, mit Abdeckungstabelle der 33 Advisories
-6. Prüfplan — 148 Testfälle mit vorab festgelegten Schwellen
+5. Sicherheitsanforderungen — 145 Anforderungen in neunzehn Fehlerklassen, mit Abdeckungstabelle der 33 Advisories
+6. Prüfplan — 149 Testfälle mit vorab festgelegten Schwellen
 7. Entscheidungsprotokoll — E-01 bis E-46, Ausgangsbestand für die Fallstudie
 
 Der Bauauftrag liegt getrennt als `CLAUDE-CODE-AUFTRAG.md`.
@@ -2062,7 +2062,12 @@ interface WebAuthnConfig {
   relyingPartyName: string; origins: readonly string[]
   userVerification: "required" | "preferred"
   requireDiscoverableCredential?: boolean       // Vorgabe false; nur mit "required", 3.6, S-DEFAULT-8
+  attestation?: WebAuthnAttestationConfig       // schaltet bestätigte Attestierung und Liste ein, 3.18, S-INTEG-13
   recovery?: PasskeyRecoveryConfig              // schaltet die Wiederherstellung ein, B.11, 3.18
+}
+interface WebAuthnAttestationConfig {
+  trustedRoots: readonly (string | Uint8Array)[]   // PEM-Text oder DER-Bytes, nie leer
+  requestForEveryAccount?: boolean              // Vorgabe false: nur ein Konto mit Liste
 }
 interface TotpConfig          { issuer: string; stepToleranceInSteps: 0 | 1 }  // Vorgabe 1
 interface RecoveryCodesConfig { count: number; groupSize: number }             // Vorgaben 10, 5
@@ -2107,6 +2112,9 @@ Registrierung am Ende einer Wiederherstellung auf einen neuen Passkey (3.18).
 `requireDiscoverableCredential: true` lässt eine Registrierung nur gelten, wenn ihr Client einen
 auffindbaren Credential meldet, und verlangt `userVerification: "required"` (3.6, Die
 Registrierung eines auffindbaren Passkeys).
+`attestation` nennt die Wurzeln, gegen die eine Attestierung geprüft wird, und schaltet die Liste
+der Authenticatoren ein; ohne sie fordert keine Registrierung eine Attestierung an (3.18, Die
+bestätigte Attestierung und die Liste der Authenticatoren).
 
 ---
 
@@ -2140,7 +2148,8 @@ interface AuthInternals {
   readonly maintenance: {                                       // ohne HTTP-Route
     sweep(): Promise<SweepReport>                                 // L-11
     sealSecurityState(): Promise<SecurityStateReport>             // 3.18, S-INTEG-8
-    resealSecurityState(input: { userId: string; reason: string; recoveryDisabled?: boolean }): Promise<SealedSecurityState>
+    resealSecurityState(input: { userId: string; reason: string; recoveryDisabled?: boolean
+      authenticatorAllowlist?: readonly string[] | null }): Promise<SealedSecurityState>
   }                                                               // S-INTEG-7
   readonly weakenings: readonly { option: string; chosen: string }[]   // S-DEFAULT-1
   migrate(): Promise<MigrationReport>
@@ -2162,12 +2171,14 @@ interface SealedSecurityState {                                   // was die Neu
   identities: readonly { provider: string; subject: string }[]
   recoveryCodeCount: number
   passkeyRecovery: { credentialId: string; activatesAt: Date } | null   // die gehaltene Wiederherstellung
+  authenticatorAllowlist: readonly string[] | null                // die Liste der Authenticatoren
+  attestedPasskeyCredentialIds: readonly string[]                 // base64url, bestätigte Attestierung
 }
 ```
 
 `routes` ist kein Implementierungsdetail, sondern die Datenstruktur, aus der Teil D den
 HTTP-Handler und Teil E den Client baut. Sie liegt zur Laufzeit vor, weil der Client sonst
-raten müsste. `AuthSurface` hat 63 Methoden im Modus `username_email`, 60 in `email`, 48 in
+raten müsste. `AuthSurface` hat 65 Methoden im Modus `username_email`, 62 in `email`, 50 in
 `username`, die fünf von `passkeyRecovery` eingerechnet, die es nur mit `webauthn.recovery` gibt. `maintenance.sweep` löscht abgelaufene Zeilen aus den sieben Tabellen mit
 `*_sweep_idx` (L-11); `@velve/auth/schema` liefert dasselbe als SQL für `pg_cron`.
 `maintenance.sealSecurityState` und `maintenance.resealSecurityState` sind die Wartung und das
@@ -2255,7 +2266,7 @@ Seite trägt keinen `Origin`-Kopf, den die Bibliothek vergleichen dürfte. S-CSR
 aus einer Routendeklaration erzeugten Servermethoden, und `resolveFromHeaders` hat keine Route.
 Dasselbe gilt für `pending.resolveFromHeaders` mit dem Zwischenzustandscookie (B.7).
 
-##### B.3 `user` (8, ohne HTTP-Routen)
+##### B.3 `user` (10, ohne HTTP-Routen)
 
 ```ts
 interface UserNamespace<M extends IdentityMode> {
@@ -2264,6 +2275,9 @@ interface UserNamespace<M extends IdentityMode> {
   enable(input: { userId: string }): Promise<void>
   disableRecovery(input: { userId: string }): Promise<void>
   enableRecovery(input: { userId: string }): Promise<void>
+  limitAuthenticators(input: { userId: string; aaguids: readonly string[]
+    allowNoUsableSignInMethod?: boolean }): Promise<void>
+  liftAuthenticatorLimit(input: { userId: string }): Promise<void>
   delete(input: { userId: string }): Promise<void>
   findByEmail:    OnlyWhen<ModeHasEmail<M>,    (i: { email: string })    => Promise<User | null>>
   findByUsername: OnlyWhen<ModeHasUsername<M>, (i: { username: string }) => Promise<User | null>>
@@ -2284,6 +2298,10 @@ benutzt, löscht seine Wiederherstellungscodes und lässt seine Sitzungen stehen
 schaltet die gemailten Wege und die Wiederherstellungscodes wieder an (3.18, Der Schalter ohne
 Wiederherstellung). Beide werden protokolliert und nicht gespeichert; `findById` meldet den
 Schalter als `recoveryDisabledAt`.
+`limitAuthenticators` lässt nur noch Passkeys registrieren und anmelden, deren Attestierung als
+eine der genannten AAGUIDs bestätigt ist, und `liftAuthenticatorLimit` hebt die Liste auf; beide
+werden protokolliert und nur im Siegel gespeichert (3.18, Die bestätigte Attestierung und die
+Liste der Authenticatoren).
 `findByUsername` vergleicht über `username_key`, die Vergleichsform aus 3.4, und findet ein
 Konto auch dann, wenn sein Name den heute konfigurierten Regeln nicht mehr genügt.
 Version 1 hat `findByEmail` abweichend von der Signatur oben in jedem Modus ausgeliefert, weil
@@ -2490,7 +2508,7 @@ jeder Methode mit Aufrufer `session` (L-4); alle drei sind in der Fehlerspalte w
 | `signOut`, `session.refresh`, `pending.cancel` | session/pending | — | IP | `session_required` (nur `refresh`) |
 | `session.resolve`, `resolveFromHeaders`, `pending.resolve`, `pending.resolveFromHeaders` | — | — | **nein** | — (geben `null`; `session.*` wirft `account_disabled`, L-4) |
 | `session.list`, `revoke`, `revokeAllOther`, `revokeAll` | session | **ja** | IP | `session_required`, `freshness_required` |
-| `user.findById`, `findByEmail`, `findByUsername`, `disable`, `enable`, `disableRecovery`, `enableRecovery`, `delete`, `maintenance.sweep` | server | — | **nein** | — |
+| `user.findById`, `findByEmail`, `findByUsername`, `disable`, `enable`, `disableRecovery`, `enableRecovery`, `limitAuthenticators`, `liftAuthenticatorLimit`, `delete`, `maintenance.sweep` | server | — | **nein** | — |
 | `oneTimeToken.resolve` | server | — | **nein** | — (gibt `null`, B.10) |
 | `password.set` | session | **ja** | IP+Konto | `session_required`, `freshness_required`, `password_unacceptable`, `factor_already_enrolled` |
 | `password.change` | session | **ja** | IP+Konto | `session_required`, `freshness_required`, `invalid_credentials`, `password_unacceptable` |
@@ -2506,7 +2524,7 @@ jeder Methode mit Aufrufer `session` (L-4); alle drei sind in der Fehlerspalte w
 | `factor.totp.remove` | session | **ja** | IP+Konto | `session_required`, `freshness_required`, `invalid_factor_code`, `factor_not_enrolled` |
 | `factor.totp.verify` | pending | — | IP+Konto | `invalid_pending_authentication`, `invalid_factor_code`, `too_many_factor_attempts` |
 | `factor.webauthn.register.start` | session | **ja** | IP | `session_required`, `freshness_required` |
-| `factor.webauthn.register.finish` | session | **ja** | IP | `session_required`, `freshness_required`, `webauthn_challenge_invalid`, `webauthn_credential_rejected`, `webauthn_credential_not_discoverable` |
+| `factor.webauthn.register.finish` | session | **ja** | IP | `session_required`, `freshness_required`, `webauthn_challenge_invalid`, `webauthn_credential_rejected`, `webauthn_credential_not_discoverable`, `authenticator_not_allowed` |
 | `factor.webauthn.authenticate.start` | pending | — | IP | `invalid_pending_authentication`, `factor_not_enrolled` |
 | `factor.webauthn.authenticate.finish` | pending | — | IP+Konto | `invalid_pending_authentication`, `webauthn_challenge_invalid`, `webauthn_credential_rejected`, `too_many_factor_attempts` |
 | `factor.webauthn.list`, `rename`, `factor.recovery.remaining`, `identity.list` | session | — | IP | `session_required` |
@@ -2948,7 +2966,7 @@ type VelveErrorCode =
   | "passkey_recovery_failed"
   | "oauth_flow_invalid" | "oauth_provider_error"
   | "webauthn_challenge_invalid" | "webauthn_credential_rejected"
-  | "webauthn_credential_not_discoverable"
+  | "webauthn_credential_not_discoverable" | "authenticator_not_allowed"
   | "internal_error"
 
 class VelveError extends Error {
@@ -2958,7 +2976,7 @@ class VelveError extends Error {
 }
 ```
 
-30 Codes, stabil: Ein Code verschwindet nur im Hauptversionssprung, ein neuer kommt nur mit
+31 Codes, stabil: Ein Code verschwindet nur im Hauptversionssprung, ein neuer kommt nur mit
 einer neuen Route oder einer neuen Ablehnung an einer bestehenden.
 
 | Code | Wann | Status | Sichtbar |
@@ -2992,6 +3010,7 @@ einer neuen Route oder einer neuen Ablehnung an einer bestehenden.
 | `webauthn_challenge_invalid` | Challenge unbekannt, abgelaufen, zweckfremd | 400 | ja, **verschmolzen** |
 | `webauthn_credential_rejected` | Signatur, RP-ID, Ursprung oder Verifikation falsch | 401 | ja, **verschmolzen** |
 | `webauthn_credential_not_discoverable` | Mit `webauthn.requireDiscoverableCredential` meldet der Client einer Registrierung in einer Sitzung keinen auffindbaren Credential (3.6) | 400 | ja |
+| `authenticator_not_allowed` | Ein Konto hält eine Liste der Authenticatoren, und eine Registrierung in einer Sitzung erfüllt sie nicht (3.18) | 403 | ja |
 | `internal_error` | Alles Übrige | 500 | ja, ohne Details |
 
 ##### F.1 Die absichtlich nicht unterscheidbaren Fälle
@@ -3522,6 +3541,35 @@ CREATE TABLE velve.passkey_recovery (
 ```
 
 Damit umfasst das Schema **achtzehn Tabellen**.
+
+#### Die bestätigte Attestierung und die Liste der Authenticatoren
+
+Eine Anwendung kann ein Konto auf Authenticatoren bestimmter Modelle beschränken, deren Attestierung gegen Wurzelzertifikate geprüft ist, die sie selbst konfiguriert (S-INTEG-13). Ohne `webauthn.attestation` ist beides aus: Keine Registrierung fordert eine Attestierung an, und nichts ändert sich. `webauthn.attestation.trustedRoots` nennt die Wurzeln als PEM-Text oder DER-Bytes, etwa die FIDO-Wurzeln eines Herstellers. Der Start lehnt ein fehlendes Objekt, eine leere Liste, einen Eintrag, der kein X.509-Zertifikat ist, eine Wurzel mit CRL-Verteilungspunkt und ein `requestForEveryAccount`, das kein Wahrheitswert ist, mit `InvalidWebAuthnConfigError` ab, die Wurzel mit Verteilungspunkt deshalb, weil die Prüfung der Kette deren Sperrliste abrufen würde. Die Bibliothek lädt nichts nach, keinen FIDO Metadata Service und keine Sperrliste (E-3843, E-3844). Weil der Prüfer von `@simplewebauthn/server` für jedes Format, das eine Kette prüft, die Sperrliste abruft, die ein Zertifikat des Clients nennt, liest jede Registrierung — mit und ohne `webauthn.attestation`, in einer Sitzung und in der Wiederherstellung — das Attestierungsobjekt vor der Prüfung selbst und streng. Ein Objekt, das größer als 32 KiB ist, mehr als acht Zertifikate trägt oder an einer Stelle nicht streng lesbar ist — die CBOR-Abbildung mit `fmt`, `attStmt` und `authData`, `x5c`, Kopf und Nutzlast des JWS von `android-safetynet` in strengem base64url, dessen Zertifikate in strengem base64, jedes Zertifikat —, wird abgelehnt: in einer Sitzung mit `webauthn_credential_rejected`, in der Wiederherstellung mit `passkey_recovery_failed` (E-3854). Nennt ein lesbares Zertifikat, ob in `x5c` oder in der Kette des JWS-Kopfs, einen CRL-Verteilungspunkt, erhält der Prüfer statt des Objekts eines mit dem Format `none`, leerem `attStmt` und byteweise denselben `authData`; Authenticator-Daten, Schlüssel, Flags, Challenge, Ursprung und RP-ID werden geprüft wie immer, und der Credential wird als unbestätigt registriert und erfüllt keine Liste (E-3855).
+
+1. **Anfrage.** Jede Registrierung — `factor.webauthn.register.*` in einer Sitzung und die am Ende einer Wiederherstellung auf einen neuen Passkey — fordert `attestation: "direct"` nur an, wenn die geprüfte Lesung des Kontos eine Liste hält oder `webauthn.attestation.requestForEveryAccount: true` gesetzt ist, sonst wie bisher `"none"`. `"enterprise"` wird nie angefordert (E-3841).
+2. **Prüfung.** Nach der vollständigen Prüfung der Registrierung gilt ihre Attestierung als bestätigt, wenn sie das Format `packed` mit `x5c` hat, also eine volle Attestierung, deren Signatur über Authenticator-Daten und Client-Daten das Blattzertifikat trägt, wenn der Authenticator eine AAGUID nennt, die nicht nur aus Nullen besteht, wenn kein Zertifikat der Kette einen CRL-Verteilungspunkt nennt und wenn `validateCertificatePath` aus `@simplewebauthn/server` die Kette zu einer konfigurierten Wurzel führt. `none`, eine Selbstattestierung (`packed` ohne `x5c`) und jedes andere Format gelten nie als bestätigt (E-3842). Die Registrierung speichert das Ergebnis neben der AAGUID in `attestation_verified`, und `factor.webauthn.list` meldet es als `attestationVerified`.
+3. **Die Liste.** `user.limitAuthenticators({ userId, aaguids, allowNoUsableSignInMethod? })` setzt die Liste und `user.liftAuthenticatorLimit({ userId })` hebt sie auf, beide ohne HTTP-Route nach der Autorisierungsentscheidung der Anwendung (3.15 B.3). Die Liste ist `velve.user.allowed_aaguids` aus Migration 8, in Kleinschreibung, ohne Wiederholung und nie leer. Eine leere Liste, ein Eintrag, der keine AAGUID ist, die AAGUID aus Nullen, ein unbekanntes Konto und ein Aufruf ohne `webauthn.attestation` werden mit `invalid_input` abgelehnt. Setzen und Aufheben sind versiegelte Änderungen unter der Kontosperre, behalten die Epoche, widerrufen keine Sitzung und werden über `log` protokolliert, mit den Ereignisnamen `account authenticators limited` und `account authenticator limit lifted` (E-3849, E-3850). Bliebe dem Konto mit der neuen Liste kein nutzbarer Anmeldeweg — kein Kennwort, keine verknüpfte Identität und kein Passkey, der die Liste erfüllt —, lehnt `limitAuthenticators` mit `last_sign_in_method` ab, außer der Aufrufer setzt `allowNoUsableSignInMethod: true` (L-13). Hält das Konto eine wartende Wiederherstellung, deren Passkey die neue Liste nicht erfüllt, entfernt dieselbe Transaktion sie.
+4. **Durchsetzung.** Ein Passkey erfüllt die Liste, wenn seine Attestierung bestätigt ist und seine AAGUID auf ihr steht; ohne Liste erfüllt ihn jeder. Eine Registrierung, die die Liste nicht erfüllt, wird unter der Kontosperre abgelehnt, ohne dass eine Zeile entsteht: in einer Sitzung mit `authenticator_not_allowed` (403), in der Wiederherstellung mit deren einheitlichem `passkey_recovery_failed` (S-ENUM-10). Die Passkey-Anmeldung und der Passkey als zweiter Faktor lehnen einen Passkey, der die Liste der geprüften Lesung nicht erfüllt, vor der Signaturprüfung ab, antworten wie mit einem unbekannten Passkey (`webauthn_credential_rejected`) und bewegen keinen Zähler. Die Aktivierung einer Wiederherstellung aktiviert keinen gehaltenen Passkey außerhalb der Liste. Ein Passkey außerhalb der Liste bleibt gespeichert und meldet sich nach dem Aufheben wieder an (E-3847). `factor.webauthn.remove` lehnt das Entfernen des letzten Passkeys, der die Liste erfüllt, mit `last_sign_in_method` ab, wenn kein Kennwort und keine Identität bleibt, und jede Zählung nach L-13, auch beim Trennen einer Identität, zählt nur Passkeys, die die Liste erfüllen (E-3853). Ein Konto, dessen einziger zweiter Faktor ein Passkey außerhalb der Liste ist, verlangt den zweiten Faktor weiter und fällt nicht auf einen Faktor zurück.
+5. **Das Siegel.** Die Liste und die AAGUID jedes Passkeys mit bestätigter Attestierung, auch des gehaltenen einer Wiederherstellung, sind Bestandteile des Siegels (Punkt 4): Der Datensatz eines solchen Passkeys trägt hinter dem öffentlichen Schlüssel seine AAGUID, und die Liste steht als letztes Feld, nur solange eine gesetzt ist. Ein Konto ohne Liste und ohne bestätigte Attestierung behält Kodierung und Siegel (E-3846). Ein Schreiber ohne den Wurzelschlüssel, der eine AAGUID hinzufügt, die Liste entfernt, `attestation_verified` setzt oder die AAGUID eines bestätigten Passkeys ändert, bricht den Zustand, und jede Prüfung lehnt ab. `maintenance.resealSecurityState` bestätigt weder eine Liste noch eine Attestierung, die das gespeicherte Siegel nicht bestätigt: Bestätigt es den Zustand nicht und hält das Konto eine Liste oder eine bestätigte Attestierung oder ist `webauthn.attestation` konfiguriert, lehnt sie mit `security_state_authenticator_allowlist_unconfirmed` ab, bis der Betreiber die Liste mit `authenticatorAllowlist` nennt, `null` für keine. Jede Neuversiegelung eines unbestätigten Zustands setzt jedes `attestation_verified` des Kontos zurück, weil keine Attestierung nachträglich ein zweites Mal geprüft werden kann (E-3851). `SealedSecurityState` meldet `authenticatorAllowlist` und `attestedPasskeyCredentialIds`.
+
+Die Grenzen: Nur die volle Attestierung im Format `packed` zählt; TPM, Android Key und Apple erfüllen keine Liste. Eine Kette, in der ein Zertifikat einen CRL-Verteilungspunkt nennt, gilt als unbestätigt, auch wenn sie echt ist, und Sperrungen prüft die Bibliothek nicht. Eine Liste beendet keine bestehende Sitzung. Eine Neuversiegelung, die eine unbestätigte Attestierung zurücksetzt, lässt einem Konto mit Liste keinen Passkey, der sie erfüllt; der Betreiber hebt die Liste dann auf oder registriert den Authenticator neu.
+
+```sql
+-- Migration 8
+ALTER TABLE velve.user
+  ADD COLUMN allowed_aaguids uuid[]
+    CONSTRAINT user_allowed_aaguids_not_empty CHECK (cardinality(allowed_aaguids) > 0);
+ALTER TABLE velve.webauthn_credential
+  ADD COLUMN attestation_verified boolean NOT NULL DEFAULT false,
+  ADD CONSTRAINT webauthn_credential_attestation_names_its_model
+    CHECK (NOT attestation_verified OR aaguid IS NOT NULL);
+ALTER TABLE velve.passkey_recovery
+  ADD COLUMN attestation_verified boolean NOT NULL DEFAULT false,
+  ADD CONSTRAINT passkey_recovery_attestation_names_its_model
+    CHECK (NOT attestation_verified OR aaguid IS NOT NULL);
+```
+
+Migration 8 legt keine Tabelle an; das Schema umfasst weiter **achtzehn Tabellen**.
 
 ---
 
@@ -4868,14 +4916,15 @@ Bei der Ausarbeitung dieses Abschnitts und des Prüfplans wurden dreizehn Lücke
 - **S-INTEG-10:** Ein Konto hat höchstens `limits.passkeysPerAccount` Passkeys (Vorgabe 20) und höchstens `limits.identitiesPerAccount` Identitäten (Vorgabe 10); die Grenze wird unter der Kontosperre bei der Registrierung eines Passkeys und beim Verknüpfen einer Identität geprüft, und eine Überschreitung wird mit `passkey_limit_reached` beziehungsweise `identity_limit_reached` abgelehnt. *(Abschnitt 3.18, Die Grenzen; Abschnitt 3.15 A.2, `limits`)*
 - **S-INTEG-11:** Der Schalter ohne Wiederherstellung ist ein Bestandteil des Siegels und ändert sich ausschließlich durch `user.disableRecovery` und `user.enableRecovery`, ohne HTTP-Route, als versiegelte Änderung unter der Kontosperre. Das Einschalten löscht in derselben Transaktion jeden Wiederherstellungscode des Kontos und zieht die Generationen von `password_reset` und `magic_link` und die `attempt_generation` neu, das Ausschalten die beiden Generationen der Links; beide behalten die Epoche und widerrufen keine Sitzung; beide Aufrufe werden mit Ereignisnamen und `userId`, ohne Adresse, protokolliert und nicht gespeichert. Leert oder setzt ein Schreiber ohne den Wurzelschlüssel `recovery_disabled_at`, ist der Zustand gebrochen: Anmeldung, Sitzungsauflösung und die Einlösung eines Links lehnen ab und lösen den Alarm aus. Eine Neuversiegelung, deren gespeichertes Siegel den Stand nicht bestätigt, lehnt bei ausgeschaltetem Schalter mit `security_state_recovery_switch_unconfirmed` ab, solange der Aufrufer ihn nicht mit `recoveryDisabled` nennt, ebenso wenn das gespeicherte Siegel mit dem umgekehrten Schalter gilt; nennt er ihn, schreibt sie diesen Wert; endet sie mit eingeschaltetem Schalter, löscht sie jeden Wiederherstellungscode, und sie meldet den Schalter in ihrem Ergebnis. Ein Konto, das den Schalter nie eingeschaltet hat, behält Kodierung und Siegel. *(Abschnitt 3.18, Der Schalter ohne Wiederherstellung)*
 - **S-INTEG-12:** Eine wartende Wiederherstellung auf einen neuen Passkey — ihr gehaltener Passkey und ihr Aktivierungszeitpunkt — und die Generation des Zwecks `passkey_recovery` sind Bestandteile des Siegels; Beginn, Abbruch und Aktivierung sind versiegelte Änderungen unter der Kontosperre. Vor der Aktivierung meldet kein Anmelde- und kein Faktorweg mit dem gehaltenen Passkey an, und L-13 zählt ihn nicht. Die Aktivierung geschieht erst ab `activates_at` nach der Datenbankuhr und nur, wenn die geprüfte Lesung die Wiederherstellung noch hält, das Konto nicht deaktiviert und der Schalter aus ist; sie entfernt in einer Transaktion Kennwort, TOTP, jeden anderen Passkey, jeden Wiederherstellungscode, jede verknüpfte Identität und jede Sitzung, diese mit `beforeSessionRevoke`, zieht eine neue Epoche und neue Generationen aller Zwecke der Einmal-Tokens und der Versuche und lässt den gehaltenen Passkey als einzigen Weg hinein. Ein Schreiber ohne den Wurzelschlüssel, der die Wartezeit verkürzt, eine Wiederherstellung einem anderen Konto zuschreibt, pflanzt oder eine abgebrochene zurückschreibt, bricht den Zustand. Das Einschalten des Schalters bricht eine wartende Wiederherstellung ab, und Ein- wie Ausschalten ziehen die Generation von `passkey_recovery` neu. *(Abschnitt 3.18, Die Wiederherstellung auf einen neuen Passkey)*
+- **S-INTEG-13:** Mit `webauthn.attestation` gilt eine Attestierung nur als bestätigt, wenn sie eine volle Attestierung im Format `packed` ist, eine AAGUID nennt und ihre Kette ohne Abruf einer Sperrliste zu einer konfigurierten Wurzel führt, und `none`, eine Selbstattestierung und jedes andere Format nie; eine Registrierung fordert `attestation: "direct"` nur für ein Konto mit Liste oder mit `requestForEveryAccount` an, sonst `"none"`. Hält ein Konto eine Liste aus `user.limitAuthenticators`, wird jede Registrierung eines Passkeys, der sie nicht erfüllt, ohne Zeile abgelehnt — in einer Sitzung mit `authenticator_not_allowed`, in der Wiederherstellung mit `passkey_recovery_failed` —, und die Passkey-Anmeldung und der Passkey als zweiter Faktor lehnen einen solchen Passkey vor der Signaturprüfung mit derselben Antwort ab wie einen unbekannten. Die Liste und die AAGUID jedes Passkeys mit bestätigter Attestierung sind Bestandteile des Siegels: Ein Schreiber ohne den Wurzelschlüssel, der eine AAGUID hinzufügt, die Liste entfernt, ein Flag setzt oder eine AAGUID ändert, bricht den Zustand, und keine Neuversiegelung bestätigt eine Liste oder eine Attestierung, die das gespeicherte Siegel nicht bestätigt. Eine Liste, die dem Konto keinen nutzbaren Anmeldeweg lässt, wird ohne `allowNoUsableSignInMethod: true` mit `last_sign_in_method` abgelehnt (L-13). Keine Registrierung, mit oder ohne `webauthn.attestation`, übergibt dem Prüfer ein Zertifikat, das eine Sperrliste nennt, oder ein Attestierungsobjekt, das sie nicht streng lesen kann; eine solche Kette wird als Attestierung `none` geprüft und bleibt unbestätigt. Ohne Liste ändert sich sonst nichts. *(Abschnitt 3.18, Die bestätigte Attestierung und die Liste der Authenticatoren)*
 
 ---
 
 ## 6. Prüfplan
 
-Zu jeder der 144 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID trägt dieselbe Klasse und dieselbe Nummer wie die Anforderung: `T-OWNER-3` prüft `S-OWNER-3`. Hinzu kommen vier ergänzende Testfälle, die keiner einzelnen Anforderung zugeordnet sind, sondern eine Klasse breiter absichern (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — zusammen **148 Testfälle**.
+Zu jeder der 145 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID trägt dieselbe Klasse und dieselbe Nummer wie die Anforderung: `T-OWNER-3` prüft `S-OWNER-3`. Hinzu kommen vier ergänzende Testfälle, die keiner einzelnen Anforderung zugeordnet sind, sondern eine Klasse breiter absichern (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — zusammen **149 Testfälle**.
 
-**Spalten.** *Art* ist eine von sechs: `Unit`, `Integration`, `Property` (fast-check), `Statistisch`, `Nebenläufigkeit`, `Statisch` (Lint-Regel, AST-Analyse, Typprüfung); Kombinationen sind mit `+` angegeben. *Schwelle* ist eine Zahl oder ein hartes Kriterium — kein Test in diesem Plan besteht mit „keine Fehler". *Läuft in* ist eine von drei Stufen: `CI bei jedem Commit` (129 Testfälle, dazu der statische Teil von T-RACE-2 und der Teil von T-INTEG-5 außer dem Zeitteil), `CI nächtlich` (15, dazu der Nebenläufigkeitsteil von T-RACE-2 und der Zeitteil von T-INTEG-5), `vor jedem Release` (2).
+**Spalten.** *Art* ist eine von sechs: `Unit`, `Integration`, `Property` (fast-check), `Statistisch`, `Nebenläufigkeit`, `Statisch` (Lint-Regel, AST-Analyse, Typprüfung); Kombinationen sind mit `+` angegeben. *Schwelle* ist eine Zahl oder ein hartes Kriterium — kein Test in diesem Plan besteht mit „keine Fehler". *Läuft in* ist eine von drei Stufen: `CI bei jedem Commit` (130 Testfälle, dazu der statische Teil von T-RACE-2 und der Teil von T-INTEG-5 außer dem Zeitteil), `CI nächtlich` (15, dazu der Nebenläufigkeitsteil von T-RACE-2 und der Zeitteil von T-INTEG-5), `vor jedem Release` (2).
 
 **Grundsatz der Stufenzuordnung.** Alles Deterministische blockiert jeden Commit. Alles Statistische und alles, was länger als 60 Sekunden läuft, läuft nächtlich auf einem dedizierten Läufer und meldet als Ticket, nicht als roter Build. Der Grund steht in Abschnitt 6.20.
 
@@ -5277,7 +5326,7 @@ Für ein Ein-Personen-Team lohnt sich das **nicht auf dem gesamten Bestand**: ei
 - **Ziel: Mutations-Score ≥ 85 % auf diesem Ausschnitt**, gemessen **vor jedem Release**, nicht bei jedem Commit.
 - **Der Wert für ein Ein-Personen-Team ist nicht die Zahl, sondern die Liste der überlebenden Mutanten.** Sie ist eine Arbeitsliste fehlender Zusicherungen und ersetzt den Code-Review durch eine zweite Person an genau der Stelle, an der ein solcher Review am meisten wert wäre.
 
-**Abdeckung ist kein Sicherheitsmaß.** Die 148 Testfälle dieses Plans sind das Sicherheitsmaß; die Abdeckungszahl ist nur die Warnleuchte, die anzeigt, dass ein neuer Zweig ohne Testfall hinzugekommen ist. Kein Testfall dieses Plans darf mit dem Argument „die Abdeckung stimmt ja" entfallen.
+**Abdeckung ist kein Sicherheitsmaß.** Die 149 Testfälle dieses Plans sind das Sicherheitsmaß; die Abdeckungszahl ist nur die Warnleuchte, die anzeigt, dass ein neuer Zweig ohne Testfall hinzugekommen ist. Kein Testfall dieses Plans darf mit dem Argument „die Abdeckung stimmt ja" entfallen.
 
 ---
 
@@ -5299,6 +5348,7 @@ Jeder Testfall dieser Klasse läuft gegen eine echte Datenbank und greift so an,
 | T-INTEG-10 | S-INTEG-10 | Integration + Nebenläufigkeit | An einem Konto 20 Passkeys registrieren und einen 21. versuchen; an einem Konto mit 19 Passkeys zwei Registrierungen zeitgleich starten; ebenso mit 10 und 9 Identitäten beim Verknüpfen. An einem Konto mit 20 Passkeys und 10 Identitäten die Sitzungsauflösung messen. | Der 21. Passkey und die 11. Identität in **2/2** Fällen mit `passkey_limit_reached` beziehungsweise `identity_limit_reached` abgelehnt; von zwei zeitgleichen Registrierungen oder Verknüpfungen gelingt in **2/2** Fällen **genau eine**; an der Grenze kostet eine Sitzungsauflösung im Median über mindestens 1000 Anfragen höchstens das Dreifache der Auflösung an einem Konto mit einem Passkey | CI bei jedem Commit |
 | T-INTEG-11 | S-INTEG-11 | Integration | Ein Konto mit Kennwort, TOTP, Passkey, Wiederherstellungscodes und zwei Sitzungen; vorher einen Reset- und einen Magic-Link mailen; `user.disableRecovery` aufrufen, Codes zählen, Sitzungen auflösen, das Protokoll lesen; `user.enableRecovery` aufrufen und die beiden alten Links einlösen. Als Schreiber `recovery_disabled_at` per SQL leeren und an einem anderen Konto setzen und je eine Anmeldung, eine Sitzungsauflösung und eine Link-Einlösung versuchen. Nach dem Leeren `maintenance.resealSecurityState` ohne und mit `recoveryDisabled` aufrufen und `maintenance.sealSecurityState` laufen lassen. Die Kodierung eines Kontos, das den Schalter nie eingeschaltet hat, mit der festgehaltenen Kodierung vergleichen. | **0** Codes nach dem Einschalten, **2/2** Sitzungen gültig, je **1** Protokollzeile mit `userId` und ohne Adresse; **2/2** alte Links mit `invalid_token` abgelehnt; geleerter und gesetzter Schalter **2/2** als gebrochener Zustand abgelehnt, mit Alarm `seal_mismatch`; Neuversiegelung ohne Wert mit `security_state_recovery_switch_unconfirmed` abgelehnt, mit Wert der Schalter wieder an und das Siegel gültig, die Wartung lehnt das Konto ab; Kodierung des unbenutzten Kontos **byteweise gleich** | CI bei jedem Commit |
 | T-INTEG-12 | S-INTEG-12 | Integration | Ein Konto mit Kennwort, altem Passkey, Wiederherstellungscodes und zwei Sitzungen wiederherstellen; vor und nach der Wartezeit mit dem neuen Passkey, dem alten und dem Kennwort anmelden, Sitzungen auflösen und Zeilen zählen; nach der Wartezeit vor der Aktivierung lesen; als Schreiber `activates_at` vorziehen, die Zeile einem anderen Konto zuschreiben und eine abgebrochene zurückschreiben; den Schalter während der Wartezeit einschalten; mit Wartezeit 0 wiederherstellen; die Kodierung eines Kontos ohne Wiederherstellung mit der festgehaltenen vergleichen. | Vor der Aktivierung meldet der neue Passkey **0**-mal an, Kennwort und alter Passkey melden an, die Sitzungen gelten; die Lesung nach der Wartezeit ändert **0** Zeilen; nach der Aktivierung **1** Passkey, **0** Kennworte, **0** Codes, **0** gültige Sitzungen, **2/2** `beforeSessionRevoke` mit `passkey_recovery`, das Entfernen des letzten Passkeys mit `last_sign_in_method` abgelehnt; die drei Schreibereingriffe **3/3** als gebrochener Zustand abgelehnt und mit Alarm; nach dem Schalter **0** wartende Wiederherstellungen; Wartezeit 0 ersetzt sofort; Kodierung **byteweise gleich** | CI bei jedem Commit |
+| T-INTEG-13 | S-INTEG-13 | Unit + Integration | Eine Test-CA im Testlauf erzeugen. Die Registrierungsoptionen mit und ohne Liste, mit `requestForEveryAccount` und ohne Wurzeln lesen; registrieren mit voller `packed`-Attestierung direkt und über eine Zwischenstelle, mit Selbstattestierung, mit `none`, unter einer fremden Wurzel und mit einem Blatt mit CRL-Verteilungspunkt, dieses auch als `fido-u2f`, `android-key`, `apple`, `tpm` und `android-safetynet` ausgegeben, mit und ohne `webauthn.attestation`; unter einer Liste mit einer AAGUID außerhalb, mit `none`, mit Selbstattestierung und unter einer fremden Wurzel. Mit einem Passkey außerhalb der Liste als Passkey und als zweiter Faktor anmelden, dazu mit einem unbekannten. Liste und Flags per SQL auf vier Arten ändern. Eine Wiederherstellung mit einem Authenticator außerhalb der Liste abschließen. Eine Liste ohne nutzbaren Anmeldeweg setzen. Nach einer entfernten Liste neu versiegeln. | `"direct"` genau mit Liste oder `requestForEveryAccount`; **2/2** volle Attestierungen bestätigt, **4/4** andere unbestätigt; jede Kette mit Verteilungspunkt in **12/12** Fällen als unbestätigt registriert, unter einer Liste `authenticator_not_allowed`, **0** Abrufe; ein nicht streng lesbarer JWS-Kopf `webauthn_credential_rejected`; **4/4** Registrierungen außerhalb der Liste `authenticator_not_allowed` mit **0** Zeilen; Anmeldung außerhalb der Liste **byteweise gleich** einem unbekannten Passkey, Zähler unverändert; **4/4** Änderungen brechen den Zustand mit dem Alarm `seal_mismatch`; Wiederherstellung **byteweise gleich** einer unbekannten Challenge; `last_sign_in_method` ohne und Annahme mit `allowNoUsableSignInMethod`; Neuversiegelung ohne Nennung abgelehnt, mit Nennung **0** bestätigte Attestierungen | CI bei jedem Commit |
 
 ---
 
