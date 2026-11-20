@@ -11550,7 +11550,9 @@ The block's type is exported from `@velve/auth` as `WebAuthnAttestationConfig`.
 
 The library downloads nothing: no FIDO Metadata Service, no revocation list. The
 roots are what you put here, and the application decides which manufacturers it
-trusts (E-3843). `@simplewebauthn/server` verifies the chain with its own
+trusts (E-3843). The library never initialises the dependency's `MetadataService`, which
+is the only part of it that downloads metadata; if your application initialises
+it itself, that download is yours. `@simplewebauthn/server` verifies the chain with its own
 `validateCertificatePath`; the library does not touch the dependency's global
 `SettingsService`, so another instance in the same process, or your own use of
 the dependency, keeps its own roots.
@@ -11565,6 +11567,31 @@ throws `InvalidWebAuthnConfigError` with one of these codes:
 | `attestation_root_unreadable` | an entry is neither PEM text of exactly one X.509 certificate nor DER bytes of one. |
 | `attestation_root_names_a_revocation_list` | a root names a CRL distribution point. The verifier fetches every revocation list a certificate names, and this library reaches no host it was not told to (E-3844). |
 | `attestation_request_for_every_account_not_a_boolean` | `requestForEveryAccount` is present and neither `true` nor `false`. |
+
+### What every registration refuses before it is verified
+
+`@simplewebauthn/server`, while it checks the certificate chain of an
+attestation, fetches the revocation list any of those certificates names — a
+URL the client chose — before it has refused anything. Since the client sends
+the chain, every registration refuses such an attestation itself, before the
+verifier sees it (E-3854). This holds **with and without**
+`webauthn.attestation`, in a session and at the end of a recovery. Refused
+before verification, as an ordinary rejection with no row written:
+
+- an attestation object larger than 32 KiB, or one that does not decode;
+- one carrying more than eight certificates;
+- one with a certificate that names a CRL distribution point, whether in `x5c`
+  (`packed`, `fido-u2f`, `android-key`, `apple`, `tpm`) or in the chain of the
+  JWS header of `android-safetynet`.
+
+In a session the answer is `webauthn_credential_rejected` (401), in a recovery
+`passkey_recovery_failed` (400); the log names `attestation_unreadable` or
+`attestation_names_a_revocation_list`. Attestations of every format without
+such a URL reach their verifier as before. Of the formats, the dependency
+reaches the fetch by default for `apple`, `android-key` and
+`android-safetynet`, whose roots it presets; for `packed`, `fido-u2f` and `tpm`
+it does so only where an application has set the dependency's global roots
+itself. Versions before 3.0.0 did not refuse these attestations: upgrade.
 
 ### What a registration asks for
 
