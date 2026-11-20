@@ -2,6 +2,7 @@
 	{
 		"id": "W-EVERY-ROUTE",
 		"title": "What every route passes",
+		"routes": ["toWebHandler", "createServerMethod"],
 		"guards": [
 			{
 				"guard": "The `Origin` must equal an entry of `origins` before anything else runs",
@@ -57,7 +58,7 @@
 				"requirement": "O-1",
 				"enforcedIn": "src/core/http/pipeline.ts:assertSessionIsFresh",
 				"legitimateTest": "test/auth-password-routes.test.ts",
-				"attackTest": "test/session-lifecycle.test.ts"
+				"attackTest": "test/auth-password-routes.test.ts"
 			},
 			{
 				"guard": "Only the declared routes see the pending cookie",
@@ -92,6 +93,7 @@
 	{
 		"id": "W-SESSION-USE",
 		"title": "Presenting an existing session",
+		"routes": ["GET /session", "session.resolve", "session.resolveFromHeaders"],
 		"guards": [
 			{
 				"guard": "The lookup is by `sha256(token)` only, never by the plaintext",
@@ -161,6 +163,7 @@
 	{
 		"id": "W-SESSION-REFRESH",
 		"title": "Extending a session",
+		"routes": ["POST /session/refresh", "session.refresh"],
 		"guards": [
 			{
 				"guard": "The extension moves only the idle deadline, never the absolute one",
@@ -188,6 +191,16 @@
 	{
 		"id": "W-SESSION-END",
 		"title": "Ending sessions",
+		"routes": [
+			"POST /sign-out",
+			"POST /session/revoke",
+			"POST /session/revoke-others",
+			"POST /session/revoke-all",
+			"signOut",
+			"session.revoke",
+			"session.revokeAllOther",
+			"session.revokeAll"
+		],
 		"guards": [
 			{
 				"guard": "`revoke` acts only on rows of the calling session's account",
@@ -229,6 +242,7 @@
 	{
 		"id": "W-PASSWORD-SIGNIN",
 		"title": "Signing in with a password",
+		"routes": ["POST /sign-in/password", "signIn.password"],
 		"guards": [
 			{
 				"guard": "The account bucket is drawn before anything else",
@@ -319,6 +333,12 @@
 	{
 		"id": "W-PASSKEY-SIGNIN",
 		"title": "Signing in with a passkey",
+		"routes": [
+			"POST /sign-in/passkey/start",
+			"POST /sign-in/passkey/finish",
+			"signIn.passkey.start",
+			"signIn.passkey.finish"
+		],
 		"guards": [
 			{
 				"guard": "The challenge holds five minutes, once, and only for its ceremony",
@@ -370,6 +390,13 @@
 				"attackTest": "test/webauthn-counter-race.test.ts"
 			},
 			{
+				"guard": "A recovery whose waiting period has ended is activated at the first sign-in with its held passkey, under the account lock, before the assertion is verified",
+				"requirement": "S-INTEG-12",
+				"enforcedIn": "src/core/factor/webauthn/service.ts:findOrActivateCredential",
+				"legitimateTest": "test/passkey-recovery-flow.test.ts",
+				"attackTest": "test/passkey-recovery-review-lifecycle.test.ts"
+			},
+			{
 				"guard": "A disabled account answers like an invalid assertion",
 				"requirement": "L-4",
 				"enforcedIn": "src/core/factor/routes.ts:passkeyRoutes",
@@ -395,6 +422,13 @@
 	{
 		"id": "W-PENDING",
 		"title": "The pending state between first and second factor",
+		"routes": [
+			"GET /pending",
+			"POST /pending/cancel",
+			"pending.resolve",
+			"pending.resolveFromHeaders",
+			"pending.cancel"
+		],
 		"guards": [
 			{
 				"guard": "The pending state is a row in `pending_authentication`, not a session",
@@ -464,6 +498,7 @@
 	{
 		"id": "W-TOTP-SECOND-FACTOR",
 		"title": "TOTP as second factor",
+		"routes": ["POST /factor/totp/verify", "factor.totp.verify"],
 		"guards": [
 			{
 				"guard": "The account bucket of the pending state's account is drawn before the check",
@@ -495,7 +530,7 @@
 			},
 			{
 				"guard": "A missing, unconfirmed or wrong factor answers alike",
-				"requirement": "S-ENUM-2",
+				"requirement": null,
 				"enforcedIn": "src/core/factor/totp/service.ts:createTotpService",
 				"legitimateTest": "test/totp-concealment.test.ts",
 				"attackTest": "test/totp-concealment.test.ts"
@@ -512,6 +547,7 @@
 	{
 		"id": "W-RECOVERY-SECOND-FACTOR",
 		"title": "Recovery code as second factor",
+		"routes": ["POST /factor/recovery/verify", "factor.recovery.verify"],
 		"guards": [
 			{
 				"guard": "Only `HMAC-SHA256(pepper, code)` is stored",
@@ -553,6 +589,12 @@
 	{
 		"id": "W-PASSKEY-SECOND-FACTOR",
 		"title": "Passkey as second factor",
+		"routes": [
+			"POST /factor/webauthn/authenticate/start",
+			"POST /factor/webauthn/authenticate/finish",
+			"factor.webauthn.authenticate.start",
+			"factor.webauthn.authenticate.finish"
+		],
 		"guards": [
 			{
 				"guard": "The challenge is bound to account and ceremony",
@@ -566,7 +608,7 @@
 				"requirement": "S-OWNER-2",
 				"enforcedIn": "src/core/factor/webauthn/credential-repository.ts:createWebAuthnCredentialRepository",
 				"legitimateTest": "test/auth-webauthn-routes.test.ts",
-				"attackTest": null
+				"attackTest": "test/webauthn-authentication.test.ts"
 			},
 			{
 				"guard": "Origin, RP ID, user verification and seal as for the passkey sign-in",
@@ -587,7 +629,7 @@
 				"requirement": "L-8",
 				"enforcedIn": "src/core/factor/pending/attempt-limit.ts:verifyUnderPendingAttemptLimit",
 				"legitimateTest": "test/totp-pending-attempts.test.ts",
-				"attackTest": "test/reset-second-factor-review-attacks.test.ts"
+				"attackTest": null
 			},
 			{
 				"guard": "The pending row is deleted in the transaction that inserts the session",
@@ -601,6 +643,12 @@
 	{
 		"id": "W-MAGIC-LINK",
 		"title": "The magic link",
+		"routes": [
+			"POST /sign-in/magic-link/request",
+			"POST /sign-in/magic-link/redeem",
+			"signIn.magicLink.request",
+			"signIn.magicLink.redeem"
+		],
 		"guards": [
 			{
 				"guard": "A known and an unknown address run the same statements and send exactly once",
@@ -687,7 +735,7 @@
 				"attackTest": null
 			},
 			{
-				"guard": "The first confirmation deletes a password set in another session and every session",
+				"guard": "The first confirmation deletes a password set in another session and only then every session, and nothing else",
 				"requirement": "S-LINK-4",
 				"enforcedIn": "src/core/flows/confirmation.ts:confirmAddress",
 				"legitimateTest": "test/flows-review-first-confirmation.test.ts",
@@ -705,6 +753,12 @@
 	{
 		"id": "W-PASSWORD-RESET-MAIL",
 		"title": "Password reset by mail",
+		"routes": [
+			"POST /password/request-reset",
+			"POST /password/redeem-reset",
+			"password.requestReset",
+			"password.redeemReset"
+		],
 		"guards": [
 			{
 				"guard": "A known and an unknown address answer byte for byte alike",
@@ -729,7 +783,7 @@
 			},
 			{
 				"guard": "Policy and KDF run before the token is spent",
-				"requirement": "S-DOS-2",
+				"requirement": null,
 				"enforcedIn": "src/core/flows/reset.ts:redeemReset",
 				"legitimateTest": "test/reset-second-factor-flow.test.ts",
 				"attackTest": null
@@ -781,6 +835,10 @@
 	{
 		"id": "W-PASSWORD-RESET-RECOVERY-CODE",
 		"title": "Password reset with a recovery code",
+		"routes": [
+			"POST /password/redeem-reset-with-recovery-code",
+			"password.redeemResetWithRecoveryCode"
+		],
 		"guards": [
 			{
 				"guard": "The account bucket is drawn before any derivation",
@@ -819,7 +877,7 @@
 			},
 			{
 				"guard": "A disabled account spends the code and answers like a wrong one",
-				"requirement": "S-OWNER-8",
+				"requirement": "L-4",
 				"enforcedIn": "src/core/flows/reset.ts:redeemResetWithRecoveryCode",
 				"legitimateTest": "test/recovery-reset-disabled.test.ts",
 				"attackTest": "test/recovery-reset-disabled.test.ts"
@@ -836,6 +894,20 @@
 	{
 		"id": "W-PASSKEY-RECOVERY",
 		"title": "Recovery to a new passkey",
+		"routes": [
+			"POST /passkey-recovery/request",
+			"POST /passkey-recovery/start",
+			"POST /passkey-recovery/finish",
+			"GET /passkey-recovery",
+			"POST /passkey-recovery/cancel",
+			"POST /sign-in/passkey/finish",
+			"passkeyRecovery.request",
+			"passkeyRecovery.start",
+			"passkeyRecovery.finish",
+			"passkeyRecovery.pending",
+			"passkeyRecovery.cancel",
+			"signIn.passkey.finish"
+		],
 		"guards": [
 			{
 				"guard": "An unknown address, a switched-off account and an account with a passkey run one path",
@@ -887,7 +959,7 @@
 				"attackTest": null
 			},
 			{
-				"guard": "The activation replaces every way in and revokes every session and link",
+				"guard": "The activation, also the one from `POST /sign-in/passkey/finish`, happens only under the account lock while the recovery is still due, replaces every way in and revokes every session and link",
 				"requirement": "S-INTEG-12",
 				"enforcedIn": "src/core/recovery/activation.ts:activateDueRecovery",
 				"legitimateTest": "test/passkey-recovery-review-lifecycle.test.ts",
@@ -912,6 +984,14 @@
 	{
 		"id": "W-OAUTH-SIGNIN",
 		"title": "Signing in through OAuth and OIDC",
+		"routes": [
+			"POST /sign-in/oauth/start",
+			"GET /sign-in/oauth/callback/:provider",
+			"POST /sign-in/oauth/callback/:provider",
+			"signIn.oauth.start",
+			"signIn.oauth.callback",
+			"signIn.oauth.callbackFormPost"
+		],
 		"guards": [
 			{
 				"guard": "The `state` lies server-side, the cookie holds only the pointer, and both must match",
@@ -1009,6 +1089,7 @@
 	{
 		"id": "W-OAUTH-SIGNUP",
 		"title": "Creating an account through a provider",
+		"routes": ["GET /sign-in/oauth/callback/:provider", "POST /sign-in/oauth/callback/:provider"],
 		"guards": [
 			{
 				"guard": "No address and no username is invented",
@@ -1026,7 +1107,7 @@
 			},
 			{
 				"guard": "A provider claim confirms the address only for a trusted provider",
-				"requirement": "S-LINK-6",
+				"requirement": null,
 				"enforcedIn": "src/core/oauth/service.ts:createAccountFor",
 				"legitimateTest": "test/oauth-linking-matrix.test.ts",
 				"attackTest": "test/oauth-linking-matrix.test.ts"
@@ -1050,6 +1131,7 @@
 	{
 		"id": "W-OAUTH-AUTO-LINK",
 		"title": "Automatic link with an existing account",
+		"routes": ["GET /sign-in/oauth/callback/:provider", "POST /sign-in/oauth/callback/:provider"],
 		"guards": [
 			{
 				"guard": "Provider reports verified, local account confirmed, provider trusted — all three",
@@ -1060,7 +1142,7 @@
 			},
 			{
 				"guard": "The address is looked up only once the other two conditions hold",
-				"requirement": "S-LINK-1",
+				"requirement": "S-LINK-2",
 				"enforcedIn": "src/core/oauth/linking.ts:accountAnAutomaticLinkMayJoin",
 				"legitimateTest": "test/oauth-linking-matrix.test.ts",
 				"attackTest": "test/oauth-linking-matrix.test.ts"
@@ -1070,6 +1152,13 @@
 				"requirement": "S-LINK-2",
 				"enforcedIn": "src/core/oauth/service.ts:theJoinableAccountUnderItsLock",
 				"legitimateTest": "test/oauth-anchor-before-lock.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "A disabled account ends the flow",
+				"requirement": "L-4",
+				"enforcedIn": "src/core/oauth/service.ts:theJoinableAccountUnderItsLock",
+				"legitimateTest": null,
 				"attackTest": null
 			},
 			{
@@ -1098,6 +1187,12 @@
 	{
 		"id": "W-IDENTITY-LINK",
 		"title": "Linking an identity from a session",
+		"routes": [
+			"POST /identity/link/start",
+			"GET /sign-in/oauth/callback/:provider",
+			"POST /sign-in/oauth/callback/:provider",
+			"identity.link.start"
+		],
 		"guards": [
 			{
 				"guard": "The start demands a fresh session",
@@ -1146,6 +1241,7 @@
 	{
 		"id": "W-IDENTITY-UNLINK",
 		"title": "Unlinking an identity",
+		"routes": ["POST /identity/unlink", "identity.unlink"],
 		"guards": [
 			{
 				"guard": "Only a row of the calling account is unlinked",
@@ -1194,6 +1290,12 @@
 	{
 		"id": "W-SIGN-UP",
 		"title": "Sign-up with and without a password",
+		"routes": [
+			"POST /sign-up",
+			"POST /sign-up/passwordless",
+			"signUp.withPassword",
+			"signUp.withoutPassword"
+		],
 		"guards": [
 			{
 				"guard": "A taken address answers byte for byte like a free one, through a rolled-back registration",
@@ -1240,8 +1342,60 @@
 		]
 	},
 	{
+		"id": "W-PRE-CREATED-ACCOUNT",
+		"title": "An account someone else created at the victim's address",
+		"routes": [
+			"POST /sign-up",
+			"POST /sign-up/passwordless",
+			"GET /sign-in/oauth/callback/:provider",
+			"POST /sign-in/oauth/callback/:provider",
+			"POST /email/redeem-verification",
+			"POST /sign-in/magic-link/redeem",
+			"signUp.withPassword",
+			"signUp.withoutPassword",
+			"email.redeemVerification",
+			"signIn.magicLink.redeem"
+		],
+		"guards": [
+			{
+				"guard": "The first confirmation by the mailbox's owner deletes a password set in another session and then every session",
+				"requirement": "S-LINK-4",
+				"enforcedIn": "src/core/flows/confirmation.ts:confirmUnderTheLock",
+				"legitimateTest": "test/flows-review-first-confirmation.test.ts",
+				"attackTest": "test/flows-review-first-confirmation.test.ts"
+			},
+			{
+				"guard": "Whether it is the first confirmation is decided by one statement, so two at once do not both delete",
+				"requirement": "S-LINK-4",
+				"enforcedIn": "src/core/flows/confirmation.ts:markFirstConfirmationStatement",
+				"legitimateTest": "test/flows-review-first-confirmation.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "A provider address counts as confirmed only for a trusted provider",
+				"requirement": null,
+				"enforcedIn": "src/core/oauth/service.ts:createAccountFor",
+				"legitimateTest": "test/oauth-linking-matrix.test.ts",
+				"attackTest": "test/oauth-linking-matrix.test.ts"
+			},
+			{
+				"guard": "Without such a password the confirmation removes nothing: the creator's sessions, passkeys, identities, TOTP and recovery codes stay",
+				"requirement": "O-10",
+				"enforcedIn": "src/core/flows/confirmation.ts:confirmUnderTheLock",
+				"legitimateTest": null,
+				"attackTest": null
+			}
+		]
+	},
+	{
 		"id": "W-EMAIL-VERIFY",
 		"title": "Confirming the address",
+		"routes": [
+			"POST /email/request-verification",
+			"POST /email/redeem-verification",
+			"email.requestVerification",
+			"email.redeemVerification"
+		],
 		"guards": [
 			{
 				"guard": "The request takes no address, only the account's",
@@ -1265,7 +1419,7 @@
 				"attackTest": "test/token-target-account-proof.test.ts"
 			},
 			{
-				"guard": "The first confirmation deletes a password set in another session and every session",
+				"guard": "The first confirmation deletes a password set in another session and only then every session, and nothing else",
 				"requirement": "S-LINK-4",
 				"enforcedIn": "src/core/flows/confirmation.ts:confirmUnderTheLock",
 				"legitimateTest": "test/flows-review-first-confirmation.test.ts",
@@ -1276,6 +1430,12 @@
 	{
 		"id": "W-EMAIL-CHANGE",
 		"title": "Changing the address",
+		"routes": [
+			"POST /email/request-change",
+			"POST /email/redeem-change",
+			"email.requestChange",
+			"email.redeemChange"
+		],
 		"guards": [
 			{
 				"guard": "The request demands a fresh session",
@@ -1324,6 +1484,7 @@
 	{
 		"id": "W-USERNAME-CHANGE",
 		"title": "Changing the username",
+		"routes": ["POST /username/change", "username.change"],
 		"guards": [
 			{
 				"guard": "The change demands a fresh session",
@@ -1358,6 +1519,7 @@
 	{
 		"id": "W-PASSWORD-SET",
 		"title": "Adding a password to an account without one",
+		"routes": ["POST /password/set", "password.set"],
 		"guards": [
 			{
 				"guard": "Demands a fresh session",
@@ -1399,6 +1561,7 @@
 	{
 		"id": "W-PASSWORD-CHANGE",
 		"title": "Changing the password",
+		"routes": ["POST /password/change", "password.change"],
 		"guards": [
 			{
 				"guard": "Demands a fresh session",
@@ -1440,6 +1603,12 @@
 	{
 		"id": "W-TOTP-ENROL",
 		"title": "Enrolling TOTP",
+		"routes": [
+			"POST /factor/totp/enroll/start",
+			"POST /factor/totp/enroll/finish",
+			"factor.totp.enroll.start",
+			"factor.totp.enroll.finish"
+		],
 		"guards": [
 			{
 				"guard": "Demands a fresh session",
@@ -1481,6 +1650,7 @@
 	{
 		"id": "W-TOTP-REMOVE",
 		"title": "Removing TOTP",
+		"routes": ["POST /factor/totp/remove", "factor.totp.remove"],
 		"guards": [
 			{
 				"guard": "Demands a fresh session",
@@ -1491,7 +1661,7 @@
 			},
 			{
 				"guard": "Removing demands a valid code of the factor",
-				"requirement": "S-REPLAY-4",
+				"requirement": null,
 				"enforcedIn": "src/core/factor/totp/service.ts:createTotpService",
 				"legitimateTest": "test/totp-enrolment.test.ts",
 				"attackTest": null
@@ -1515,6 +1685,12 @@
 	{
 		"id": "W-PASSKEY-REGISTER",
 		"title": "Registering a passkey in a session",
+		"routes": [
+			"POST /factor/webauthn/register/start",
+			"POST /factor/webauthn/register/finish",
+			"factor.webauthn.register.start",
+			"factor.webauthn.register.finish"
+		],
 		"guards": [
 			{
 				"guard": "Demands a fresh session",
@@ -1570,6 +1746,12 @@
 	{
 		"id": "W-PASSKEY-REMOVE",
 		"title": "Removing or renaming a passkey",
+		"routes": [
+			"POST /factor/webauthn/remove",
+			"POST /factor/webauthn/rename",
+			"factor.webauthn.remove",
+			"factor.webauthn.rename"
+		],
 		"guards": [
 			{
 				"guard": "Only a passkey of the calling account is removed, a foreign one answers like an invented one",
@@ -1611,6 +1793,7 @@
 	{
 		"id": "W-RECOVERY-CODES-GENERATE",
 		"title": "Generating recovery codes",
+		"routes": ["POST /factor/recovery/generate", "factor.recovery.generate"],
 		"guards": [
 			{
 				"guard": "Demands a fresh session",
@@ -1628,9 +1811,16 @@
 			},
 			{
 				"guard": "A new set replaces the old one in the same transaction",
-				"requirement": "S-REST-3",
+				"requirement": null,
 				"enforcedIn": "src/core/factor/recovery/service.ts:createRecoveryCodeService",
 				"legitimateTest": "test/recovery-codes.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "Generating issues no new session and revokes none",
+				"requirement": "O-3",
+				"enforcedIn": "src/core/factor/recovery/service.ts:createRecoveryCodeService",
+				"legitimateTest": null,
 				"attackTest": null
 			},
 			{
@@ -1645,6 +1835,7 @@
 	{
 		"id": "W-ADMIN-DISABLE",
 		"title": "Disabling and enabling an account",
+		"routes": ["user.disable", "user.enable"],
 		"guards": [
 			{
 				"guard": "In the application's process alone, without a route",
@@ -1672,6 +1863,7 @@
 	{
 		"id": "W-ADMIN-RECOVERY-SWITCH",
 		"title": "Setting the no-recovery switch",
+		"routes": ["user.disableRecovery", "user.enableRecovery"],
 		"guards": [
 			{
 				"guard": "The switch is a sealed change without a route",
@@ -1699,6 +1891,7 @@
 	{
 		"id": "W-ADMIN-AUTHENTICATOR-LIMIT",
 		"title": "Setting and lifting the authenticator allowlist",
+		"routes": ["user.limitAuthenticators", "user.liftAuthenticatorLimit"],
 		"guards": [
 			{
 				"guard": "A list without configured roots is refused",
@@ -1726,6 +1919,7 @@
 	{
 		"id": "W-ADMIN-RESEAL",
 		"title": "Sealing and resealing by the operator",
+		"routes": ["maintenance.sealSecurityState", "maintenance.resealSecurityState"],
 		"guards": [
 			{
 				"guard": "Only the reseal with a non-empty reason seals a broken state",
@@ -1767,6 +1961,7 @@
 	{
 		"id": "W-TOKEN-RESOLVE",
 		"title": "Resolving a mailed link without spending it",
+		"routes": ["oneTimeToken.resolve"],
 		"guards": [
 			{
 				"guard": "In the application's process alone, without a route",
@@ -1794,6 +1989,15 @@
 	{
 		"id": "W-PLUGIN",
 		"title": "What a plugin reaches of sessions and factors",
+		"routes": [
+			"VelvePlugin.hooks",
+			"VelvePlugin.routes",
+			"VelvePlugin.migrations",
+			"VelvePlugin.securityStateAnchor",
+			"FrozenContext.repositories",
+			"FrozenContext.ownTables",
+			"migrate"
+		],
 		"guards": [
 			{
 				"guard": "A hook can refuse or observe, never replace the answer",
@@ -1815,6 +2019,48 @@
 				"enforcedIn": "src/core/plugin/own-tables.ts:createOwnTables",
 				"legitimateTest": "test/plugin-sql-role.test.ts",
 				"attackTest": "test/plugin-sql-role.test.ts"
+			},
+			{
+				"guard": "A plugin migration touches only relations it declared itself",
+				"requirement": "S-OWNER-10",
+				"enforcedIn": "src/core/db/migration-runner.ts:assertEveryRelationItTouchedIsItsOwn",
+				"legitimateTest": "test/plugin-migration-run.test.ts",
+				"attackTest": "test/plugin-review-migration-reads.test.ts"
+			},
+			{
+				"guard": "A plugin migration writes no row into a core table",
+				"requirement": "S-OWNER-10",
+				"enforcedIn": "src/core/db/migration-runner.ts:assertNoForeignTableWasReachedByARow",
+				"legitimateTest": "test/plugin-migration-run.test.ts",
+				"attackTest": "test/plugin-review-migration-boundary.test.ts"
+			},
+			{
+				"guard": "A plugin migration leaves no function, trigger or rule behind",
+				"requirement": "S-OWNER-10",
+				"enforcedIn": "src/core/db/migration-runner.ts:assertNoCodeWasLeftBehind",
+				"legitimateTest": "test/plugin-migration-run.test.ts",
+				"attackTest": "test/plugin-review-migration-reads.test.ts"
+			},
+			{
+				"guard": "A plugin migration creates exactly the declared tables with its own prefix",
+				"requirement": "S-DEFAULT-5",
+				"enforcedIn": "src/core/db/migration-runner.ts:assertTheTablesThatAppearedAreTheDeclaredOnes",
+				"legitimateTest": "test/plugin-migration-run.test.ts",
+				"attackTest": "test/plugin-migration-run.test.ts"
+			},
+			{
+				"guard": "A plugin migration runs on no connection whose role can outrun the measurement",
+				"requirement": "S-OWNER-10",
+				"enforcedIn": "src/core/db/migration-runner.ts:assertTheRoleCannotOutrunTheMeasurement",
+				"legitimateTest": "test/plugin-review-migration-role.test.ts",
+				"attackTest": "test/plugin-review-migration-role.test.ts"
+			},
+			{
+				"guard": "An applied migration whose text has changed is refused",
+				"requirement": null,
+				"enforcedIn": "src/core/db/migration-runner.ts:assertChecksumUnchanged",
+				"legitimateTest": "test/plugin-migration-run.test.ts",
+				"attackTest": "test/plugin-migration-run.test.ts"
 			},
 			{
 				"guard": "A plugin route cannot override a core route",
