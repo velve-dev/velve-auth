@@ -111,3 +111,27 @@ describe("the number of reading GET routes the specification and the reference s
 		expect(list).not.toMatch(/\beight reading\b/);
 	});
 });
+
+describe("the start refusals E-3677 added, in both specification files (3.9, point 5)", () => {
+	const pointFive = (path: string, marker: string) => {
+		const text = readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
+		const start = text.indexOf(marker);
+		return text.slice(start, text.indexOf("\n", start));
+	};
+
+	it("names keys_unusable for a cookie-sig key that cannot sign and proof_of_work_unusable for a route declaring the field, in English", () => {
+		const point = pointFive("VELVE-AUTH-ARCHITECTURE.md", "5. **The configuration.**");
+
+		expect(point).toContain("keys_unusable");
+		expect(point).toContain("cookie-sig");
+		expect(point).toMatch(/input field `proofOfWork`/);
+	});
+
+	it("names the same two refusals in German", () => {
+		const point = pointFive("VELVE-AUTH-ARCHITEKTUR.md", "5. **Die Konfiguration.**");
+
+		expect(point).toContain("keys_unusable");
+		expect(point).toContain("cookie-sig");
+		expect(point).toMatch(/`proofOfWork`/);
+	});
+});
