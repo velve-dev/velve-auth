@@ -128,15 +128,10 @@ function recoveryRoutesOf(environment: PasskeyRecoveryEnvironment) {
 		method: "POST",
 		path: "/passkey-recovery/cancel",
 		input: object({}),
-		errors: [
-			"session_required",
-			"account_disabled",
-			"freshness_required",
-			"rate_limited",
-			"origin_not_allowed",
-		] as const,
+		errors: ["session_required", "account_disabled", "rate_limited", "origin_not_allowed"] as const,
 		caller: "session",
-		freshness: "required",
+		//any session of the account still signed in cancels as the owner may have no way to sign in again (E-3780)
+		freshness: "not_required",
 		originCheck: "checked",
 		rateLimit: addressOnly(services),
 		handler: async (_input, context): Promise<void> =>

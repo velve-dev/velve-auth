@@ -553,11 +553,7 @@ export type VelveRouteTable = readonly [
 		"/passkey-recovery/cancel",
 		{} & {},
 		void,
-		| "rate_limited"
-		| "origin_not_allowed"
-		| "account_disabled"
-		| "session_required"
-		| "freshness_required"
+		"rate_limited" | "origin_not_allowed" | "account_disabled" | "session_required"
 	>,
 ];
 

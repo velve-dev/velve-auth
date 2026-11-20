@@ -135,9 +135,11 @@ export interface WebAuthnService {
 			userName: string;
 		}): Promise<WebAuthnRegistrationChallenge>;
 		finish(input: {
+			transaction: Driver;
 			challengeToken: string;
 			response: RegistrationResponseJSON;
 		}): Promise<RecoveredWebAuthnCredential>;
+		withdraw(input: { transaction: Driver; actor: Actor }): Promise<void>;
 	};
 	list(input: { actor: Actor }): Promise<WebAuthnCredential[]>;
 	rename(input: {
@@ -232,14 +234,16 @@ async function verifiedOrRejected<T>(verify: () => Promise<T>): Promise<T> {
 export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthnService {
 	const settings = webAuthnSettingsOf(options.webauthn);
 	const schema = options.schema ?? DEFAULT_SCHEMA;
-	const challenges: WebAuthnChallenges = createWebAuthnChallenges({
-		driver: options.driver,
-		schema,
-		keys: options.keys,
-		...(options.reportTokenBindingRefusal === undefined
-			? {}
-			: { reportTokenBindingRefusal: options.reportTokenBindingRefusal }),
-	});
+	const challengesOn = (driver: Driver): WebAuthnChallenges =>
+		createWebAuthnChallenges({
+			driver,
+			schema,
+			keys: options.keys,
+			...(options.reportTokenBindingRefusal === undefined
+				? {}
+				: { reportTokenBindingRefusal: options.reportTokenBindingRefusal }),
+		});
+	const challenges = challengesOn(options.driver);
 	const credentials: WebAuthnCredentialRepository = createWebAuthnCredentialRepository({
 		driver: options.driver,
 		schema,
@@ -497,14 +501,10 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 					driver: transaction,
 					schema,
 				}).listDescriptorsOwnedBy({ owner: actor });
-				const { challengeToken, challengeBytes } = await createWebAuthnChallenges({
-					driver: transaction,
-					schema,
-					keys: options.keys,
-					...(options.reportTokenBindingRefusal === undefined
-						? {}
-						: { reportTokenBindingRefusal: options.reportTokenBindingRefusal }),
-				}).issue({ purpose: "recover", userId: actor });
+				const { challengeToken, challengeBytes } = await challengesOn(transaction).issue({
+					purpose: "recover",
+					userId: actor,
+				});
 				const publicKeyOptions = await registrationOptionsFor({
 					actor,
 					userName,
@@ -516,8 +516,8 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 			},
 
 			//a passkey that replaces every other way in is registered with user verification whatever the setting (E-3766)
-			async finish({ challengeToken, response }) {
-				const owner = await challenges.consumeNamingItsOwner({
+			async finish({ transaction, challengeToken, response }) {
+				const owner = await challengesOn(transaction).consumeNamingItsOwner({
 					purpose: "recover",
 					challengeToken,
 				});
@@ -531,6 +531,9 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 				});
 				return { owner, credential };
 			},
+
+			withdraw: ({ transaction, actor }) =>
+				challengesOn(transaction).withdrawEveryChallengeOf({ actor, purpose: "recover" }),
 		},
 
 		authenticate: {

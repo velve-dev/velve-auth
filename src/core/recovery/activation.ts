@@ -35,7 +35,6 @@ export const EVERY_WAY_IN_THAT_WAS_MAILED_OR_PENDING: GenerationMoves = {
 	retirePending: true,
 };
 
-/** whether a verified read holds a recovery whose waiting period the database clock has passed */
 function isActivatable(read: SecurityStateRead): boolean {
 	return read.passkeyRecovery?.due === true && !read.disabled && !read.recoveryDisabled;
 }
@@ -167,7 +166,7 @@ export async function activateDueRecovery(
 	return true;
 }
 
-//a sign-in with a passkey a due recovery still holds activates it first and a broken state fails it as a rejected passkey (E-3768)
+//a broken state met while activating must answer as a rejected passkey (E-3768)
 export async function activateDueRecoveryOfCredential(
 	activation: PasskeyRecoveryActivation,
 	credentialId: Uint8Array<ArrayBuffer>,

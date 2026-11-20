@@ -30,7 +30,11 @@ import { equalsInConstantTime } from "../keys/constant-time.js";
 import type { KeyProvider } from "../keys/provider.js";
 import type { SecurityStateRead } from "../security-state/read.js";
 import { checkAccount, recordSealLater, sealChange } from "../security-state/runtime.js";
-import { componentsAfter, SealingRefusedError } from "../security-state/sealing.js";
+import {
+	componentsAfter,
+	SealingRefusedError,
+	type SealWritten,
+} from "../security-state/sealing.js";
 import {
 	activateDueRecovery,
 	componentsWithOnly,
@@ -122,7 +126,7 @@ async function candidateHmacsOf(
 	return peppered.filter((each) => each !== null).map((each) => each.codeHmac);
 }
 
-//disabled, switched off and already pending are refused after the code so all three cost what a wrong code costs (S-ENUM-10)
+//a disabled, switched-off or already recovering account must cost what a wrong code costs (S-ENUM-10)
 function refuseUnlessTheAccountMayBeRecovered(read: SecurityStateRead): void {
 	if (read.disabled || read.recoveryDisabled || read.passkeyRecovery !== null) {
 		throw new ConcealedError("passkey_recovery_refused_for_account");
@@ -217,25 +221,24 @@ export function startPasskeyRecovery(
 	});
 }
 
-/** what the registration wrote under the account lock: a passkey that replaced every way in, or one held back */
 type RegistrationWritten =
 	| { readonly kind: "replaced"; readonly moved: MovedPasskey }
 	| { readonly kind: "held"; readonly held: HeldPasskey };
 
-/** what the transaction that ends a registration left, read under the account lock */
 interface Registered {
 	readonly address: string | null;
 	readonly held: HeldPasskey | null;
+	readonly sealed: SealWritten<RegistrationWritten>;
 }
 
-//the waiting period is asked once on the request that registers the passkey and clamped (E-3764)
 function waitingPeriodFor(environment: PasskeyRecoveryEnvironment, actor: Actor): number {
 	return waitingPeriodWithinBounds(environment.config.waitingPeriodInSeconds({ userId: actor }));
 }
 
-//the new passkey is held back and sealed, or with no waiting period replaces every way in at once (S-INTEG-12)
+//no passkey a recovery registers may sign in before the seal covers it (S-INTEG-12)
 async function registerUnderTheSeal(
 	environment: PasskeyRecoveryEnvironment,
+	transaction: Driver,
 	actor: Actor,
 	input: {
 		readonly credential: RegisteredWebAuthnCredential;
@@ -280,10 +283,14 @@ async function registerUnderTheSeal(
 							},
 						}),
 		},
-		{ refusal: "broken_state_on_passkey_recovery" },
+		{ driver: transaction, refusal: "broken_state_on_passkey_recovery" },
 	);
 	const { written } = sealed;
-	return { address: sealed.read.email, held: written.kind === "held" ? written.held : null };
+	return {
+		address: sealed.read.email,
+		held: written.kind === "held" ? written.held : null,
+		sealed,
+	};
 }
 
 //a refusing plugin must not keep the address from being told, and a failed notice fails the answer (E-3773)
@@ -319,20 +326,26 @@ export async function finishPasskeyRecovery(
 		readonly label: string;
 	},
 ): Promise<FinishPasskeyRecoveryResult> {
-	const registered = await answeredAsOneFailure(async () => {
-		const recovered = await environment.webauthn.recovery.finish({
-			challengeToken: input.challengeToken,
-			response: input.response,
-		});
-		const actor = actorOfConsumedRecoveryChallenge(recovered.owner);
-		const waitingPeriodInSeconds = waitingPeriodFor(environment, actor);
-		const outcome = await registerUnderTheSeal(environment, actor, {
-			credential: recovered.credential,
-			label: input.label,
-			waitingPeriodInSeconds,
-		});
-		return { actor, ...outcome };
-	});
+	const { driver, securityState } = environment.flow.services;
+	//a waiting period that throws must leave the challenge unspent (E-3782)
+	const registered = await answeredAsOneFailure(() =>
+		driver.transaction(async (transaction) => {
+			const recovered = await environment.webauthn.recovery.finish({
+				transaction,
+				challengeToken: input.challengeToken,
+				response: input.response,
+			});
+			const actor = actorOfConsumedRecoveryChallenge(recovered.owner);
+			const waitingPeriodInSeconds = waitingPeriodFor(environment, actor);
+			const outcome = await registerUnderTheSeal(environment, transaction, actor, {
+				credential: recovered.credential,
+				label: input.label,
+				waitingPeriodInSeconds,
+			});
+			return { actor, ...outcome };
+		}),
+	);
+	recordSealLater(securityState, registered.sealed, "change");
 	if (registered.held === null) {
 		await confirmTheRecovery(environment, {
 			userId: registered.actor,
@@ -357,7 +370,7 @@ async function refuseOnceActivated(
 	}
 }
 
-//a reading route changes no row, so a read past the activation time reports the recovery and leaves its activation to the next use (S-CSRF-4)
+//a reading route changes no row even once the recovery is due (S-CSRF-4)
 export async function readPendingPasskeyRecovery(
 	environment: PasskeyRecoveryEnvironment,
 	actor: Actor,
@@ -386,21 +399,31 @@ export async function cancelPasskeyRecovery(
 	actor: Actor,
 ): Promise<void> {
 	await refuseOnceActivated(environment, actor);
-	const { securityState, schema } = environment.flow.services;
-	await sealChange(securityState, actor, {
-		epoch: "keep",
-		write: async (tx, read) => {
-			if (read.passkeyRecovery === null) {
-				return;
-			}
-			const withdrawn = await createPasskeyRecoveryRepository({
-				driver: tx,
-				schema,
-			}).withdrawHeldPasskey({ actor });
-			if (withdrawn !== 1) {
-				throw new SealingRefusedError("seal_mismatch");
-			}
-		},
-		after: (read) => componentsAfter(read, { passkeyRecovery: null }),
+	const { securityState, schema, driver } = environment.flow.services;
+	//every challenge row is ordered before the account row (E-3781)
+	const sealed = await driver.transaction(async (transaction) => {
+		await environment.webauthn.recovery.withdraw({ transaction, actor });
+		return sealChange(
+			securityState,
+			actor,
+			{
+				epoch: "keep",
+				write: async (tx, read) => {
+					if (read.passkeyRecovery === null) {
+						return;
+					}
+					const withdrawn = await createPasskeyRecoveryRepository({
+						driver: tx,
+						schema,
+					}).withdrawHeldPasskey({ actor });
+					if (withdrawn !== 1) {
+						throw new SealingRefusedError("seal_mismatch");
+					}
+				},
+				after: (read) => componentsAfter(read, { passkeyRecovery: null }),
+			},
+			{ driver: transaction },
+		);
 	});
+	recordSealLater(securityState, sealed, "change");
 }

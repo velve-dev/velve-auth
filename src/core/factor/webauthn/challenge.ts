@@ -1,4 +1,4 @@
-import type { ConsumedRecoveryChallenge } from "../../db/actor.js";
+import type { Actor, ConsumedRecoveryChallenge } from "../../db/actor.js";
 import type { Driver } from "../../db/driver.js";
 import { toEntityId } from "../../db/entity-id.js";
 import { qualifiedTableName } from "../../db/identifier.js";
@@ -50,6 +50,11 @@ export interface WebAuthnChallenges {
 		readonly purpose: "recover";
 		readonly challengeToken: string;
 	}): Promise<ConsumedRecoveryChallenge | null>;
+	//a cancelled recovery leaves no challenge a second start issued to finish later (E-3781)
+	withdrawEveryChallengeOf(input: {
+		readonly actor: Actor;
+		readonly purpose: "recover";
+	}): Promise<void>;
 }
 
 export interface WebAuthnChallengeRepositoryOptions {
@@ -124,6 +129,8 @@ WHERE challenge_sha256 = $1
   AND expires_at > now()
 RETURNING user_id, token_mac, token_mac_key_version`;
 
+	const withdrawStatement = `DELETE FROM ${table} WHERE user_id = $1 AND purpose = $2`;
+
 	async function boundRow(
 		challengeSha256: Uint8Array,
 		purpose: WebAuthnChallengePurpose,
@@ -189,6 +196,10 @@ RETURNING user_id, token_mac, token_mac_key_version`;
 				return null;
 			}
 			return { userId: toEntityId<"user">(row.user_id) } as ConsumedRecoveryChallenge;
+		},
+
+		async withdrawEveryChallengeOf({ actor, purpose }) {
+			await options.driver.query(withdrawStatement, [actor, purpose]);
 		},
 	};
 }
