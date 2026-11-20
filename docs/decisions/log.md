@@ -19497,3 +19497,63 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Keeping the reservation and recording it as a breaking change, which would charge every application for a feature it did not turn on. (b) Checking `cookie-sig` in `assertKeysAnswerForEveryPurpose` for every instance, which would refuse a provider that starts today for a feature it does not use.
 **Reason.** The direct server call takes `proofOfWork` out of the input as its envelope field, except while `environment.proofOfWork` is absent and the route declares an input field of that name; then the field reaches the route as its own input, as before 3.0.0, and a call that passes the envelope field to a route that does not declare it still has it ignored. With it, the assembly refuses any core or plugin route declaring an input field `proofOfWork` with `proof_of_work_unusable`, naming the route, since the envelope would swallow that field. `migrate()`, where the key ring is already asked for every purpose, then also asks `keyTakesMac` of the current `cookie-sig` key when the proof of work is configured and refuses with `keys_unusable`, naming `cookie-sig` and the proof of work, as a key that cannot take a MAC is refused for the integrity purposes.
 **Price.** An application with a plugin route that takes a `proofOfWork` input has to rename it before it can turn the proof of work on. The key check runs at `migrate()` and not at construction, like every other key check that needs to await the provider.
+
+<a id="e-3895"></a>
+
+### A provider identity is linked to an existing account only from that account's session
+`E-3895` · security-review · linking, breaking, settled
+
+**Context.** Finding FLOWS-1 (high). A sign-in through a `(provider, subject)` no account held, from a provider in `trustedProviders` reporting as verified the address an existing account had confirmed, attached that identity to the account under S-LINK-2's three conditions and went on as a sign-in of it. Whoever held such a provider identity therefore needed nothing the account itself asks for: an account without a second factor was signed in, an account that had turned recovery off was not asked (E-3738 recorded that gap), and on an account with a second factor the identity row was committed before the second factor was asked for, so it outlived a sign-in that never completed. `test/security-flows-1-automatic-link.test.ts` shows all three on the tree before this change. The maintainer's binding ruling for this release removes the automatic link.
+**Rejected.** (a) Keeping the automatic link and moving the identity insert behind the second factor and the recovery switch, which still signs in an account without a second factor on the provider's word about an address. (b) Keeping it behind a mailed confirmation to the account's address, which is a second way to link that the explicit link from a session already covers. (c) Answering the existing `oauth_flow_invalid`, which leaves an application unable to tell the person what to do.
+**Reason.** NIST SP 800-63B 6.1.2.1 binds an additional authenticator only within an authenticated session of the subscriber, and OpenID Connect Core 5.7 says the `email` claim is not a unique identifier; the explicit link of `identity.link.start` is that session. The sign-in now ends in `createAccountFor` before anything is written: an address another account holds answers `identity_link_required`, a new stable code with status 409, the status of the other two answers about a conflict with an existing row (`username_taken`, `identity_already_linked`). It reveals no more than the sign-up did under E-560: there the same address ended the flow with `oauth_flow_invalid` and created no account, so the caller already learned that an account holds the address; the code makes that bit readable and adds none. The answer is the same whatever the provider reports about the address, whether the account confirmed it and whether the provider is trusted, so no answer depends on the account's state. `src/core/oauth/linking.ts` and the locked join of E-3225 and E-3227 are removed, which takes one statement that locks the account row out of the tree. Two plants were run. With the check removed the insert meets `user_email_key` and the unique-race path of E-3897 still answers `identity_link_required`, so all five cases of `test/security-flows-1-automatic-link.test.ts` pass on that second guard; with the check answering `oauth_flow_invalid` instead, three of them and the case of `test/oauth-signup-unique-race.test.ts` fail.
+**Price.** A breaking change of 3.0.0. A person who signed in through a trusted provider and was joined to the account carrying its address is now answered `identity_link_required` at the callback. The migration path for an application is to handle that code on its callback page with a message such as "an account with this address exists — sign in to it and link the provider from your account settings", and to offer `identity.link.start` there. An identity linked automatically before 3.0.0 stays linked and keeps signing in, because it is reached by `(provider, subject)`. The callback route and its client type gain one error code, and the core codes become 33.
+
+<a id="e-3896"></a>
+
+### trustedProviders stays, with E-558 as its only purpose
+`E-3896` · security-review · configuration, settled
+
+**Context.** FLOWS-1 asked for `trustedProviders` to be removed if nothing needed it any more. One thing does: E-558 marks the address of an account a provider sign-up creates verified only where the provider reported it verified and stands in `trustedProviders`.
+**Rejected.** (a) Removing the option and never verifying an address from a provider claim, which changes what a sign-up through Google produces for every installation, beyond what the finding is about. (b) Removing it and always trusting the claim, which is weaker than E-558 chose. (c) Renaming it after its remaining purpose, which breaks every configuration again for the same meaning.
+**Reason.** The option no longer reaches an existing account: it decides one column of an account the same transaction creates. The internal field it resolves to is renamed `trustedToVerifyAddresses`, so the code no longer names a link.
+**Price.** The option's name says more than it now does, and DOCUMENTATION.md says what it is. The weakening line `SECURITY_OPTIONS` prints for it in `src/core/auth/security-options.ts` still calls it the third of S-LINK-2's three conditions; that file is outside this fix's set, and E-3900 reports it.
+
+<a id="e-3897"></a>
+
+### An OAuth sign-up that loses the address to a concurrent one looks the address up again after the rollback
+`E-3897` · security-review · E-2874 extended, settled
+
+**Context.** E-2874 maps a unique violation of the account insert to `oauth_flow_invalid`, the answer E-560 then gave a taken address, and `test/oauth-signup-unique-race.test.ts` requires the racing answer to equal the one without a race. Once E-3895 answers a taken address `identity_link_required`, the two differ.
+**Rejected.** (a) Telling the address from the username by the constraint name, which E-2874 rejected and which the test driver does not report at all. (b) Answering the race `oauth_flow_invalid`, two answers for one state.
+**Reason.** The insert's unique violation is marked, the transaction rolls back, and the address is looked up once more outside it: an account holding it answers `identity_link_required`, anything else — a username another account holds — `oauth_flow_invalid` as before.
+**Price.** One query more on a rare path. An address that is taken and freed again between the rollback and the lookup answers `oauth_flow_invalid`.
+
+<a id="e-3898"></a>
+
+### A provider with a key set and no issuer does not start
+`E-3898` · security-review · start, breaking, settled
+
+**Context.** Finding FLOWS-7 (hardening). `claimsOfIdToken` passed an issuer to `jwtVerify` only where one was configured, and E-585 compares the token's `iss` only with an `iss` parameter the callback carries. A generic provider with a `jwksUri` and no `issuer` therefore accepted an ID token naming any issuer whose signature the key set verified, whenever the callback carried no `iss` — which is most callbacks.
+**Rejected.** (a) Reading the issuer from the provider's discovery document, which no part of this library fetches (S-REDIR-6). (b) Accepting such a token and logging it. (c) Ignoring the ID token of such a provider and reading userinfo, which drops the nonce check.
+**Reason.** OpenID Connect Core 3.1.3.7 step 2 requires the issuer to match exactly. The start now refuses a provider whose resolved `jwksUri` has neither a configured nor a built-in issuer with the new start code `oauth_provider_issuer_missing`, which covers a generic provider and a built-in one given a `jwksUri` of its own. Removing the check was planted and the start case of `test/security-flows-7-oidc-issuer.test.ts` failed.
+**Price.** A breaking change of 3.0.0: a generic provider configured with a `jwksUri` and without an `issuer` no longer starts. The migration path is to add `issuer`, the value of `issuer` in the provider's own discovery document. The two cases E-585 wrote against that shape now run against `microsoft`, the shape they stood for.
+
+<a id="e-3899"></a>
+
+### microsoft compares iss with the issuer its own tid names
+`E-3899` · security-review · OIDC, settled
+
+**Context.** `microsoft` carries no issuer because Entra's names the tenant (E-556), so the same gap as E-3898 held for it: a token from any issuer whose key sits in the common key set was accepted when the callback carried no `iss`.
+**Rejected.** (a) Requiring an `issuer` for `microsoft`, which ends multi-tenant and personal-account sign-in. (b) Accepting any `iss` under `https://login.microsoftonline.com/`, which is weaker than the check Microsoft documents. (c) Relying on E-585 alone, which only answers when the callback carries `iss`.
+**Reason.** Microsoft's documented validation of a multi-tenant token substitutes the token's `tid` claim into the issuer `https://login.microsoftonline.com/{tid}/v2.0` and compares that with `iss`; OpenID Connect Core 3.1.3.7 requires the comparison. The descriptor now names that template, `claimsOfIdToken` requires `tid` to be a GUID and `iss` to equal the substituted template, and a refusal is `issuer_mismatch` behind `oauth_flow_invalid`. A configured `issuer` replaces the template, binding the sign-in to one tenant as before. Removing the check was planted and three cases of `test/security-flows-7-oidc-issuer.test.ts` failed.
+**Price.** A `microsoft` token without `tid`, or one whose issuer is not of that form — an Azure AD B2C tenant on `b2clogin.com`, for one — is refused; such a tenant configures its own `issuer`, or a generic provider. The check accepts any tenant, as before; which tenants an application admits is still its own decision.
+
+<a id="e-3900"></a>
+
+### What the link fix leaves to files outside its set
+`E-3900` · security-review · hand-off, reported
+
+**Context.** The set of files this fix may touch is the OAuth sources, the start errors, the error map, the OAuth and linking tests, the OAuth chapter, the no-recovery-switch note and the error-code tables of DOCUMENTATION.md, and the specification sections it changes.
+**Rejected.** Editing the files below anyway, which CLAUDE.md §5 forbids.
+**Reason.** They still describe the automatic link E-3895 removes, and are reported rather than changed: `src/core/auth/security-options.ts`, whose weakening line for `oauth` calls `trustedProviders` the third of S-LINK-2's three conditions; in DOCUMENTATION.md the table under *Repositories* (the account a sign-in decided, `insertIdentityOfSignIn`), the audit table under *Lock order* with its row for the automatic link and its count of eleven statements, now ten, the paragraph of *Security state: bound envelopes* that describes the automatic link deciding S-LINK-2 again under the lock, and the two lists of *Security state: the seal* that name the automatic link among the sealed paths. `test/discoverable-registration-review-counts.test.ts` and `test/lock-order-declaration.test.ts`, which state the number of core codes and of account locks, are brought to 33 and ten here, because the change makes them wrong and nothing else would.
+**Price.** Until those land, those passages of DOCUMENTATION.md describe a path the code no longer has.
