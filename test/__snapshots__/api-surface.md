@@ -1047,7 +1047,7 @@ export {
 
 //#region src/core/auth/startup.d.ts
 
-type StartupErrorCode = "email_callback_missing" | "keys_missing" | "keys_unusable" | "limits_unusable" | "oauth_provider_incomplete" | "origins_empty" | "passkey_recovery_unusable" | "plugin_anchor_incomplete" | "plugin_database_and_role_both_set" | "plugin_database_reaches_the_core" | "plugin_dependency_cycle" | "plugin_dependency_missing" | "plugin_error_code_not_namespaced" | "plugin_error_code_undeclared" | "plugin_field_unknown" | "plugin_id_duplicated" | "plugin_migration_table_not_an_identifier" | "plugin_migration_table_not_prefixed" | "plugin_rate_limit_rule_unmatched" | "plugin_route_conflict" | "plugin_route_exempts_the_origin_check" | "plugin_route_reads_a_core_cookie" | "plugin_route_without_address_rate_limit" | "plugin_table_prefix_conflict" | "proof_of_work_unusable" | "rate_limit_bucket_unusable" | "recovery_code_shape_unusable" | "recovery_codes_required" | "route_name_segment_reserved" | "route_namespace_conflict" | "security_state_sealing_unknown";
+type StartupErrorCode = "email_callback_missing" | "keys_missing" | "keys_unusable" | "limits_unusable" | "oauth_provider_incomplete" | "oauth_provider_issuer_missing" | "origins_empty" | "passkey_recovery_unusable" | "plugin_anchor_incomplete" | "plugin_database_and_role_both_set" | "plugin_database_reaches_the_core" | "plugin_dependency_cycle" | "plugin_dependency_missing" | "plugin_error_code_not_namespaced" | "plugin_error_code_undeclared" | "plugin_field_unknown" | "plugin_id_duplicated" | "plugin_migration_table_not_an_identifier" | "plugin_migration_table_not_prefixed" | "plugin_rate_limit_rule_unmatched" | "plugin_route_conflict" | "plugin_route_exempts_the_origin_check" | "plugin_route_reads_a_core_cookie" | "plugin_route_without_address_rate_limit" | "plugin_table_prefix_conflict" | "proof_of_work_unusable" | "rate_limit_bucket_unusable" | "recovery_code_shape_unusable" | "recovery_codes_required" | "route_name_segment_reserved" | "route_namespace_conflict" | "security_state_sealing_unknown";
 /** the two contributors a route conflict names in its start error */
 interface RouteConflict {
   readonly claimed: string;
@@ -1802,7 +1802,7 @@ export {
 ## core/http/error-map.d.mts
 
 //#region src/core/http/error-map.d.ts
-type VelveErrorCode = "account_disabled" | "authenticator_not_allowed" | "factor_already_enrolled" | "factor_not_enrolled" | "freshness_required" | "identity_already_linked" | "identity_limit_reached" | "internal_error" | "invalid_credentials" | "invalid_factor_code" | "invalid_input" | "invalid_pending_authentication" | "invalid_recovery_code" | "invalid_token" | "last_sign_in_method" | "oauth_flow_invalid" | "oauth_provider_error" | "origin_not_allowed" | "passkey_limit_reached" | "passkey_recovery_failed" | "password_unacceptable" | "proof_of_work_required" | "provider_not_configured" | "rate_limited" | "recovery_disabled" | "session_required" | "too_many_factor_attempts" | "username_invalid" | "username_taken" | "webauthn_challenge_invalid" | "webauthn_credential_not_discoverable" | "webauthn_credential_rejected";
+type VelveErrorCode = "account_disabled" | "authenticator_not_allowed" | "factor_already_enrolled" | "factor_not_enrolled" | "freshness_required" | "identity_already_linked" | "identity_limit_reached" | "identity_link_required" | "internal_error" | "invalid_credentials" | "invalid_factor_code" | "invalid_input" | "invalid_pending_authentication" | "invalid_recovery_code" | "invalid_token" | "last_sign_in_method" | "oauth_flow_invalid" | "oauth_provider_error" | "origin_not_allowed" | "passkey_limit_reached" | "passkey_recovery_failed" | "password_unacceptable" | "proof_of_work_required" | "provider_not_configured" | "rate_limited" | "recovery_disabled" | "session_required" | "too_many_factor_attempts" | "username_invalid" | "username_taken" | "webauthn_challenge_invalid" | "webauthn_credential_not_discoverable" | "webauthn_credential_rejected";
 /** an error code a plugin contributes, which begins with that plugin's id */
 type PluginErrorCode = `${string}.${string}`;
 type AnyErrorCode = VelveErrorCode | PluginErrorCode;
@@ -2179,7 +2179,7 @@ interface OAuthConfig {
   readonly identifiersForNewAccount?: (input: NewAccountInput) => Promise<NewAccountIdentifiers> | NewAccountIdentifiers;
   /** off by default, so omitting it stores no provider token */
   readonly storeTokens?: boolean;
-  /** the providers trusted for an automatic link, one of the three conditions it requires */
+  /** the providers whose verified address marks the address of an account they sign up verified */
   readonly trustedProviders: readonly string[];
 }
 /** what the application is told about the person it is being asked to name */
@@ -2221,13 +2221,13 @@ type OAuthRouteTable = readonly [Route<"signIn.oauth.start", "/sign-in/oauth/sta
   state: string;
 } & {
   iss?: string;
-}, OAuthCallbackOutcome, "identity_already_linked" | "invalid_input" | "oauth_flow_invalid" | "oauth_provider_error" | "rate_limited">, Route<"signIn.oauth.callbackFormPost", "/sign-in/oauth/callback/:provider", {
+}, OAuthCallbackOutcome, "identity_already_linked" | "identity_link_required" | "invalid_input" | "oauth_flow_invalid" | "oauth_provider_error" | "rate_limited">, Route<"signIn.oauth.callbackFormPost", "/sign-in/oauth/callback/:provider", {
   code: string;
   provider: string;
   state: string;
 } & {
   iss?: string;
-}, OAuthCallbackOutcome, "identity_already_linked" | "invalid_input" | "oauth_flow_invalid" | "oauth_provider_error" | "rate_limited">, Route<"identity.list", "/identity/list", {} & {}, Identity[], "account_disabled" | "origin_not_allowed" | "rate_limited" | "session_required">, Route<"identity.link.start", "/identity/link/start", {
+}, OAuthCallbackOutcome, "identity_already_linked" | "identity_link_required" | "invalid_input" | "oauth_flow_invalid" | "oauth_provider_error" | "rate_limited">, Route<"identity.list", "/identity/list", {} & {}, Identity[], "account_disabled" | "origin_not_allowed" | "rate_limited" | "session_required">, Route<"identity.link.start", "/identity/link/start", {
   provider: string;
 } & {
   redirectPath?: string;
