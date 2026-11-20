@@ -60,3 +60,8 @@ export function actorOfConsumedPendingReset(consumed: ConsumedPendingReset): Act
 export function actorOfMaintenance(userId: string): Actor {
 	return userId as Actor;
 }
+
+//the recovery switch has no route and runs on the application's own authorisation decision (E-3733)
+export function actorOfRecoverySwitch(userId: string): Actor {
+	return userId as Actor;
+}

@@ -1,9 +1,9 @@
 import type { Actor } from "../../db/actor.js";
 import type { Driver } from "../../db/driver.js";
-import { ConcealedError } from "../../http/error-map.js";
+import { ConcealedError, VelveError } from "../../http/error-map.js";
 import { equalsInConstantTime } from "../../keys/constant-time.js";
 import type { KeyProvider } from "../../keys/provider.js";
-import type { SecurityStateRead } from "../../security-state/read.js";
+import { recoveryIsDisabledFor, type SecurityStateRead } from "../../security-state/read.js";
 import {
 	issueAuthorisationOf,
 	type SecurityStateRuntime,
@@ -67,6 +67,17 @@ export function createRecoveryCodeService(
 		return candidates;
 	}
 
+	//a code presented while recovery is off answers as a wrong code (S-ENUM-9)
+	function candidateHmacsOfAnAccountWithRecovery(
+		read: SecurityStateRead,
+		code: string,
+	): Promise<readonly Uint8Array<ArrayBuffer>[]> {
+		if (recoveryIsDisabledFor(read)) {
+			throw new ConcealedError("recovery_code_not_found");
+		}
+		return candidateHmacsFor(read, code);
+	}
+
 	return {
 		//a new set must retire the old one in the same transaction or both would be valid
 		async generate({ actor }) {
@@ -79,11 +90,16 @@ export function createRecoveryCodeService(
 				actor,
 				{
 					epoch: "keep",
-					write: (tx) =>
-						createRecoveryCodeRepository({
+					write: (tx, read) => {
+						//an account that turned recovery off holds no recovery code (S-INTEG-11)
+						if (recoveryIsDisabledFor(read)) {
+							throw new VelveError("recovery_disabled");
+						}
+						return createRecoveryCodeRepository({
 							driver: tx,
 							schema: options.schema ?? "velve",
-						}).replaceEveryCode({ actor, codes: peppered }),
+						}).replaceEveryCode({ actor, codes: peppered });
+					},
 					after: (read) => componentsAfter(read, { recoveryCodes: peppered }),
 				},
 				{ accountMissing: () => new RecoveryCodeOwnerUnknownError() },
@@ -100,7 +116,7 @@ export function createRecoveryCodeService(
 					{
 						epoch: "keep",
 						write: async (tx, read) => {
-							const candidates = await candidateHmacsFor(read, code);
+							const candidates = await candidateHmacsOfAnAccountWithRecovery(read, code);
 							if (candidates.length === 0) {
 								throw new ConcealedError("recovery_codes_never_generated");
 							}

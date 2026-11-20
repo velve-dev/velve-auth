@@ -53,6 +53,7 @@ import { assertNoCoreRouteIsOverwritten, createPluginRuntime } from "../plugin/r
 import { type PluginSurface, pluginRoutes } from "../plugin/routes.js";
 import type { SecurityStateAnchorPort } from "../security-state/anchor.js";
 import { DEFAULT_LIMITS, resolveLimits } from "../security-state/limits.js";
+import { setRecoveryDisabled } from "../security-state/recovery-switch.js";
 import {
 	attemptSealOf,
 	createSecurityStateRuntime,
@@ -125,6 +126,10 @@ interface UserNamespaceInEveryMode {
 	findById(input: { userId: string }): Promise<User | null>;
 	disable(input: { userId: string; reason: string }): Promise<void>;
 	enable(input: { userId: string }): Promise<void>;
+	/** turns every way into the account that does not use one of its own credentials off and deletes its recovery codes */
+	disableRecovery(input: { userId: string }): Promise<void>;
+	/** turns the mailed paths and recovery codes that disableRecovery turned off on again */
+	enableRecovery(input: { userId: string }): Promise<void>;
 	delete(input: { userId: string }): Promise<void>;
 }
 
@@ -355,6 +360,20 @@ async function setDisabledUnderTheSeal(
 			after: (read) => componentsAfter(read, { disabled }),
 		},
 	);
+}
+
+//the switch is audited through the operator's log once it has committed and is never stored (E-3734)
+async function switchRecoveryUnderTheSeal(
+	securityState: SecurityStateRuntime,
+	operatorLog: HttpEnvironment["log"],
+	input: { readonly userId: string; readonly disabled: boolean },
+): Promise<void> {
+	await setRecoveryDisabled(securityState, input);
+	try {
+		operatorLog("warn", input.disabled ? "account recovery disabled" : "account recovery enabled", {
+			userId: input.userId,
+		});
+	} catch {}
 }
 
 //a mailed link is routed before it is redeemed and only the instance may read it (E-3690)
@@ -665,6 +684,10 @@ export function assembleVelveAuth<M extends IdentityMode>(
 				await setDisabledUnderTheSeal(securityState, userId, true);
 			},
 			enable: ({ userId }) => setDisabledUnderTheSeal(securityState, userId, false),
+			disableRecovery: ({ userId }) =>
+				switchRecoveryUnderTheSeal(securityState, operatorWarnings, { userId, disabled: true }),
+			enableRecovery: ({ userId }) =>
+				switchRecoveryUnderTheSeal(securityState, operatorWarnings, { userId, disabled: false }),
 			delete: ({ userId }) => users.deleteUser(userId),
 			...(identity.mode === "username"
 				? {}

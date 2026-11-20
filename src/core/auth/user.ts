@@ -11,6 +11,8 @@ export interface User {
 	readonly emailVerifiedAt: Date | null;
 	readonly username: string | null;
 	readonly disabledAt: Date | null;
+	/** when the account turned every way back in that does not use one of its own credentials off, or null while it has not */
+	readonly recoveryDisabledAt: Date | null;
 	readonly hasPassword: boolean;
 	readonly importedFrom: ImportSource | null;
 }
@@ -55,6 +57,10 @@ export interface UserRepository {
 		readonly usernameKey: string;
 	}): Promise<User | null>;
 	setDisabledAt(input: { readonly userId: string; readonly disabled: boolean }): Promise<void>;
+	setRecoveryDisabledAt(input: {
+		readonly actor: Actor;
+		readonly disabled: boolean;
+	}): Promise<void>;
 	deleteUser(userId: string): Promise<void>;
 }
 
@@ -66,6 +72,7 @@ interface UserRowShape {
 	readonly email_verified_at: unknown;
 	readonly username: string | null;
 	readonly disabled_at: unknown;
+	readonly recovery_disabled_at: unknown;
 	readonly imported_from: string | null;
 	readonly has_password: boolean;
 }
@@ -94,7 +101,7 @@ function toImportSource(value: string | null): ImportSource | null {
 //hasPassword must follow the credential row so no separate flag can drift from it
 function selection(users: string, credentials: string, predicate: string): string {
 	return `SELECT u.id, u.created_at, u.updated_at, u.email, u.email_verified_at, u.username,
-		u.disabled_at, u.imported_from,
+		u.disabled_at, u.recovery_disabled_at, u.imported_from,
 		EXISTS (SELECT 1 FROM ${credentials} c WHERE c.user_id = u.id) AS has_password
 	FROM ${users} u
 	WHERE ${predicate}`;
@@ -109,6 +116,7 @@ function toUser(row: UserRowShape): User {
 		emailVerifiedAt: toOptionalDate(row.email_verified_at),
 		username: row.username,
 		disabledAt: toOptionalDate(row.disabled_at),
+		recoveryDisabledAt: toOptionalDate(row.recovery_disabled_at),
 		hasPassword: row.has_password,
 		importedFrom: toImportSource(row.imported_from),
 	};
@@ -140,7 +148,7 @@ export function createUserRepository(options: {
 					INSERT INTO ${users} (email, email_verified_at, username, username_key)
 					VALUES ($1, $2, $3, $4)
 					RETURNING id, created_at, updated_at, email, email_verified_at, username,
-						disabled_at, imported_from
+						disabled_at, recovery_disabled_at, imported_from
 				)
 				SELECT i.*, false AS has_password FROM inserted i`,
 				[email, emailVerifiedAt, username, usernameKey],
@@ -177,7 +185,7 @@ export function createUserRepository(options: {
 					SET username = $2, username_key = $3, updated_at = now()
 					WHERE id = $1
 					RETURNING id, created_at, updated_at, email, email_verified_at, username,
-						disabled_at, imported_from
+						disabled_at, recovery_disabled_at, imported_from
 				)
 				SELECT u.*, EXISTS (SELECT 1 FROM ${credentials} c WHERE c.user_id = u.id) AS has_password
 				FROM updated u`,
@@ -193,6 +201,15 @@ export function createUserRepository(options: {
 				SET disabled_at = ${disabled ? "now()" : "NULL"}, updated_at = now()
 				WHERE id = $1`,
 				[userId],
+			);
+		},
+
+		async setRecoveryDisabledAt({ actor, disabled }) {
+			await options.driver.query(
+				`UPDATE ${users} /* no owner predicate: S-OWNER-2, velve.user is the owned row and id is its owner column */
+				SET recovery_disabled_at = ${disabled ? "now()" : "NULL"}, updated_at = now()
+				WHERE id = $1`,
+				[actor],
 			);
 		},
 

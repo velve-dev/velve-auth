@@ -15,6 +15,7 @@ export interface RecoveryCodeRepository {
 		readonly actor: Actor;
 		readonly codes: readonly PepperedRecoveryCode[];
 	}): Promise<number>;
+	deleteEveryCode(input: { readonly actor: Actor }): Promise<number>;
 	pepperVersionsOf(input: { readonly userId: string }): Promise<readonly number[]>;
 	//the removal proved the owner so it hands back that proof rather than a flag (E-612)
 	consumeCode(input: {
@@ -76,6 +77,13 @@ RETURNING key_version`;
 				}
 				return codes.length;
 			});
+		},
+
+		async deleteEveryCode({ actor }) {
+			const deleted = await options.driver.query(`${deleteEveryCodeStatement} RETURNING 1`, [
+				actor,
+			]);
+			return deleted.length;
 		},
 
 		async pepperVersionsOf({ userId }) {
