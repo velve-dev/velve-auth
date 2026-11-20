@@ -1,5 +1,6 @@
 import { createUserRepository } from "../auth/user.js";
 import { actorOfRecoverySwitch } from "../db/actor.js";
+import { isRowIdentifier } from "../db/row-identifier.js";
 import { createRecoveryCodeRepository } from "../factor/recovery/repository.js";
 import { VelveError } from "../http/error-map.js";
 import type { OneTimeTokenPurpose } from "../token/purpose.js";
@@ -14,6 +15,9 @@ export async function setRecoveryDisabled(
 	runtime: SecurityStateRuntime,
 	input: { readonly userId: string; readonly disabled: boolean },
 ): Promise<void> {
+	if (!isRowIdentifier(input.userId)) {
+		throw new VelveError("invalid_input");
+	}
 	const actor = actorOfRecoverySwitch(input.userId);
 	await sealChange(
 		runtime,
