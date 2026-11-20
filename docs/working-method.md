@@ -227,7 +227,23 @@ Takes the dist-tag as its argument; VELVE_REGISTRY names a registry other than n
 
 ### Publishing a version
 
-A push to `main` that raises the version publishes it through `.github/workflows/publish.yml` and npm trusted publishing, with no registry credential stored anywhere (E-3540). What follows is the manual fallback, run from the maintainer's own machine with an interactive npm login, and a version published this way carries no provenance (E-2760, E-2761). The version in `package.json` has been raised on `main` by a merged pull request before any of this starts, and that merge has run `release-tier.yml` over the merge commit, because the release tier runs on every push to `main` (E-2763).
+A push to `main` that raises the version publishes it through `.github/workflows/publish.yml` and npm trusted publishing, with no registry credential stored anywhere (E-3540).
+
+#### The settings the publish depends on
+
+npm trusts the workflow file by its name. Without a deployment environment in the registration, a run of `publish.yml` on any branch mints a token npm accepts, so whoever can push a branch can publish a tree no pull request reviewed. The publish job runs in the environment `npm-publish` and states the main-only rule in the file, but a branch can edit the file and cannot edit these settings, so the settings are what hold it (E-3885). They live outside the repository, nothing in it can read them, and the maintainer sets them once, in this order:
+
+1. On GitHub, in the repository's **Settings → Environments**, create the environment `npm-publish`.
+2. In that environment, under **Deployment branches and tags**, choose **Selected branches and tags** and add one rule: the branch `main`. Add no tag rule.
+3. Give the environment no secrets and no variables. A required reviewer may be added under **Deployment protection rules**; every publish then waits for that person's approval in the workflow run.
+4. On npmjs.com, in the package `@velve/auth`, open **Settings → Trusted Publisher**, edit the GitHub Actions entry — organisation or user `velve-dev`, repository `velve-auth`, workflow filename `publish.yml` — and set **Environment name** to `npm-publish`. Until this field is set npm accepts a token from any run of the file, whatever step 2 says.
+5. In the same settings, under **Publishing access**, choose **Require two-factor authentication and disallow tokens**, so no token of any kind publishes the package; trusted publishing is not a token and keeps working, and so does the manual fallback below, which answers the second factor interactively.
+
+The environment name is the one `test/security-supply-1-publish-environment.test.ts` holds the job to, so renaming it means renaming it in step 1, in step 4 and in the workflow together.
+
+#### The manual fallback
+
+What follows is the manual fallback, run from the maintainer's own machine with an interactive npm login, and a version published this way carries no provenance (E-2760, E-2761). The version in `package.json` has been raised on `main` by a merged pull request before any of this starts, and that merge has run `release-tier.yml` over the merge commit, because the release tier runs on every push to `main` (E-2763).
 
 The first block changes nothing outside the working tree except for one local tag. It refuses a checkout that is not exactly `origin/main` — behind it, ahead of it with a commit no pull request merged, or dirty — and a missing npm login. It builds, derives the dist-tag and runs `pnpm check:release-tag`, which checks that the version is a semantic one and that a prerelease is not about to go to `latest`; the tag name it is given is built from that same version here, so on this machine it cannot disagree with it, and the comparison of tag and manifest only means something in the Release workflow. It then asks GitHub's public API whether the release tier passed on the commit being published, which is what architecture 6.19 puts before every release, rehearses the publish, and creates the signed tag. Every step is joined by `&&`, so a refusal stops the block rather than handing an empty variable to the next line, and only a block that reached its end sets `READY`.
 

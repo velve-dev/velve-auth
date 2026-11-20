@@ -379,7 +379,9 @@ describe("the publish workflow", () => {
 
 		expect(job("decide", publishJobs)).toContain('npm view "$NAME@$VERSION" version');
 		expect(job("verify", publishJobs)).toContain(unpublished);
-		expect(job("publish", publishJobs)).toContain(unpublished);
+		expect(job("publish", publishJobs)).toContain(
+			"    if: github.ref == 'refs/heads/main' && needs.decide.outputs.published == 'false'\n",
+		);
 	});
 
 	/** The whole gate and the release tier on the commit before it is published (E-3542). */

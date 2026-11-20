@@ -29,4 +29,19 @@ describe("the publish job can only run for the reviewed branch", () => {
 
 		expect(region).toMatch(/^ {4}environment:\s*\S+/m);
 	});
+
+	/** The name is the one the npm registration and the repository's protection rule both carry, and
+	 * docs/working-method.md tells the maintainer to set both under it (E-3885). */
+	it("names npm-publish, and states the main-only rule in the file a reviewer reads", () => {
+		const region = jobRegion(publish, "publish").replace(/^\s*#.*$/gm, "");
+
+		expect(region).toMatch(/^ {4}environment: npm-publish$/m);
+		expect(region).toMatch(/^ {4}if: github\.ref == 'refs\/heads\/main' && /m);
+	});
+
+	it("names no environment in any other job", () => {
+		const elsewhere = publish.replace(jobRegion(publish, "publish"), "").replace(/^\s*#.*$/gm, "");
+
+		expect(elsewhere).not.toMatch(/^\s+environment:/m);
+	});
 });

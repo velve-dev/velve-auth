@@ -4,7 +4,9 @@ name: Publish
 # (E-3540). npm accepts the publish through trusted publishing: it trusts this file, by its name
 # publish.yml, in velve-dev/velve-auth, and takes GitHub's OIDC token as the proof, so no registry
 # credential is stored anywhere. The filename is part of the registration on npmjs.com, so renaming
-# this file stops publishing and nothing in this repository can see that.
+# this file stops publishing and nothing in this repository can see that. The registration also
+# names the deployment environment npm-publish, which the repository restricts to main, so a run of
+# this file on any other ref is refused a token npm accepts (E-3885).
 on:
   push:
     branches: [main]
@@ -101,10 +103,15 @@ jobs:
       - run: pnpm gate
       - run: pnpm test:release
 
+  # The environment is what npm and GitHub hold the publish to: npm accepts the token only from a
+  # job in npm-publish, and GitHub lets only main deploy to it. The ref condition says the same thing
+  # in this file, where a reviewer reads it, and is not what enforces it, because a branch can edit
+  # this file and not those settings (E-3885).
   publish:
     needs: [decide, verify]
-    if: needs.decide.outputs.published == 'false'
+    if: github.ref == 'refs/heads/main' && needs.decide.outputs.published == 'false'
     runs-on: ubuntu-latest
+    environment: npm-publish
     # The OIDC token is what npm trusts in place of a credential, and the tag push is the write to
     # contents. No other job holds either (E-3540).
     permissions:
