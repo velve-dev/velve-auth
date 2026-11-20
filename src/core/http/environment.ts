@@ -6,6 +6,7 @@ import {
 	cookieNamesWithSession,
 	type HostPrefixedCookieName,
 } from "./cookies.js";
+import type { ProofOfWorkGate } from "./proof-of-work.js";
 import type { RateLimiter } from "./rate-limit.js";
 import type { AnyRoute, RouteMetadata } from "./route.js";
 
@@ -28,6 +29,8 @@ export interface HttpEnvironment {
 	/** the frozen context a route's handler gets, the core one for a route nobody registered */
 	readonly pluginContextOf: (route: RouteMetadata) => FrozenContext;
 	readonly rateLimiter: RateLimiter;
+	/** the proof of work the guarded routes ask for, absent while it is not configured */
+	readonly proofOfWork?: ProofOfWorkGate;
 	readonly clock: Clock;
 	readonly log: (
 		level: LogLevel,

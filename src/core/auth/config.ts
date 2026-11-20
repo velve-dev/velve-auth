@@ -7,6 +7,7 @@ import type { KeyProvider } from "../keys/provider.js";
 import type { OAuthConfig } from "../oauth/config.js";
 import type { PasswordConfig } from "../password/config.js";
 import type { VelvePlugin } from "../plugin/config.js";
+import type { ProofOfWorkConfig } from "../pow/config.js";
 import type { PasskeyRecoveryConfig } from "../recovery/config.js";
 import type { SecurityStateAlarm } from "../security-state/alarm.js";
 import type { LimitsConfig } from "../security-state/limits.js";
@@ -133,6 +134,8 @@ export interface BaseConfig<M extends IdentityMode> {
 	readonly sessionMetadata?: SessionMetadataMode;
 	readonly trustedProxies?: readonly string[];
 	readonly rateLimit?: Partial<RateLimitConfig>;
+	/** asks the request routes and repeatedly failing sign-ins for a solved challenge, and is off while absent */
+	readonly proofOfWork?: ProofOfWorkConfig;
 	readonly email?: EmailConfig;
 	readonly oauth?: OAuthConfig;
 	/** the fetch used for outbound provider calls, `globalThis.fetch` when absent */

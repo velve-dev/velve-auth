@@ -5,6 +5,7 @@ import type { FactorRouteTable } from "../src/core/factor/routes.js";
 import type { EmailFlowRouteTable } from "../src/core/flows/routes.js";
 import type { oauthRoutes } from "../src/core/oauth/routes.js";
 import type { passwordRoutes } from "../src/core/password/routes.js";
+import type { ProofOfWorkRouteTable } from "../src/core/pow/routes.js";
 
 //the client's route table is written out and must stay the table the server route factories build (E-3488)
 
@@ -16,6 +17,7 @@ type ServerRouteTable = readonly [
 	...EmailFlowRouteTable,
 	...ReturnType<typeof passwordRoutes>,
 	...FactorRouteTable,
+	...ProofOfWorkRouteTable,
 ];
 
 type EachAssignableToTheOther<Left, Right> = [Left] extends [Right]

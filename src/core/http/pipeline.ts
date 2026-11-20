@@ -3,6 +3,7 @@ import { type CookieCollector, type CookieInstruction, createCookieCollector } f
 import { cookiePolicyOf, type HttpEnvironment, type LogLevel } from "./environment.js";
 import { ConcealedError, toVisibleFailure, VelveError } from "./error-map.js";
 import { assertOriginAllowed, isSameOriginRead } from "./origin.js";
+import { type FailureScope, type ProofOfWorkGuard, proofOfWorkGuardOf } from "./proof-of-work.js";
 import type { BucketRule, RateLimitScope } from "./rate-limit.js";
 import {
 	invocationOf,
@@ -26,6 +27,8 @@ export interface RouteCall {
 	readonly fetchSite: string | null;
 	readonly ipAddress: string | null;
 	readonly userAgent: string | null;
+	/** the solution a caller presents for a proof of work, read only where one is required */
+	readonly proofOfWork: string | null;
 	readonly readCallerTokens: () => CallerTokens;
 	readonly readInput: () => Promise<unknown>;
 }
@@ -110,14 +113,41 @@ function assertSessionIsFresh(session: Session, environment: HttpEnvironment): v
 interface AccountBucket {
 	consume(normalisedIdentifier: string): Promise<void>;
 	wasConsumed(): boolean;
+	/** the identifier the handler counted against, which a failed sign-in is counted against too */
+	consumedFor(): string | null;
+}
+
+//a sign-in is asked for its proof by both counters before the account bucket is drawn (E-3668)
+async function spendProofOfWorkAfterFailures(
+	route: RouteMetadata,
+	call: RouteCall,
+	environment: HttpEnvironment,
+	accountIdentifier: string | null,
+): Promise<void> {
+	const gate = environment.proofOfWork;
+	if (gate === undefined) {
+		return;
+	}
+	const scope: FailureScope = { ipAddress: call.ipAddress, accountIdentifier };
+	if (await gate.isRequiredAfterFailures(route.name, scope)) {
+		await gate.spend(route.name, call.proofOfWork);
+	}
 }
 
 //the account key is the normalised identifier, formed before the user is resolved (E-116)
-function createAccountBucket(route: RouteMetadata, environment: HttpEnvironment): AccountBucket {
-	let consumed = false;
+function createAccountBucket(
+	route: RouteMetadata,
+	call: RouteCall,
+	environment: HttpEnvironment,
+): AccountBucket {
+	let consumedFor: string | null = null;
+	const guard = proofOfWorkGuardOf(route);
 	return {
 		consume: async (normalisedIdentifier) => {
-			consumed = true;
+			consumedFor = normalisedIdentifier;
+			if (guard?.when === "after_failures" && guard.counters === "address_and_account") {
+				await spendProofOfWorkAfterFailures(route, call, environment, normalisedIdentifier);
+			}
 			const rule = route.rateLimit.perAccount;
 			if (rule !== "none") {
 				await consumeBucket(environment, route.name, rule, {
@@ -126,8 +156,59 @@ function createAccountBucket(route: RouteMetadata, environment: HttpEnvironment)
 				});
 			}
 		},
-		wasConsumed: () => consumed,
+		wasConsumed: () => consumedFor !== null,
+		consumedFor: () => consumedFor,
 	};
+}
+
+//a proof the route asks for on every call, or by address alone, is spent before the handler runs (E-3668)
+async function spendProofOfWorkBeforeTheHandler(
+	route: RouteMetadata,
+	call: RouteCall,
+	environment: HttpEnvironment,
+): Promise<void> {
+	const guard = proofOfWorkGuardOf(route);
+	const gate = environment.proofOfWork;
+	if (guard === null || gate === undefined) {
+		return;
+	}
+	if (guard.when === "always") {
+		await gate.spend(route.name, call.proofOfWork);
+		return;
+	}
+	if (guard.counters === "address") {
+		await spendProofOfWorkAfterFailures(route, call, environment, null);
+	}
+}
+
+function countsAsAFailedSignIn(guard: ProofOfWorkGuard | null, cause: unknown): boolean {
+	if (guard?.when !== "after_failures") {
+		return false;
+	}
+	const answered = toVisibleFailure(cause).error.code;
+	return guard.failures.some((counted) => counted === answered);
+}
+
+//a failed sign-in is counted before its answer leaves, and a counter that fails costs no answer (E-3667)
+async function countFailedSignIn(
+	route: RouteMetadata,
+	call: RouteCall,
+	environment: HttpEnvironment,
+	accountBucket: AccountBucket,
+	cause: unknown,
+): Promise<void> {
+	const gate = environment.proofOfWork;
+	if (gate === undefined || !countsAsAFailedSignIn(proofOfWorkGuardOf(route), cause)) {
+		return;
+	}
+	await gate
+		.recordFailure(route.name, {
+			ipAddress: call.ipAddress,
+			accountIdentifier: accountBucket.consumedFor(),
+		})
+		.catch(() =>
+			write(environment, "warn", "a failed sign-in was not counted", { route: route.name }),
+		);
 }
 
 function warnOnUnconsumedAccountBucket(
@@ -161,6 +242,7 @@ async function createRequestContext(
 	}
 	const pending =
 		route.caller === "pending" ? await resolvePending(pendingToken, environment) : null;
+	await spendProofOfWorkBeforeTheHandler(route, call, environment);
 
 	const context: RequestContext = {
 		session,
@@ -236,7 +318,7 @@ export async function runRoute<Output>(
 	await enforceIpAddressRateLimit(route, call, environment);
 
 	const cookies = createCookieCollector(cookiePolicyOf(environment));
-	const accountBucket = createAccountBucket(route, environment);
+	const accountBucket = createAccountBucket(route, call, environment);
 	const deferred: DeferredWork[] = [];
 	let handlerReached = false;
 	const resolveContext = async (): Promise<RequestContext> => {
@@ -255,6 +337,9 @@ export async function runRoute<Output>(
 	try {
 		const output = await invocationOf(route)(await call.readInput(), resolveContext);
 		return { output, cookies: cookies.collect() };
+	} catch (cause) {
+		await countFailedSignIn(route, call, environment, accountBucket, cause);
+		throw cause;
 	} finally {
 		//the account bucket bounds failed attempts, so it is checked after a throw as well
 		if (handlerReached) {

@@ -28,6 +28,7 @@ export type VelveErrorCode =
 	| "identity_limit_reached"
 	| "recovery_disabled"
 	| "passkey_recovery_failed"
+	| "proof_of_work_required"
 	| "internal_error";
 
 const HTTP_STATUS_BY_ERROR_CODE: Readonly<Record<VelveErrorCode, number>> = {
@@ -60,6 +61,7 @@ const HTTP_STATUS_BY_ERROR_CODE: Readonly<Record<VelveErrorCode, number>> = {
 	identity_limit_reached: 409,
 	recovery_disabled: 409,
 	passkey_recovery_failed: 400,
+	proof_of_work_required: 400,
 	internal_error: 500,
 };
 
@@ -94,6 +96,7 @@ const MESSAGE_BY_ERROR_CODE: Readonly<Record<VelveErrorCode, string>> = {
 	identity_limit_reached: "The account already holds as many linked identities as it may.",
 	recovery_disabled: "Recovery is turned off for this account.",
 	passkey_recovery_failed: "The recovery could not be continued.",
+	proof_of_work_required: "A solved proof of work is required.",
 	internal_error: "The request could not be completed.",
 };
 
@@ -278,7 +281,13 @@ export type ConcealedReason =
 	| "passkey_recovery_refused_for_account"
 	| "passkey_recovery_registration_refused"
 	| "passkey_recovery_refused"
-	| "broken_state_on_passkey_recovery";
+	| "broken_state_on_passkey_recovery"
+	| "proof_of_work_missing"
+	| "proof_of_work_malformed"
+	| "proof_of_work_forged"
+	| "proof_of_work_unsolved"
+	| "proof_of_work_expired"
+	| "proof_of_work_spent";
 
 const VISIBLE_CODE_BY_CONCEALED_REASON: Readonly<Record<ConcealedReason, VelveErrorCode>> = {
 	user_not_found: "invalid_credentials",
@@ -355,6 +364,13 @@ const VISIBLE_CODE_BY_CONCEALED_REASON: Readonly<Record<ConcealedReason, VelveEr
 	passkey_recovery_registration_refused: "passkey_recovery_failed",
 	passkey_recovery_refused: "passkey_recovery_failed",
 	broken_state_on_passkey_recovery: "passkey_recovery_failed",
+	//a missing proof answers like a forged or reused one so the caller learns only that one is required (S-RATE-9)
+	proof_of_work_missing: "proof_of_work_required",
+	proof_of_work_malformed: "proof_of_work_required",
+	proof_of_work_forged: "proof_of_work_required",
+	proof_of_work_unsolved: "proof_of_work_required",
+	proof_of_work_expired: "proof_of_work_required",
+	proof_of_work_spent: "proof_of_work_required",
 };
 
 export class ConcealedError extends Error {

@@ -2,6 +2,7 @@ import type { FrozenContext } from "../plugin/config.js";
 import type { ResolvedPendingAuthentication, Session } from "./caller.js";
 import type { CookieWriter } from "./cookies.js";
 import type { AnyErrorCode } from "./error-map.js";
+import type { ProofOfWorkSolution } from "./proof-of-work.js";
 import type { RateLimitRule } from "./rate-limit.js";
 import { isRecord, type ObjectValidator } from "./validators.js";
 
@@ -141,6 +142,7 @@ const SERVER_CALL_FIELDS = new Set<string>([
 	"oauthStateToken",
 	"ipAddress",
 	"userAgent",
+	"proofOfWork",
 ]);
 
 //an input field named like the call envelope would be stripped directly but kept over HTTP
@@ -266,6 +268,8 @@ export interface ServerCallFields {
 	readonly oauthStateToken?: string;
 	readonly ipAddress?: string | null;
 	readonly userAgent?: string | null;
+	/** the solved challenge a guarded route asks for while the proof of work is configured */
+	readonly proofOfWork?: ProofOfWorkSolution;
 }
 
 export type ServerMethodOf<R> =

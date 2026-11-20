@@ -5,6 +5,7 @@ import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import type { WebAuthnRegistrationChallenge } from "../factor/webauthn/service.js";
 import type { Session } from "../http/caller.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
+import { guardedByProofOfWork } from "../http/proof-of-work.js";
 import { type AnyRoute, defineRoute, type ServerCallFields } from "../http/route.js";
 import { object, string, unknownRecord } from "../http/validators.js";
 import type { PasskeyRecoveryActivation } from "./activation.js";
@@ -66,7 +67,7 @@ function recoveryRoutesOf(environment: PasskeyRecoveryEnvironment) {
 		method: "POST",
 		path: "/passkey-recovery/request",
 		input: object({ email: string() }),
-		errors: ANONYMOUS_ERRORS,
+		errors: [...ANONYMOUS_ERRORS, "proof_of_work_required"] as const,
 		caller: "anonymous",
 		freshness: "not_required",
 		originCheck: "checked",
@@ -75,6 +76,8 @@ function recoveryRoutesOf(environment: PasskeyRecoveryEnvironment) {
 		handler: async (input, context): Promise<void> =>
 			requestPasskeyRecovery(environment, context, input),
 	});
+	//the request mails an address, so it asks for a proof on every call (S-RATE-11)
+	guardedByProofOfWork(request, { when: "always" });
 
 	const start = defineRoute({
 		name: "passkeyRecovery.start",

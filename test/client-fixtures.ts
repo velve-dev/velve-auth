@@ -35,5 +35,7 @@ export function widestVelveAuth(): VelveAuth<"username_email"> {
 			//the five recovery rows are served only where webauthn.recovery is configured (E-3761)
 			recovery: { waitingPeriodInSeconds: () => 0 },
 		},
+		//the challenge row is served only where proofOfWork is configured (E-3670)
+		proofOfWork: { difficulty: () => 0, signInFailuresBeforeProof: () => 5 },
 	});
 }

@@ -29,3 +29,20 @@ export async function accountBucketKey(
 	const digest = await crypto.subtle.sign("HMAC", pepper.key, utf8.encode(normalisedIdentifier));
 	return ["account", routeName, encodeBase64Url(new Uint8Array(digest))].join(FIELD_SEPARATOR);
 }
+
+//a failure counter lives beside the rate buckets under a key no rate bucket can carry (E-3667)
+const FAILURE_COUNTER = "failures";
+
+export function addressFailureCounterKey(routeName: string, ipAddress: string | null): string {
+	return [FAILURE_COUNTER, addressBucketKey(routeName, ipAddress)].join(FIELD_SEPARATOR);
+}
+
+export async function accountFailureCounterKey(
+	keys: KeyProvider,
+	routeName: string,
+	normalisedIdentifier: string,
+): Promise<string> {
+	return [FAILURE_COUNTER, await accountBucketKey(keys, routeName, normalisedIdentifier)].join(
+		FIELD_SEPARATOR,
+	);
+}
