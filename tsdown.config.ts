@@ -5,6 +5,7 @@ export default defineConfig({
 		index: "src/index.ts",
 		http: "src/http/index.ts",
 		client: "src/client/index.ts",
+		"client/proof-of-work-worker": "src/client/proof-of-work-worker.ts",
 		pg: "src/pg/index.ts",
 		schema: "src/schema/index.ts",
 		testing: "src/testing/index.ts",

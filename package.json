@@ -4,7 +4,9 @@
 	"description": "The European authentication library for TypeScript and PostgreSQL. Answers exactly one question: who is signed in.",
 	"license": "Apache-2.0",
 	"type": "module",
-	"sideEffects": false,
+	"sideEffects": [
+		"./dist/client/proof-of-work-worker.mjs"
+	],
 	"packageManager": "pnpm@10.7.1",
 	"engines": {
 		"node": ">=20.19"
@@ -49,6 +51,10 @@
 		"./client": {
 			"types": "./dist/client.d.mts",
 			"default": "./dist/client.mjs"
+		},
+		"./client/proof-of-work-worker": {
+			"types": "./dist/client/proof-of-work-worker.d.mts",
+			"default": "./dist/client/proof-of-work-worker.mjs"
 		},
 		"./pg": {
 			"types": "./dist/pg.d.mts",
