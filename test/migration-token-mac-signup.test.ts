@@ -96,7 +96,7 @@ describe("migration 4 against a 1.x sign-up in flight", () => {
 			);
 
 			expect(deadlocked).toHaveLength(1);
-			expect(Array.isArray(first) ? first : rerun.appliedVersions).toStrictEqual([4, 5, 6, 7]);
+			expect(Array.isArray(first) ? first : rerun.appliedVersions).toStrictEqual([4, 5, 6, 7, 9]);
 			expect(columns.map((column) => column.table_name)).toStrictEqual([
 				"one_time_token",
 				"pending_authentication",

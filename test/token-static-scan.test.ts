@@ -189,7 +189,7 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 		expect(consume).toContain("/* no owner predicate: S-TOKEN-4 */");
 	});
 
-	it("carries the marker on no other statement of this repository, and is one of nineteen overall", () => {
+	it("carries the marker on no other statement of this repository, and is one of twenty-one overall", () => {
 		const carrying = sources.filter((source) => /no owner predicate/.test(source.text));
 		const markers = sources.flatMap((source) => source.text.match(/no owner predicate/g) ?? []);
 
@@ -212,11 +212,12 @@ describe("consumption is the statement section 3.7 prescribes (S-REPLAY-2)", () 
 
 		//the maintenance step lists every account and counts every seal row by key version (E-3177)
 		//a recovery registration learns its account from the challenge it removes (E-3765)
-		expect(markers, perFile).toHaveLength(19);
+		//a spent challenge and a failure counter belong to no account (E-3660, E-3667)
+		expect(markers, perFile).toHaveLength(21);
 		expect(
 			carrying.map((source) => source.path),
 			perFile,
-		).toHaveLength(11);
+		).toHaveLength(13);
 		expect(declaring, listing(declaring)).toHaveLength(1);
 	});
 });

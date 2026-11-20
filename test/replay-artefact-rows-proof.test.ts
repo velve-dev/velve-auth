@@ -236,7 +236,10 @@ describe("T-REPLAY-1, integration — every one-time artefact is a row keyed by 
 			[migrated.schema],
 		);
 		const hashKeyed: string[] = [];
-		for (const { table_name } of tables) {
+		//a spent proof of work is a record of a challenge never issued as a row, not an artefact (E-3660)
+		for (const { table_name } of tables.filter(
+			(table) => table.table_name !== "proof_of_work_spent",
+		)) {
 			const key = await primaryKeyOf(table_name);
 			if (key.length === 1 && HASHED_PRIMARY_KEYS.includes(key[0] as string)) {
 				hashKeyed.push(table_name);

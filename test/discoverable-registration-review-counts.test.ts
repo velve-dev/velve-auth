@@ -34,7 +34,7 @@ describe("the number of core codes DOCUMENTATION.md states (3.15 F)", () => {
 		const expected = VELVE_ERROR_CODES.length;
 		const stated = countedCoreCodes(documentation);
 
-		expect(expected).toBe(30);
+		expect(expected).toBe(31);
 		expect(stated.length).toBeGreaterThan(0);
 		expect(stated.filter((each) => !each.startsWith(`${expected} in`))).toStrictEqual([]);
 	});

@@ -48,6 +48,8 @@ export interface ServedConfiguration {
 	readonly webauthn: boolean;
 	/** whether `webauthn.recovery` is configured, which D.3 says adds the five recovery rows */
 	readonly passkeyRecovery?: boolean;
+	/** whether `rateLimit.proofOfWork` is configured, which D.3 says adds the challenge row in every mode */
+	readonly proofOfWork?: boolean;
 }
 
 /** The nine rows D.3 names as the ones an unconfigured `webauthn` removes. */
@@ -58,6 +60,11 @@ function isAWebAuthnRow(path: string): boolean {
 /** The five rows `webauthn.recovery` adds in the two modes with an address (3.18, E-3761). */
 function isARecoveryRow(path: string): boolean {
 	return path.startsWith("/passkey-recovery");
+}
+
+/** The one row `rateLimit.proofOfWork` adds in every mode (3.9, E-3670). */
+function isTheChallengeRow(path: string): boolean {
+	return path === "/proof-of-work/challenge";
 }
 
 /** What mode `username` additionally lacks: magic link, the mailed reset, and every `/email/*` row. */
@@ -74,10 +81,13 @@ function needsAnAddress(path: string): boolean {
  * The filter D.3's closing paragraph states: 47 rows in `username_email`, 45 in `email` without
  * the two `/username/*` rows, 39 in `username` without the eight an address reaches, and nine
  * fewer wherever `webauthn` is unconfigured; `webauthn.recovery` adds five in the two modes with
- * an address.
+ * an address, and `rateLimit.proofOfWork` one in every mode.
  */
 export function rowsServedUnder(configuration: ServedConfiguration): readonly DeclaredRow[] {
 	return everyRowDeclaredByD3().filter(({ path }) => {
+		if (isTheChallengeRow(path) && configuration.proofOfWork !== true) {
+			return false;
+		}
 		if (
 			isARecoveryRow(path) &&
 			(configuration.passkeyRecovery !== true ||

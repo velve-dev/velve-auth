@@ -83,6 +83,8 @@ const SPECIFIED_COLUMNS: readonly string[] = [
 	"pending_authentication.token_mac_key_version integer NOT NULL",
 	"pending_authentication.token_sha256 bytea NOT NULL",
 	"pending_authentication.user_id uuid NOT NULL",
+	"proof_of_work_spent.challenge_sha256 bytea NOT NULL",
+	"proof_of_work_spent.expires_at timestamp with time zone NOT NULL",
 	"rate_bucket.bucket_key text NOT NULL",
 	"rate_bucket.expires_at timestamp with time zone NOT NULL",
 	"rate_bucket.tokens real NOT NULL",
@@ -186,6 +188,8 @@ const SPECIFIED_INDEXES: readonly string[] = [
 	"CREATE UNIQUE INDEX pending_authentication_pkey ON SCHEMA.pending_authentication USING btree (token_sha256)",
 	"CREATE INDEX pending_authentication_sweep_idx ON SCHEMA.pending_authentication USING btree (expires_at)",
 	"CREATE INDEX pending_authentication_token_mac_key_version_idx ON SCHEMA.pending_authentication USING btree (token_mac_key_version)",
+	"CREATE UNIQUE INDEX proof_of_work_spent_pkey ON SCHEMA.proof_of_work_spent USING btree (challenge_sha256)",
+	"CREATE INDEX proof_of_work_spent_sweep_idx ON SCHEMA.proof_of_work_spent USING btree (expires_at)",
 	"CREATE UNIQUE INDEX rate_bucket_pkey ON SCHEMA.rate_bucket USING btree (bucket_key)",
 	"CREATE INDEX rate_bucket_sweep_idx ON SCHEMA.rate_bucket USING btree (expires_at)",
 	"CREATE UNIQUE INDEX recovery_code_pkey ON SCHEMA.recovery_code USING btree (user_id, code_hmac)",
@@ -210,7 +214,8 @@ const SPECIFIED_INDEXES: readonly string[] = [
 	"CREATE INDEX webauthn_credential_user_idx ON SCHEMA.webauthn_credential USING btree (user_id)",
 ];
 
-const SPECIFIED_TABLES = 18;
+//migration 9 adds velve.proof_of_work_spent, the table of 3.9 (E-3660)
+const SPECIFIED_TABLES = 19;
 
 let migrated: MigratedSchema;
 
@@ -229,7 +234,7 @@ describe("the shipped migrations against architecture 3.2, 3.17 and 3.18", () =>
 		expect(initialSchema.sql).not.toMatch(/\bDROP\s+COLUMN\b/i);
 	});
 
-	it("leaves the schema with eighteen tables", async () => {
+	it("leaves the schema with nineteen tables", async () => {
 		const rows = await migrated.connection.query<{ present: number }>(
 			`SELECT count(*)::int AS present FROM information_schema.tables
 			 WHERE table_schema = $1 AND table_type = 'BASE TABLE'`,

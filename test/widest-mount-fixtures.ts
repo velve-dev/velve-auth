@@ -1,7 +1,9 @@
 import { randomBytes } from "node:crypto";
+import { solveProofOfWork } from "../src/client/proof-of-work-solver.js";
 import type { VelveAuthConfig } from "../src/core/auth/config.js";
 import { DEFAULT_COOKIE_NAMES } from "../src/core/http/cookies.js";
 import { toWebHandler } from "../src/core/http/web-handler.js";
+import { PROOF_OF_WORK_HEADER, writtenSolution } from "../src/core/pow/work.js";
 import { createVelveAuth, type VelveAuth } from "../src/index.js";
 import { createLogSink, type LogSink, TEST_ORIGIN, testKeyProvider } from "./auth-fixtures.js";
 import { dropSchema, openMigratedSchema } from "./db-fixtures.js";
@@ -111,15 +113,30 @@ export function plainGet(path: string, cookie?: string): Request {
 }
 
 /** a fresh account with a password and the session its sign-up issued */
+//a mount that configures the proof of work asks the sign-up for a solved challenge (E-3670)
+async function proofOfWorkHeaderFor(mount: WidestMount): Promise<Record<string, string>> {
+	if (!("proofOfWork" in mount.auth)) {
+		return {};
+	}
+	const issued = await mount.auth.proofOfWork.challenge({
+		route: "signUp.withPassword",
+		origin: TEST_ORIGIN,
+	});
+	const nonce = await solveProofOfWork(issued);
+	return { [PROOF_OF_WORK_HEADER]: writtenSolution(issued.challenge, nonce) };
+}
+
 export async function signUpOn(mount: WidestMount): Promise<SignedUpAccount> {
 	const name = `u${randomBytes(6).toString("hex")}`;
-	const answer = await mount.handler(
-		jsonPost("/sign-up", {
-			email: `${name}@example.com`,
-			username: name,
-			password: WIDEST_PASSWORD,
-		}),
-	);
+	const request = jsonPost("/sign-up", {
+		email: `${name}@example.com`,
+		username: name,
+		password: WIDEST_PASSWORD,
+	});
+	for (const [header, value] of Object.entries(await proofOfWorkHeaderFor(mount))) {
+		request.headers.set(header, value);
+	}
+	const answer = await mount.handler(request);
 	const sessionCookie = `${DEFAULT_COOKIE_NAMES.session}=${sessionTokenIn(answer)}`;
 	const [row] = await mount.connection.query<{ user_id: string; id: string }>(
 		`SELECT s.user_id, s.id FROM ${mount.schema}.session s

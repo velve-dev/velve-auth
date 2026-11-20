@@ -63,6 +63,13 @@ function reachOf(entry: string): Reach {
  */
 const THE_ONLY_CORE_MODULE = "core/http/error-map.mjs";
 
+/**
+ * The two modules of `core/pow/` the client's proof of work reads: the bytes both sides hash and
+ * the bound both sides clamp to, kept in one place so the browser and the server cannot disagree.
+ * Neither imports anything (E-3663).
+ */
+const THE_PROOF_OF_WORK_MODULES = ["core/pow/config.mjs", "core/pow/work.mjs"];
+
 /** Names that exist only where a request is served: the handler registry, the driver, the SQL. */
 const SERVER_ONLY_NAMES = ["invocationOf", "defineRoute", "runRoute", "transaction(", "SELECT "];
 
@@ -104,7 +111,9 @@ describe("what reaches the browser through @velve/auth/client (architecture 3.15
 	it("reaches exactly one module of the server core", () => {
 		const fromCore = reachOf(clientEntry).modules.filter((file) => file.startsWith("core/"));
 
-		expect(fromCore).toStrictEqual([THE_ONLY_CORE_MODULE]);
+		expect([...fromCore].sort()).toStrictEqual(
+			[THE_ONLY_CORE_MODULE, ...THE_PROOF_OF_WORK_MODULES].sort(),
+		);
 	});
 
 	it("carries no handler, no driver and no SQL", () => {

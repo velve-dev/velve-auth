@@ -128,7 +128,14 @@ let surfaceLeaves: readonly Leaf[];
 let exempt: ReadonlySet<string>;
 
 beforeAll(async () => {
-	widest = await mountWidest("serversurface");
+	//B counts the challenge method, which exists only with rateLimit.proofOfWork (E-3670)
+	widest = await mountWidest("serversurface", {
+		rateLimit: {
+			perIpAddress: { capacity: 100_000, refillPerSecond: 100_000 },
+			perAccount: { capacity: 100_000, refillPerSecond: 100_000 },
+			proofOfWork: { difficulty: () => 0, signInFailuresBeforeProof: () => 100 },
+		},
+	});
 	const account = await signUpOn(widest);
 	sessionToken = account.sessionCookie.slice(DEFAULT_COOKIE_NAMES.session.length + 1);
 	const internals = new Set(membersOfInterface(INTERNALS_OPENS));

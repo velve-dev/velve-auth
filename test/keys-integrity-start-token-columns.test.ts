@@ -38,6 +38,6 @@ describe("migrate() on a schema at migration 3 that already holds a seal", () =>
 			configFor({ database: connection, schema, keys: testKeyProvider() }),
 		).migrate();
 
-		expect(report.appliedVersions).toStrictEqual([4, 5, 6, 7]);
+		expect(report.appliedVersions).toStrictEqual([4, 5, 6, 7, 9]);
 	});
 });
