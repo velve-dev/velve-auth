@@ -43,6 +43,8 @@ const PLAIN_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const IDENTIFIER_OR_QUALIFIED = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$/;
 const TOKEN = /[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*|\$\d+|\S/g;
 const NOT_A_PLACEHOLDER_DOLLAR = /\$(?!\d)/;
+//an e after a digit must count as the prefix of an escape string as postgresql 14 reads it so (E-3940)
+const CONTINUES_AN_IDENTIFIER = /[A-Za-z_$\u0080-\uffff]/;
 const LEADING_WORD = /^\s*([A-Za-z_][A-Za-z0-9_]*)/;
 
 interface ReadPiece {
@@ -86,9 +88,13 @@ function readQuotedName(sql: string, start: number): ReadPiece | null {
 	return null;
 }
 
+//a line comment ends at a carriage return as well as at a newline (E-3940)
+const ENDS_A_LINE = /[\n\r]/g;
+
 function readLineComment(sql: string, start: number): ReadPiece {
-	const newline = sql.indexOf("\n", start);
-	return { text: " ", next: newline === -1 ? sql.length : newline };
+	ENDS_A_LINE.lastIndex = start;
+	const end = ENDS_A_LINE.exec(sql);
+	return { text: " ", next: end === null ? sql.length : end.index };
 }
 
 function readBlockComment(sql: string, start: number): ReadPiece | null {
@@ -113,8 +119,21 @@ function readBlockComment(sql: string, start: number): ReadPiece | null {
 	return null;
 }
 
+//a quote after e or u& opens a form whose end depends on escapes and must be refused (E-3940)
+function opensAnEscapingForm(sql: string, quote: number): boolean {
+	const before = sql[quote - 1] ?? "";
+	const twoBefore = sql[quote - 2] ?? "";
+	if (before === "&") {
+		return twoBefore === "u" || twoBefore === "U";
+	}
+	return (before === "e" || before === "E") && !CONTINUES_AN_IDENTIFIER.test(twoBefore);
+}
+
 function pieceAt(sql: string, index: number): ReadPiece | null {
 	const character = sql[index] ?? "";
+	if ((character === "'" || character === '"') && opensAnEscapingForm(sql, index)) {
+		return null;
+	}
 	if (character === "'") {
 		return readStringLiteral(sql, index);
 	}
@@ -239,10 +258,17 @@ function tableListAfter(tokens: readonly string[], position: number): readonly s
 	return targets;
 }
 
-function assertStatementIsWalkable(code: string, pluginId: string, schema: string): void {
-	if (code.includes(";")) {
-		refuse(pluginId, schema, "more than one statement");
+//plugin text must hold no semicolon as a statement without parameters may run as a simple query (E-3941)
+function assertTextCanHoldOneStatementOnly(sql: string, pluginId: string, schema: string): void {
+	if (sql.includes(";")) {
+		refuse(pluginId, schema, "a semicolon anywhere in its text, a literal or a comment included");
 	}
+	if (sql.includes("\\")) {
+		refuse(pluginId, schema, "a backslash, which an escape string reads as the escape of a quote");
+	}
+}
+
+function assertStatementIsWalkable(code: string, pluginId: string, schema: string): void {
 	if (NOT_A_PLACEHOLDER_DOLLAR.test(code)) {
 		refuse(pluginId, schema, "a dollar sign that is not a parameter placeholder");
 	}
@@ -292,9 +318,14 @@ function assertEveryTableCarriesThePluginPrefix(
 	schema: string,
 	coreTables: ReadonlySet<string>,
 ): void {
+	assertTextCanHoldOneStatementOnly(sql, pluginId, schema);
 	const code = readableCode(sql);
 	if (code === null) {
-		refuse(pluginId, schema, "a statement whose quoting does not close");
+		refuse(
+			pluginId,
+			schema,
+			"a statement whose quoting does not close or opens an escape or unicode escape string",
+		);
 	}
 	assertStatementIsWalkable(code, pluginId, schema);
 	assertEveryTokenIsTheirs(code.match(TOKEN) ?? [], pluginId, schema, coreTables);
