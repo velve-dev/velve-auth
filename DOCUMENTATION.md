@@ -169,6 +169,7 @@ The identity. Deliberately minimal: no profile data.
 | `username` | `text` | display form, as entered (NFKC) |
 | `username_key` | `text` | comparison form, NFKC + casefold; unique where not null |
 | `disabled_at` | `timestamptz` | set means the account is disabled |
+| `recovery_disabled_at` | `timestamptz` | set means the account has turned recovery off ([The no-recovery switch](#the-no-recovery-switch)); added by migration 6 |
 | `imported_from` | `text` | `supabase`, `clerk`, `auth0`, `firebase` or `nextauth` |
 | `imported_at` | `timestamptz` | when the import ran |
 | `created_at`, `updated_at` | `timestamptz` | |
@@ -189,6 +190,7 @@ The row reaches a caller as `User`, exported from `@velve/auth`, every field
 | `emailVerifiedAt` | `Date \| null` | `email_verified_at` |
 | `username` | `string \| null` | `username`, the display form; `username_key` is not on it |
 | `disabledAt` | `Date \| null` | `disabled_at` |
+| `recoveryDisabledAt` | `Date \| null` | `recovery_disabled_at` |
 | `hasPassword` | `boolean` | whether a `velve.password_credential` row exists, read in the same statement rather than stored |
 | `importedFrom` | `ImportSource \| null` | `imported_from` |
 
@@ -434,9 +436,10 @@ the two byte for byte.
 | `0003_security_state.sql` | 3 | the table `velve.security_state` |
 | `0004_token_mac.sql` | 4 | locks the four token tables, deletes every session, one-time token, pending authentication and WebAuthn challenge, and adds `token_mac` and an indexed `token_mac_key_version` to the four tables; stop every 1.x instance first, and rerun it if PostgreSQL aborted it with a deadlock against a 1.x request still in flight |
 | `0005_pending_password_reset.sql` | 5 | adds the nullable `new_password_phc` and `new_password_key_version` to `velve.pending_authentication`, with the constraint `pending_authentication_new_password_whole` that sets both or neither; rewrites no row, so nobody is signed out and no pending state ends |
+| `0006_recovery_disabled.sql` | 6 | adds the nullable `recovery_disabled_at` to `velve.user`, the [no-recovery switch](#the-no-recovery-switch); rewrites no row, so nobody is signed out and no seal changes |
 
 Exactly one of the three version-2 files is applied — the one matching the
-configured identity mode. Migrations 3, 4 and 5 are the same in every mode; migration 4
+configured identity mode. Migrations 3 to 6 are the same in every mode; migration 4
 signs every user out, because no existing token row carries the MAC it adds. Changing the mode of a database that has already
 migrated is a schema change of its own; the runner will report the recorded
 migration 2 as changed rather than silently swapping the constraint.
@@ -6351,7 +6354,7 @@ none either; see
 | `auth.signOut` | one method; deletes exactly one session row, and an unknown token is not an error |
 | `auth.session` | `resolve`, `resolveFromHeaders`, `list`, `revoke`, `revokeAllOther`, `revokeAll`, `refresh` |
 | `auth.pending` | `resolve`, `resolveFromHeaders`, `cancel` |
-| `auth.user` | `findById`, `findByEmail` (only in `"email"` and `"username_email"`), `findByUsername` (only in `"username"` and `"username_email"`), `disable`, `enable`, `delete` |
+| `auth.user` | `findById`, `findByEmail` (only in `"email"` and `"username_email"`), `findByUsername` (only in `"username"` and `"username_email"`), `disable`, `enable`, `disableRecovery`, `enableRecovery` ([The no-recovery switch](#the-no-recovery-switch)), `delete` |
 | `auth.username` | `isAvailable`, `change` — present only in `"username"` and `"username_email"` |
 | `auth.oneTimeToken` | `resolve` — present only in `"email"` and `"username_email"`; no route, see [Resolving a one-time token](#resolving-a-one-time-token) |
 
@@ -10768,7 +10771,150 @@ sent is never hidden by a refusing hook (E-3717, E-3718).
 
 ## The no-recovery switch
 
-> Reserved for the `no-recovery-switch` feature of release 3.0.0 and not written yet. Only that feature writes into this chapter (`CLAUDE.md` §5), and its writer deletes this note when filling it.
+An account can turn off every way into it that does not use one of its own
+credentials. While the switch is on, nobody gets into the account through its
+address: no password reset, no magic link, no recovery code. What remains is
+signing in with what the account has enrolled — its password, its passkeys, its
+linked identities — and every second factor it has enrolled. The switch is meant
+for accounts that must not be recoverable at all, such as an application's own
+staff accounts, and it is off for every account until the application turns it
+on (architecture 3.18, *The no-recovery switch*; S-INTEG-11, S-ENUM-9).
+
+### `auth.user.disableRecovery({ userId })` and `auth.user.enableRecovery({ userId })`
+
+```ts
+await auth.user.disableRecovery({ userId }); // the switch is on
+await auth.user.enableRecovery({ userId });  // the switch is off again
+```
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `userId` | `string` | the account's id, as `User.id` gives it |
+
+Both return `Promise<void>`. They are server methods like `user.disable` and
+`user.enable`: no HTTP route, no client call, no plugin point. The application
+calls them in its own process after its own authorisation decision; the library
+cannot decide who may turn an account's recovery off (E-3739).
+
+Turning the switch on is one sealed change under the account lock (3.18). In
+that one transaction it
+
+- sets `velve.user.recovery_disabled_at`;
+- deletes every recovery code of the account;
+- retires every reset link and magic link the account has outstanding, by
+  drawing new token generations for `password_reset` and `magic_link`; such a
+  link answers like an unknown token from then on, also after the switch is off
+  again (E-3736);
+- keeps the session epoch: no session is revoked, because the switch removes
+  ways in and does not change who is signed in (E-3735).
+
+Turning it off clears the column and nothing else. The codes it deleted do not
+come back; the owner generates new ones. Calling either method when the switch
+is already in that position changes nothing that matters: turning it on again
+retires any link minted since, and turning it off again writes no new seal.
+
+| Outcome | When |
+|---|---|
+| resolves | the switch is in the requested position and the change committed |
+| `VelveError` `invalid_input` | `userId` names no account, or is not a uuid |
+| a concealed `broken_state_on_change`, and the security-state alarm | the account's security state is broken — a writer changed it past the library (3.18) |
+
+### What the switch changes while it is on
+
+| Call | Answer while the switch is on |
+|---|---|
+| `password.requestReset`, `POST /password/request-reset` | `204`, and the send callback is called once with `{ kind: "request_for_unknown_address", requested: "password_reset" }`, exactly as for an address that names no account, after the same database statements |
+| `signIn.magicLink.request`, `POST /sign-in/magic-link/request` | the same, with `requested: "magic_link"` |
+| `password.redeemReset`, `POST /password/redeem-reset` | `400 invalid_token`, as for an unknown token; the link is not spent and the password does not change |
+| `signIn.magicLink.redeem`, `POST /sign-in/magic-link/redeem` | `400 invalid_token`, as for an unknown token; no session, the link is not spent |
+| completing a reset held back for a second factor ([Password reset with a second factor](#password-reset-with-a-second-factor)) | `401 invalid_pending_authentication`; the old password stays, no session is issued |
+| `factor.recovery.verify`, `POST /factor/recovery/verify` | `401 invalid_recovery_code`, as for a wrong code — the account has no codes |
+| `password.redeemResetWithRecoveryCode`, `POST /password/redeem-reset-with-recovery-code` | `401 invalid_recovery_code`, as for a wrong code |
+| `factor.recovery.generate`, `POST /factor/recovery/generate` | `409 recovery_disabled` |
+| `factor.recovery.remaining` | `{ remainingCount: 0 }` |
+
+A pending authentication no longer offers `"recovery"` among its
+`availableFactors`, because the account has no codes. Everything else is as it
+was: password sign-in, passkey sign-in, OAuth sign-in through a linked identity,
+TOTP and passkeys as second factors, `email.requestVerification` and
+`email.requestChange` and their redemptions — confirming or changing the address
+issues no session and sets no credential, so neither is a way in (E-3738).
+
+**Not covered in this version.** The automatic linking of a new identity through
+the confirmed address of a trusted provider (`trustedForAutomaticLinking`,
+S-LINK-2) does not ask the switch. On an account with a second factor it still
+leads only to the pending authentication; on an account without one it signs in.
+An application that relies on the switch either keeps such accounts on a second
+factor or does not mark a provider as trusted for automatic linking (E-3738).
+
+### `recovery_disabled`
+
+| Code | Status | Message |
+|---|---|---|
+| `recovery_disabled` | 409 | `Recovery is turned off for this account.` |
+
+The one visible code the switch adds. Only `factor.recovery.generate` answers it,
+to the signed-in owner, who may learn that their own account has no recovery.
+Every other refusal answers with the code of the path's ordinary failure, and the
+true reason goes to `log` only:
+
+| Logged reason | Visible code | Where |
+|---|---|---|
+| `recovery_disabled_on_token_redemption` | `invalid_token` | a reset link or magic link minted after the switch went on |
+| `recovery_disabled_on_pending_reset` | `invalid_pending_authentication` | the completion of a held back reset |
+| `recovery_code_not_found` | `invalid_recovery_code` | a recovery code presented while the switch is on |
+
+A link minted before the switch went on is refused earlier, as a link whose token
+generation the account has left, and logs `token_not_found` like any unknown
+token.
+
+### Reading it back
+
+`User.recoveryDisabledAt: Date | null` is the time the switch went on, or `null`
+while it is off, and comes with every read of an account: `auth.user.findById`,
+`findByEmail`, `findByUsername`, `session.resolve` and every sign-in result. The
+owner's client therefore sees whether its own account has recovery off.
+
+### Audit
+
+Each call that committed writes one line through `log`, or through the console
+when no `log` is configured, as the administrator reseal does:
+
+| Level | Message | Fields |
+|---|---|---|
+| `warn` | `account recovery disabled` | `{ userId }` |
+| `warn` | `account recovery enabled` | `{ userId }` |
+
+No address and no other field. Nothing is stored; the library keeps no audit log
+(3.14). A call that was refused writes no such line, and a `log` that throws
+does not fail a call whose change has already committed (E-3734).
+
+### The switch in the sealed state
+
+The switch is the column `velve.user.recovery_disabled_at` (migration 6) and a
+component of the seal ([Security state: the seal](#security-state-the-seal)). A writer of the
+database without the root key who clears the column does not turn the switch
+off: every sign-in, session resolution and redemption of the account then meets
+a broken state, answers its ordinary failure and raises the alarm with
+`seal_mismatch`, until an administrator reseals (S-INTEG-7). Setting the column
+breaks the state in the same way.
+
+The encoding the seal is taken over appends the switch as its last field only
+while it is on, so an account that never turns the switch on keeps the seal it
+had before migration 6, and upgrading needs no reseal (E-3731).
+
+One part reads the column without the seal: the request for a reset or a magic
+link reads it with the row its address lookup reads anyway, so that a
+switched-off account runs the statements of an unknown address. A writer who
+clears the column therefore gets a real link mailed to the account's own
+address, and its redemption is refused on the broken state (E-3732).
+
+### Upgrading
+
+Migration 6 adds one nullable column and rewrites no row; nobody is signed out.
+An instance older than 3.0.0 does not read the column and would seal an account
+whose switch is on without it, which breaks that account's state. Turn the switch
+on only once every instance runs 3.0.0 (E-3730).
 
 ## Recovery to a new passkey
 
