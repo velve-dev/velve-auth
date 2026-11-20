@@ -1378,10 +1378,10 @@ There is one exception to the missing-header rule, because browsers send no
 `Origin` on a same-origin `fetch` GET. A request with no `Origin` header is
 accepted when all three of these hold:
 
-- the route is one of the eight reading `GET` routes of S-CSRF-4: `/session`,
+- the route is one of the nine reading `GET` routes of S-CSRF-4: `/session`,
   `/session/list`, `/username/available`, `/factor/webauthn/list`,
-  `/factor/recovery/remaining`, `/identity/list`, `/pending` and
-  `/passkey-recovery`;
+  `/factor/recovery/remaining`, `/identity/list`, `/pending`,
+  `/passkey-recovery` and `/proof-of-work/challenge`;
 - the request came through the web handler;
 - it carries `Sec-Fetch-Site: same-origin`, exactly. A page script cannot set
   this header, and the browser sends that value only when the calling page's
