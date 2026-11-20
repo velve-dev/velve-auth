@@ -6226,7 +6226,7 @@ nothing else would tell you.
 | `plugin_id_duplicated` | two plugins claim the same `id` |
 | `plugin_dependency_missing` | a `dependsOn` names a plugin that is not configured |
 | `plugin_dependency_cycle` | the `dependsOn` graph has a cycle (3.11) |
-| `plugin_route_conflict` | a plugin route collides with a core route or with another plugin's, or the plugin's `id` or a route name's first segment is one of the twenty-two namespaces 3.15 B gives the instance |
+| `plugin_route_conflict` | a plugin route collides with a core route or with another plugin's, its name does not begin with `<id>.` or its path with `/x/<id>/`, or the plugin's `id` or a route name's first segment is one of the twenty-two namespaces 3.15 B gives the instance (E-3945) |
 | `plugin_field_unknown` | a plugin carries a field the interface does not enumerate, at the top level or among `hooks` |
 | `plugin_anchor_incomplete` | a plugin's `securityStateAnchor` is not an object carrying the functions `recordSeal` and `minimumVersion` (E-3174) |
 | `plugin_route_reads_a_core_cookie` | a plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` |
@@ -6828,7 +6828,9 @@ The context a hook is given is frozen and carries no writing method on the user,
 the password, the TOTP secret or the recovery codes. A plugin's own SQL is
 checked before it reaches the driver: a statement naming any core table, in any
 position the checker reads as code, is refused, and so is one it cannot read at
-all. It is a guardrail against the accident, not a sandbox — a plugin runs in
+all — and every statement is exactly one, since a semicolon or a backslash
+anywhere in its text, an escape string and a dollar quote are refused before
+anything is read (E-3940, E-3941). It is a guardrail against the accident, not a sandbox — a plugin runs in
 your process and can reach your driver by other means, and a core table named
 inside a string literal the database later executes is not seen.
 With `pluginDatabaseRole` set, every plugin statement also runs as a
@@ -6841,6 +6843,14 @@ as the plugin role and has no way back to the library's, so a read of a core
 table is refused by the database as well. See
 [`pluginDatabase`](#plugindatabase).
 
+A plugin route's handler is given a `PluginRequestContext`: the resolved
+session where the route asks for one, the address, the user agent, the frozen
+plugin context and the account bucket — and no session, pending or state token
+and no cookie writer. Its output is answered as JSON, and no field of it becomes
+a cookie, whatever it is called (E-3942). Every hook is given a copy of its event
+frozen to its last field, so writing into it throws and refuses the operation,
+and the plugin's clock is a frozen clock of its own (E-3943, E-3944).
+
 Origin checking and rate limiting run before any plugin code, on the HTTP path
 and on the direct server call alike; a plugin route cannot make itself a reader
 of the cookie that carries a half-finished sign-in, and it cannot declare itself
@@ -6848,8 +6858,9 @@ exempt from the origin check. Twelve ways of configuring plugins wrongly refuse
 the start rather than warning, among them a duplicate id, two ids where one is
 the other's table prefix, a dependency on a plugin that is not configured, a
 cycle, a route that collides with a core one, a route reaching for one of those
-cookies or skipping the origin check, an error code outside the plugin's own
-namespace, a route name folding onto something every object already has, and a
+cookies or skipping the origin check, a route outside its own `<id>.` and
+`/x/<id>/`, an error code outside the plugin's own
+namespace, a route name folding onto something every object or a promise already has, and a
 field the interface does not enumerate — which is how a plugin trying to put a
 middleware in front of the origin check is answered.
 
@@ -6889,7 +6900,7 @@ migration, and removing a plugin leaves its tables where they are.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `id` | `string` | The namespace. Every route name begins `<id>.`, every path `/x/<id>/`, every table `<id>_`, every error code `<id>.` — all four as types, so a plugin that wants a core route cannot write one that compiles. |
+| `id` | `string` | The namespace. Every route name begins `<id>.`, every path `/x/<id>/`, every table `<id>_`, every error code `<id>.` — all four as types, so a plugin that wants a core route cannot write one that compiles, and all four checked at start, so a plugin written in JavaScript cannot either. |
 | `dependsOn` | `readonly string[]?` | Ids this plugin must run after. Sorted topologically at start. |
 | `migrations` | `readonly PluginMigration<Id>[]?` | Run by the same versioned runner the core's use, under a ledger of the plugin's own; see below. |
 | `routes` | `readonly PluginRoute<Id>[]?` | Route *declarations*. The registry passes each to `defineRoute`, so a plugin route reaches the table through the same constructor and the same checks as a core route. Three fields of the core declaration are **absent** from it and a fourth is narrowed to one value: see below. |
@@ -6912,7 +6923,7 @@ route. All but one are decided when `createVelveAuth` runs;
 | `plugin_table_prefix_conflict` | One plugin's `id` is another's table prefix — `audit` and `audit_trail` — so `audit_trail_entry` belongs to both of them (S-DEFAULT-5). |
 | `plugin_dependency_missing` | A `dependsOn` names a plugin that is not configured, so nothing can order the two. |
 | `plugin_dependency_cycle` | The `dependsOn` graph has a cycle, which has no topological order (3.11). |
-| `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route or with another plugin's, or the plugin's `id` — or the first segment of one of its route names — is one of the twenty-two namespaces 3.15 B gives the instance. Those twenty-two are a list, `SURFACE_NAMESPACES` in `instance.ts`, and reading the built surface instead released five of them (E-779). |
+| `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route or with another plugin's, or the plugin's `id` — or the first segment of one of its route names — is one of the twenty-two namespaces 3.15 B gives the instance. Those twenty-two are a list, `SURFACE_NAMESPACES` in `instance.ts`, and reading the built surface instead released five of them (E-779). Also a route whose name does not begin with its plugin's `<id>.` or whose path does not begin with `/x/<id>/` and go on below it: `claimed` is the name, or `METHOD path` where only the path is outside, and the first contributor is the plugin whose id that namespace is, or the core where none is (E-3945). |
 | `plugin_field_unknown` | The plugin carries a field the interface does not enumerate — at the top level or among `hooks`. |
 | `plugin_anchor_incomplete` | `securityStateAnchor` is `null`, not an object, or lacks a function `recordSeal` or `minimumVersion`. An anchor that cannot be asked would refuse every check, so it refuses the start instead (E-3174). |
 | `plugin_route_reads_a_core_cookie` | A plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` — as an own property or on a prototype. |
@@ -6926,7 +6937,7 @@ route. All but one are decided when `createVelveAuth` runs;
 | `plugin_database_and_role_both_set` | `pluginDatabase` and `pluginDatabaseRole` are both set. Each one says where plugin SQL runs, and neither is allowed to override the other without a word (E-2642). |
 | `plugin_database_reaches_the_core` | The login `pluginDatabase` connects as is the library's role, can become it, or can become a role that owns the schema, may create roles (`CREATEROLE`), may create objects in the core schema or in `public`, or holds a right on a core table or on any column of one — a superuser included. Raised by `migrate()`, and by a plugin statement whenever the check is asked again (E-2641, E-2646, E-2647). |
 | `route_namespace_conflict` | Two route names fold onto the same object path, so one server method would shadow the other. |
-| `route_name_segment_reserved` | A route name has a segment every object already carries — `__proto__`, `constructor` or `prototype`. |
+| `route_name_segment_reserved` | A route name has a segment every object already carries — `__proto__`, `constructor` or `prototype`. A plugin route is also refused a segment a promise or every object reads: `then`, `catch`, `finally`, `toString`, `toLocaleString`, `valueOf`, `toJSON`, `hasOwnProperty`, `isPrototypeOf`, `propertyIsEnumerable` and the four `__define…`/`__lookup…` accessors, since a server method named `then` makes its namespace a thenable `await` calls. The stated message still names the first three only (E-3945). |
 
 `plugin_route_conflict` is the one 3.11 states in terms: a name collision with a
 core route is a start error and not a warning. The type constraint already
@@ -7387,6 +7398,13 @@ with a veto" means: a hook **refuses** by throwing and **observes** by returning
 and it cannot replace the answer because it cannot return one. The points are
 enumerated, not open.
 
+**Every hook is handed a frozen copy of its event, never the event the flow
+holds.** The copy is made once per dispatch and frozen down to its last array, so
+`SessionCreateEvent.factors` is not the array the session row is written from,
+and a hook that writes into its event — `event.factors.push(…)`, `event.userId =
+…` — throws, which refuses the operation like any other throw. Copy a field before
+changing it (E-3943).
+
 At each point every plugin runs in dependency order, one after another, each
 awaited before the next. A throw stops the rest and travels out through the same
 error map every other failure does — so a plugin's own namespaced code answers
@@ -7641,7 +7659,7 @@ not reachable from the context.
 
 | Field | Type | Meaning |
 |---|---|---|
-| `clock` | `Clock` | The instance's clock, so a plugin reads the same time the core does. |
+| `clock` | `Clock` | A frozen clock of the plugin's own whose `now()` asks the instance's clock, so a plugin reads the same time the core does and cannot move it. The system clock the instance falls back to is frozen as well (E-3944). |
 | `identityMode` | `IdentityMode` | |
 | `schema` | `string` | The configured PostgreSQL schema — what a plugin qualifies its own table names with. |
 | `repositories` | `FrozenRepositories` | The three calls below. |
@@ -7765,7 +7783,9 @@ table in a statement is finding nothing, and nothing is not permission:
 | Refused | Because |
 |---|---|
 | quoting that never closes | the text could not be read to the end |
-| a `;` anywhere | a second statement the walk would not reach |
+| a `;` anywhere in the text, inside a literal or a comment included | a statement without parameters goes out as a simple query, which runs every statement it carries (E-3941) |
+| a `\` anywhere in the text | an escape string, or a plain literal while `standard_conforming_strings` is off, reads it as the escape of a quote (E-3941) |
+| a quote opened by an `E` or `U&` prefix | the literal's end depends on escapes the reader does not model (E-3940) |
 | a `$` that is not a parameter placeholder | dollar-quoted text the walk cannot delimit |
 | a leading keyword outside `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `WITH` | the walk cannot find the tables of any other kind — this is what refuses `TRUNCATE`, `DROP`, `ALTER` and `COPY` |
 | a table position holding anything but a name or `(` | the target could not be identified |
@@ -7782,7 +7802,8 @@ same words are data and pass. The list is a list, and a function PostgreSQL or a
 installed extension adds that runs SQL text is not on it.
 
 A string literal becomes an empty literal, a comment becomes a space, and a
-quoted identifier becomes the bare name it stands for. Whitespace and comments
+quoted identifier becomes the bare name it stands for. A line comment ends at a
+line feed or a carriage return, as PostgreSQL ends it (E-3940). Whitespace and comments
 **around a dot** are then removed, so `velve . user`, a wrapped `velve.\nuser`
 and `velve/*x*/.user` are one name rather than three tokens. That normalisation
 is not what makes the boundary hold — Rule 1 refuses `user` on its own — but
@@ -7799,7 +7820,8 @@ harmless and are refused anyway:
   and a table function all sit where a table sits and are none.
 - A CTE whose name does not carry the plugin's prefix. Prefix them.
 - Every DDL statement, including one that alters the plugin's own table.
-- A batch of two statements, and dollar-quoted text.
+- A batch of two statements, dollar-quoted text, an escape string, and any
+  semicolon or backslash, a literal's included. Pass such a value as a parameter.
 - From Rule 4, any call of `set_config`, including one that sets a harmless
   parameter.
 - From Rule 1, a plugin column named after a core table — `identity` and
@@ -8063,6 +8085,32 @@ Every route handler is given the frozen context of the plugin that contributed
 the route; a core route is given the core one. Which context a route gets is
 recorded against the route object when the registry builds it, not derived from
 the route's name.
+
+### `PluginRequestContext`
+
+What a plugin route's `handler(input, context)` is given, in place of the core's
+request context (E-3942):
+
+| Field | Type | Meaning |
+|---|---|---|
+| `session` | `Session \| null` | The resolved session where the route declares `caller: "session"`, `null` otherwise. |
+| `ipAddress` | `string \| null` | The caller's address as the rate limiter counted it. |
+| `userAgent` | `string \| null` | The `User-Agent` header. |
+| `plugin` | `FrozenContext` | The plugin's own frozen context. |
+| `enforceAccountRateLimit` | `(normalisedIdentifier: string) => Promise<void>` | Draws the route's `perAccount` bucket for that identifier. |
+
+It carries **no** `sessionToken`, `pendingToken` or `oauthStateToken` and **no**
+`cookies` writer, and the object is frozen. A plugin route's output is answered
+as JSON as it stands: a field named `sessionToken` or `pendingToken` stays in the
+body and sets no cookie, and `redirectToPath` redirects nowhere. 3.15 G gives a
+plugin no access to session tokens, and G19 leaves cookies to the core alone.
+
+**Migrating a 2.x plugin.** Type the handler's context as
+`PluginRequestContext`, exported beside `PluginRoute`. A handler that needs the
+account reads `context.session.userId` on a route declaring `caller:
+"session"`. A handler that read a token or wrote a cookie has no replacement; a
+JavaScript plugin that still calls `context.cookies` meets a `TypeError`,
+answered `internal_error`.
 
 ### Not built here
 
