@@ -428,6 +428,7 @@ function webAuthnRoutes(services: RouteServices, webauthn: WebAuthnService) {
 			...FRESH_SESSION_ERRORS,
 			"webauthn_challenge_invalid",
 			"webauthn_credential_rejected",
+			"webauthn_credential_not_discoverable",
 		] as const,
 		caller: "session",
 		freshness: "required",

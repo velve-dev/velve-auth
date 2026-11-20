@@ -1600,7 +1600,7 @@ would keep it.
 
 The method throws where the client returns a result (3.15 E), and it throws
 exactly what a request would have answered: a `VelveError` carrying one of the
-29 codes, mapped and logged by the same code as the HTTP path. An application
+30 codes, mapped and logged by the same code as the HTTP path. An application
 that catches it and forwards `error.code` into its own response publishes
 nothing the HTTP answer would not have published.
 
@@ -1723,7 +1723,7 @@ the second.
 
 ### Error codes
 
-Every failure of the core carries one of 29 stable codes. The status, the
+Every failure of the core carries one of 30 stable codes. The status, the
 message and the mapping from internal reason to visible code live in
 `src/core/http/error-map.ts`, and no other module decides what a caller sees. A
 plugin adds codes of its own without widening that union; they are described
@@ -1745,7 +1745,7 @@ under [A plugin's own codes](#a-plugins-own-codes) below.
 | `too_many_factor_attempts` | 429 | `username_invalid` | 400 |
 | `internal_error` | 500 | `passkey_limit_reached` | 409 |
 | `identity_limit_reached` | 409 | `recovery_disabled` | 409 |
-| `passkey_recovery_failed` | 400 | | |
+| `passkey_recovery_failed` | 400 | `webauthn_credential_not_discoverable` | 400 |
 
 This table is the whole of `VelveErrorCode`. It does not list a plugin's codes,
 which are not part of that union and are resolved separately.
@@ -4675,6 +4675,7 @@ interface WebAuthnConfig {
   relyingPartyName: string
   origins: readonly string[]
   userVerification?: "required" | "preferred"   // "required"
+  requireDiscoverableCredential?: boolean       // false
 }
 ```
 
@@ -4684,6 +4685,7 @@ interface WebAuthnConfig {
 | `relyingPartyName` | what the authenticator shows the user. Any non-empty string. |
 | `origins` | every origin a ceremony may come from. An array, because a relying party legitimately has a web origin and a native one. |
 | `userVerification` | what **registration** asks the authenticator for. It does not govern sign-in. |
+| `requireDiscoverableCredential` | `true` refuses every registration, in a session and at the end of a recovery, whose client does not report a discoverable credential. Needs `userVerification: "required"`. See [Discoverable registration](#discoverable-registration). |
 
 `"discouraged"` is deliberately absent from the type. A second factor without
 user verification is not one, and Better Auth's `requireUserVerification: false`
@@ -4702,8 +4704,10 @@ other spelling is passed through untouched, so `android:apk-key-hash:…` works
 `webAuthnSettingsOf(config)` performs that validation and is what the service
 calls. It throws `InvalidWebAuthnConfigError`, whose `code` is one of
 `relying_party_id_empty`, `relying_party_id_is_not_a_hostname`,
-`relying_party_name_empty`, `origins_empty`, `origin_empty` or
-`origin_carries_more_than_an_origin`.
+`relying_party_name_empty`, `origins_empty`, `origin_empty`,
+`origin_carries_more_than_an_origin`,
+`require_discoverable_credential_not_a_boolean` or
+`discoverable_credential_without_user_verification`.
 
 ### Registering an authenticator
 
@@ -8062,7 +8066,7 @@ if (!answer.ok) {
 
 The `switch` is exhaustive and the compiler checks it, because `answer.error.code`
 is narrowed to the codes **that route** declares and not to the union of all
-twenty-nine.
+thirty.
 
 A call returns a result rather than throwing, and the asymmetry with the server
 is on purpose: on the server a call sits in a request handler with a central
@@ -8181,7 +8185,7 @@ try {
 ```
 
 `VelveError` rebuilds its message from its own copy of the error table rather
-than from the wire. For the twenty-nine core codes the two are the same table and
+than from the wire. For the thirty core codes the two are the same table and
 the strings are identical; for a code this build of the package does not know,
 `unwrap` throws with `internal_error`'s message and the response's status is
 lost. The un-unwrapped path always keeps what the server said, in
@@ -8890,6 +8894,7 @@ Beyond `invalid_input`, `rate_limited`, `origin_not_allowed` and
 | `factor_not_enrolled` | 409 | confirming or removing a TOTP factor there is none of, or a WebAuthn challenge for an account with no credential |
 | `webauthn_challenge_invalid` | 400 | a challenge absent, expired or issued for the other ceremony |
 | `webauthn_credential_rejected` | 401 | an unknown credential, a bad signature, a wrong relying party or origin, or a user not verified |
+| `webauthn_credential_not_discoverable` | 400 | with `webauthn.requireDiscoverableCredential`, a registration whose client reports no discoverable credential ([Discoverable registration](#discoverable-registration)) |
 | `last_sign_in_method` | 409 | removing the account's last way in |
 | `username_taken` | 409 | the unique index refused the new name |
 | `username_invalid` | 400 | the name fails the configured rules |
@@ -11341,7 +11346,142 @@ and column, so configure the recovery only once every instance runs 3.0.0.
 
 ## Discoverable registration
 
-> Reserved for the `discoverable-registration` feature of release 3.0.0 and not written yet. Only that feature writes into this chapter (`CLAUDE.md` §5), and its writer deletes this note when filling it.
+An application that signs in with the discoverable passkey alone — no address,
+no username, no password at sign-in — needs every passkey it registers to be one
+the authenticator can find without being told the account. A credential that is
+not discoverable never appears in a passkey sign-in, and nothing says so until
+the user is locked out. `webauthn.requireDiscoverableCredential` makes the
+library check that, instead of trusting that the authenticator honoured the
+request (architecture 3.6, S-DEFAULT-8).
+
+```ts
+createVelveAuth({
+  // …
+  webauthn: {
+    relyingPartyId: "example.com",
+    relyingPartyName: "Example",
+    origins: ["https://example.com"],
+    userVerification: "required",
+    requireDiscoverableCredential: true,
+  },
+})
+```
+
+| Option | Type | Default | Meaning |
+|---|---|---|---|
+| `webauthn.requireDiscoverableCredential` | `boolean` | `false` | `true` accepts a registration only when the client reports a discoverable credential and the authenticator verified the user. |
+
+### What every registration already asks for
+
+The switch adds a check, not a request. Whether it is on or off, the creation
+options of both registrations — `factor.webauthn.register.start` in a session
+and `passkeyRecovery.start` at the end of a
+[recovery to a new passkey](#recovery-to-a-new-passkey) — carry:
+
+| Field | Value | Set by |
+|---|---|---|
+| `authenticatorSelection.residentKey` | `"required"`, with `requireResidentKey: true` | always (E-483) |
+| `authenticatorSelection.userVerification` | `webauthn.userVerification` in a session, `"required"` in the recovery | the configuration, and E-3766 for the recovery |
+| `extensions.credProps` | `true` | always (E-3815) |
+
+With the switch on, `webauthn.userVerification` must be `"required"`, so both
+registrations ask for user verification. Nothing else in the options changes, so
+turning the switch on changes no request a browser sees (E-3810).
+
+### What the switch checks
+
+After the attestation has verified — origin, relying party, challenge, signature
+and the authenticator's user verified flag `UV`, which the verifier requires
+because user verification is `"required"` — the registration reads the response's
+`clientExtensionResults.credProps.rk`:
+
+| What the client sent | Outcome |
+|---|---|
+| `{ credProps: { rk: true } }` | accepted |
+| `{ credProps: { rk: false } }` | refused |
+| `{ credProps: {} }`, `{}`, or no `clientExtensionResults` at all | refused — a client that cannot tell leaves `rk` out, and silence is not a yes |
+| `rk` as `"true"`, `1` or any other value that is not the boolean `true` | refused |
+| an `rk` or a `credProps` inherited from a prototype rather than sent | refused |
+
+Each level is read as an own property, so a polluted `Object.prototype` cannot
+answer for a field the caller never sent (E-3812). The check runs only after the
+attestation verified, so a forged response is answered
+`webauthn_credential_rejected` and never learns that this check exists (E-3814).
+
+### What a refusal answers and costs
+
+| Where | Answer | Stored | Spent |
+|---|---|---|---|
+| `POST /factor/webauthn/register/finish` | `400 webauthn_credential_not_discoverable` | nothing | the challenge, as for every refused registration in a session; a new `register.start` begins again |
+| `POST /passkey-recovery/finish` | `400 passkey_recovery_failed`, byte for byte the answer of an unknown challenge (S-ENUM-10) | nothing in `velve.passkey_recovery` or `velve.webauthn_credential` | nothing more: the finish's transaction rolls back, so the challenge stays valid for its five minutes and the same recovery can finish with another authenticator; the link and the recovery code were spent by the start, as for every refused finish (E-3782) |
+
+An attestation without the `UV` flag is refused as before, with
+`webauthn_credential_rejected` in a session and `passkey_recovery_failed` in the
+recovery (E-3816).
+
+| Code | Status | Message |
+|---|---|---|
+| `webauthn_credential_not_discoverable` | 400 | `The authenticator did not report a discoverable credential.` |
+
+The refusal in a session names its own code because the caller is the account's
+own holder and the remedy is theirs to take: another authenticator, or another
+browser that reports `credProps`. Internally it is the concealed reason
+`credential_not_discoverable`, which the recovery folds into its one answer like
+every other refused registration (E-3813).
+
+### Configuration that does not start
+
+`createVelveAuth` throws `InvalidWebAuthnConfigError` instead of returning an
+instance when:
+
+| `code` | Configuration |
+|---|---|
+| `discoverable_credential_without_user_verification` | `requireDiscoverableCredential: true` with `userVerification: "preferred"`. The library does not override one with the other; change `userVerification` to `"required"` (E-3811). |
+| `require_discoverable_credential_not_a_boolean` | a value that is neither `true`, `false` nor absent, such as `"true"` from an environment variable, which would otherwise read as off |
+
+Turning the switch on is not a weakening, so the start report of S-DEFAULT-1
+([`SECURITY_OPTIONS`](#security_options)) says nothing about it;
+`userVerification: "preferred"` is still reported where the switch is off.
+
+### What `credProps` is, and what the check does not do
+
+`credProps` is a client extension output. The browser writes it; no
+authenticator signs it, and it is not part of the attestation the library
+verifies. So the check protects against a browser or an authenticator that
+passes over the request for a discoverable credential — one that makes a
+server-side credential anyway, or a client that does not enforce `"required"` —
+and against one that does not say what it made.
+
+It does not protect against a client that lies. A client that sends
+`rk: true` for a credential that is not discoverable can register it, but that
+client already holds the account's session or the recovery the registration runs
+under, and the credential then fails that same person at sign-in. The check is
+about availability for the account's holder, not about an attacker.
+
+### What the application has to send
+
+The library's client passes `response` to the route unchanged, so
+`clientExtensionResults` arrives exactly as the application put it in. The
+application has to put it in:
+
+- `PublicKeyCredential.prototype.toJSON()` (WebAuthn Level 3) and
+  `startRegistration()` of `@simplewebauthn/browser` include
+  `clientExtensionResults` from `getClientExtensionResults()`;
+- a response the application builds by hand must include
+  `clientExtensionResults: credential.getClientExtensionResults()`; one that
+  leaves it out, or sends `{}`, is refused on every registration while the switch
+  is on (E-3812).
+
+### What it does not add
+
+- No sign-in that asks for an address or a username first. The discoverable
+  passkey sign-in, [`signIn.passkey`](#signing-in-with-a-passkey), stays the only
+  sign-in such an application offers.
+- No check at sign-in: the switch governs registration only.
+- No policy on device-bound or synchronised passkeys; the backup flags are
+  recorded as before.
+- No migration: credentials registered before the switch was turned on are kept,
+  whether or not they were reported as discoverable.
 
 ## Verified attestation and the authenticator allowlist
 

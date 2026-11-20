@@ -1,5 +1,6 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { utf8ToBytes } from "@noble/hashes/utils.js";
+import type { RegistrationResponseJSON } from "@simplewebauthn/server";
 import { ConcealedError } from "../../http/error-map.js";
 import { isRecord } from "../../http/validators.js";
 import { decodeBase64Url } from "../../keys/base64url.js";
@@ -71,5 +72,26 @@ export function assertRelyingPartyIsExpected(
 export function assertUserWasVerified(authenticatorData: string): void {
 	if (!userWasVerified(authenticatorData)) {
 		throw new ConcealedError("user_not_verified");
+	}
+}
+
+//credProps is reported unsigned by the client and only an own rk of true counts (E-3812)
+function clientReportsADiscoverableCredential(response: RegistrationResponseJSON): boolean {
+	const results = ownField(
+		response as unknown as Record<string, unknown>,
+		"clientExtensionResults",
+	);
+	if (!isRecord(results)) {
+		return false;
+	}
+	const credentialProperties = ownField(results, "credProps");
+	return isRecord(credentialProperties) && ownField(credentialProperties, "rk") === true;
+}
+
+export function assertClientReportsADiscoverableCredential(
+	response: RegistrationResponseJSON,
+): void {
+	if (!clientReportsADiscoverableCredential(response)) {
+		throw new ConcealedError("credential_not_discoverable");
 	}
 }

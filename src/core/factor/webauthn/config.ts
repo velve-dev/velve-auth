@@ -6,6 +6,7 @@ export interface WebAuthnConfig {
 	readonly relyingPartyName: string;
 	readonly origins: readonly string[];
 	readonly userVerification?: RegistrationUserVerification;
+	readonly requireDiscoverableCredential?: boolean;
 }
 
 export interface WebAuthnSettings {
@@ -13,6 +14,7 @@ export interface WebAuthnSettings {
 	readonly relyingPartyName: string;
 	readonly origins: readonly string[];
 	readonly registrationUserVerification: RegistrationUserVerification;
+	readonly requireDiscoverableCredential: boolean;
 }
 
 export const DEFAULT_REGISTRATION_USER_VERIFICATION: RegistrationUserVerification = "required";
@@ -23,7 +25,9 @@ export type WebAuthnConfigErrorCode =
 	| "relying_party_name_empty"
 	| "origins_empty"
 	| "origin_empty"
-	| "origin_carries_more_than_an_origin";
+	| "origin_carries_more_than_an_origin"
+	| "require_discoverable_credential_not_a_boolean"
+	| "discoverable_credential_without_user_verification";
 
 const MESSAGE_BY_ERROR_CODE: Readonly<Record<WebAuthnConfigErrorCode, string>> = {
 	relying_party_id_empty: "webauthn.relyingPartyId is empty.",
@@ -34,6 +38,10 @@ const MESSAGE_BY_ERROR_CODE: Readonly<Record<WebAuthnConfigErrorCode, string>> =
 	origin_empty: "webauthn.origins holds an empty entry.",
 	origin_carries_more_than_an_origin:
 		"An http or https entry of webauthn.origins carries a path, a query or a fragment.",
+	require_discoverable_credential_not_a_boolean:
+		"webauthn.requireDiscoverableCredential is true, false or absent.",
+	discoverable_credential_without_user_verification:
+		'webauthn.requireDiscoverableCredential asks for user verification, so webauthn.userVerification cannot be "preferred".',
 };
 
 export class InvalidWebAuthnConfigError extends Error {
@@ -76,6 +84,29 @@ function assertOrigin(origin: string): string {
 	return origin;
 }
 
+//a switch a caller misspelled must not read as off (S-DEFAULT-8)
+function discoverableCredentialRequired(config: WebAuthnConfig): boolean {
+	const required: unknown = config.requireDiscoverableCredential;
+	if (required === undefined) {
+		return false;
+	}
+	if (typeof required !== "boolean") {
+		throw new InvalidWebAuthnConfigError("require_discoverable_credential_not_a_boolean");
+	}
+	return required;
+}
+
+//a contradiction is refused at start rather than settled by silently overriding one side (E-3811)
+function assertUserVerificationAllows(
+	requireDiscoverableCredential: boolean,
+	userVerification: RegistrationUserVerification,
+): RegistrationUserVerification {
+	if (requireDiscoverableCredential && userVerification !== "required") {
+		throw new InvalidWebAuthnConfigError("discoverable_credential_without_user_verification");
+	}
+	return userVerification;
+}
+
 export function webAuthnSettingsOf(config: WebAuthnConfig): WebAuthnSettings {
 	if (config.relyingPartyName === "") {
 		throw new InvalidWebAuthnConfigError("relying_party_name_empty");
@@ -83,10 +114,15 @@ export function webAuthnSettingsOf(config: WebAuthnConfig): WebAuthnSettings {
 	if (config.origins.length === 0) {
 		throw new InvalidWebAuthnConfigError("origins_empty");
 	}
+	const requireDiscoverableCredential = discoverableCredentialRequired(config);
 	return {
 		relyingPartyId: assertRelyingPartyId(config.relyingPartyId),
 		relyingPartyName: config.relyingPartyName,
 		origins: config.origins.map(assertOrigin),
-		registrationUserVerification: config.userVerification ?? DEFAULT_REGISTRATION_USER_VERIFICATION,
+		registrationUserVerification: assertUserVerificationAllows(
+			requireDiscoverableCredential,
+			config.userVerification ?? DEFAULT_REGISTRATION_USER_VERIFICATION,
+		),
+		requireDiscoverableCredential,
 	};
 }

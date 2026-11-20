@@ -45,7 +45,7 @@ Velve Auth is a sign-in library for TypeScript and PostgreSQL that runs inside t
 
 **The runtime.** Pure TypeScript, no Rust/WASM module of its own, six dependencies without native bindings. Measured on 2 vCPU, so an order of magnitude rather than an absolute value: Argon2id at OWASP parameters costs 263 ms in JavaScript against 76 ms in WASM — but WASM fails in Cloudflare Workers on `Wasm code generation disallowed by embedder` and is untested on Caprock (ESTIMATE), and a Rust module of one's own would be only 1.6 times faster than off-the-shelf WASM, at the price of a second toolchain and an unauditable binary blob. The decisive finding: `@noble/hashes`, `hash-wasm` and a Rust WASI variant produce **byte-identical** Argon2id hashes. The compute engine is thereby exchangeable without touching a single stored hash.
 
-**The safeguarding.** 143 security requirements in nineteen error classes, each with at least one test case and a number fixed in advance as its threshold; 147 test cases, of which 128 block every commit. Fifteen of the 33 Better Auth advisories transfer directly to Velve Auth and are excluded by named requirements; eighteen are not applicable because the affected feature does not exist.
+**The safeguarding.** 144 security requirements in nineteen error classes, each with at least one test case and a number fixed in advance as its threshold; 148 test cases, of which 129 block every commit. Fifteen of the 33 Better Auth advisories transfer directly to Velve Auth and are excluded by named requirements; eighteen are not applicable because the affected feature does not exist.
 
 **Honestly named limits.** In the `username` configuration there is no reset by email — the library refuses to start there if no recovery codes are configured. Usernames are by definition enumerable as soon as an availability check is offered; that stands in the data sheet instead of being a silent gap in the code. The encrypted password storage means: key loss is password loss. Imported bcrypt hashes check only the first 72 bytes until the rehash has replaced them. A writer on the database who also has the root key has everything, and without the anchor from section 3.18 they can reset an account to an old, internally consistent state. And whether Node starts on Caprock and the chosen PostgreSQL driver works there is the only notable unverified assumption of the whole design.
 
@@ -57,8 +57,8 @@ Velve Auth is a sign-in library for TypeScript and PostgreSQL that runs inside t
 2. Language and runtime — the assessment, the measurements, the recommendation
 3. Target architecture — package structure, schema, sessions, verification path, identity, second factor, tokens, keys, rate limiting, third-party providers, plugins, public interface, error handling, decided gaps, integrity of the security state
 4. Migration module — five sources, per source schema, mapping, hash adoption, losses, follow-up work
-5. Security requirements — 143 requirements in nineteen error classes, with a coverage table of the 33 advisories
-6. Test plan — 147 test cases with thresholds fixed in advance
+5. Security requirements — 144 requirements in nineteen error classes, with a coverage table of the 33 advisories
+6. Test plan — 148 test cases with thresholds fixed in advance
 7. Decision log — E-01 to E-46, the initial stock for the case study
 
 The build brief lies separately as `CLAUDE-CODE-AUFTRAG.md`.
@@ -1535,6 +1535,35 @@ ALTER TABLE velve.pending_authentication
     CHECK ((new_password_phc IS NULL) = (new_password_key_version IS NULL));
 ```
 
+#### Registering a discoverable passkey
+
+Every registration — `factor.webauthn.register.*` in a session and the one at the end of a
+recovery to a new passkey (3.18) — requests `residentKey: "required"` (E-483) and the client
+extension `credProps`; `userVerification` is, in a session, what `webauthn.userVerification` says,
+and in the recovery always `"required"`. An application that offers only the discoverable passkey
+sign-in needs, beyond that, the certainty that the registered credential is discoverable: one that
+is not appears in no passkey sign-in, and nothing says so.
+
+`webauthn.requireDiscoverableCredential: true`, default `false`, therefore checks the result
+instead of the request (S-DEFAULT-8). After the complete check of the attestation — origin, RP ID,
+challenge, signature and the flag `UV`, which the option always demands — the registration accepts
+the credential only when `clientExtensionResults.credProps.rk` carries the value `true` as an own
+property. `rk: false`, a missing `rk`, a missing `credProps`, missing extension results and every
+other value are a refusal: in a session with `webauthn_credential_not_discoverable` (400), in the
+recovery with its uniform `passkey_recovery_failed` (S-ENUM-10). No refused registration writes a
+row in `velve.webauthn_credential` or `velve.passkey_recovery`. The registration in a session has
+then spent its challenge; the recovery's rolls back with its transaction and stays valid until it
+expires, link and code having been spent at the start already (E-3782). A configuration that
+combines the option with `userVerification: "preferred"`, or gives it a value that is no boolean,
+does not start (`InvalidWebAuthnConfigError`). Without the option nothing changes.
+
+`credProps` is an output of the client and signed by no authenticator. The check protects against
+a browser or authenticator that passes over the request for a discoverable credential or does not
+report what it created. It does not protect against a client that claims `rk: true`: whoever can
+do that is the holder themselves or already holds their session or recovery, and their credential
+behaves at sign-in the way their authenticator created it. A sign-in that asks for an address first
+is not added; the discoverable passkey sign-in remains the only one such an application offers.
+
 ### 3.7 One-time artefacts
 
 Every one-time artefact is a row with `sha256(token)` as the primary key,
@@ -2024,6 +2053,7 @@ interface WebAuthnConfig {
   relyingPartyId: string                        // the eTLD+1, e.g. "example.com"
   relyingPartyName: string; origins: readonly string[]
   userVerification: "required" | "preferred"
+  requireDiscoverableCredential?: boolean       // default false; only with "required", 3.6, S-DEFAULT-8
   recovery?: PasskeyRecoveryConfig              // turns the recovery on, B.11, 3.18
 }
 interface TotpConfig          { issuer: string; stepToleranceInSteps: 0 | 1 }  // default 1
@@ -2066,6 +2096,9 @@ string would force a second instance with the same `relyingPartyId`.
 `userVerification: "discouraged"` is absent, because a second factor without user verification
 is not one, and for discoverable passkey sign-in `"required"` always applies, as it does for the
 registration at the end of a recovery to a new passkey (3.18).
+`requireDiscoverableCredential: true` lets a registration count only when its client reports a
+discoverable credential, and demands `userVerification: "required"` (3.6, Registering a
+discoverable passkey).
 
 ---
 
@@ -2465,7 +2498,7 @@ the error column.
 | `factor.totp.remove` | session | **yes** | IP+account | `session_required`, `freshness_required`, `invalid_factor_code`, `factor_not_enrolled` |
 | `factor.totp.verify` | pending | — | IP+account | `invalid_pending_authentication`, `invalid_factor_code`, `too_many_factor_attempts` |
 | `factor.webauthn.register.start` | session | **yes** | IP | `session_required`, `freshness_required` |
-| `factor.webauthn.register.finish` | session | **yes** | IP | `session_required`, `freshness_required`, `webauthn_challenge_invalid`, `webauthn_credential_rejected` |
+| `factor.webauthn.register.finish` | session | **yes** | IP | `session_required`, `freshness_required`, `webauthn_challenge_invalid`, `webauthn_credential_rejected`, `webauthn_credential_not_discoverable` |
 | `factor.webauthn.authenticate.start` | pending | — | IP | `invalid_pending_authentication`, `factor_not_enrolled` |
 | `factor.webauthn.authenticate.finish` | pending | — | IP+account | `invalid_pending_authentication`, `webauthn_challenge_invalid`, `webauthn_credential_rejected`, `too_many_factor_attempts` |
 | `factor.webauthn.list`, `rename`, `factor.recovery.remaining`, `identity.list` | session | — | IP | `session_required` |
@@ -2905,6 +2938,7 @@ type VelveErrorCode =
   | "passkey_recovery_failed"
   | "oauth_flow_invalid" | "oauth_provider_error"
   | "webauthn_challenge_invalid" | "webauthn_credential_rejected"
+  | "webauthn_credential_not_discoverable"
   | "internal_error"
 
 class VelveError extends Error {
@@ -2914,7 +2948,7 @@ class VelveError extends Error {
 }
 ```
 
-29 codes, stable: a code disappears only at a major version jump, a new one arrives only with
+30 codes, stable: a code disappears only at a major version jump, a new one arrives only with
 a new route or a new refusal on an existing one.
 
 | Code | When | Status | Visible |
@@ -2947,6 +2981,7 @@ a new route or a new refusal on an existing one.
 | `oauth_provider_error` | Provider answers faultily or not at all | 502 | yes |
 | `webauthn_challenge_invalid` | Challenge unknown, expired, used for a foreign purpose | 400 | yes, **merged** |
 | `webauthn_credential_rejected` | Signature, RP ID, origin or verification wrong | 401 | yes, **merged** |
+| `webauthn_credential_not_discoverable` | With `webauthn.requireDiscoverableCredential`, the client of a registration in a session reports no discoverable credential (3.6) | 400 | yes |
 | `internal_error` | Everything else | 500 | yes, without details |
 
 ##### F.1 The deliberately indistinguishable cases
@@ -4715,6 +4750,7 @@ The research report records: "**every single one** would have been prevented by 
 - **S-DEFAULT-5:** A name conflict between two plugins or between a plugin and the core — route, table prefix or error code — leads to a start error and not to a warning. *(Section 3.11: "A name conflict is a start error, not a warning.")*
 - **S-DEFAULT-6:** The default parameters for Argon2id are `m = 19456` KiB, `t = 2`, `p = 1` with 32 bytes of output and 16 bytes of salt and can be changed only upwards; a configuration with weaker parameters leads to a start error, as does one above `m = 1048576` KiB, `t = 64` or `p = 64`. *(Section 3.3: "Default parameters for Argon2id … Configurable upwards.")*
 - **S-DEFAULT-7:** If the optional accelerator dependency `hash-wasm` is found, the Argon2id values it generates and checks are bit-identical with those of `@noble/hashes`; its presence or absence changes no security behaviour. *(Sections 2.1 and 2.7, `hash-wasm` as an optional peer dependency)*
+- **S-DEFAULT-8:** With `webauthn.requireDiscoverableCredential: true`, every registration of a passkey — `POST /factor/webauthn/register/*` in a session and `POST /passkey-recovery/start` and `/finish` at the end of a recovery — requests a discoverable credential with user verification (`residentKey: "required"`, `userVerification: "required"`, the extension `credProps`) and accepts it only when the checked attestation carries the flag `UV` and the extension result `credProps.rk` is `true` as an own property. Every other answer is refused, in a session with `webauthn_credential_not_discoverable`, in the recovery with `passkey_recovery_failed`, without a row arising in `velve.webauthn_credential` or `velve.passkey_recovery` and without spending more than the ceremony's challenge. A configuration that combines the option with `userVerification: "preferred"`, or gives it a value that is no boolean, leads to a start error; without the option nothing changes. *(Section 3.6, Registering a discoverable passkey; section 3.15 A.8)*
 
 ---
 
@@ -4827,9 +4863,9 @@ While this section and the test plan were being elaborated, thirteen gaps in the
 
 ## 6. Test plan
 
-To each of the 143 requirements from section 5 belongs a test case. The test ID carries the same class and the same number as the requirement: `T-OWNER-3` verifies `S-OWNER-3`. In addition there are four supplementary test cases that are not assigned to a single requirement but secure a class more broadly (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — in total **147 test cases** together.
+To each of the 144 requirements from section 5 belongs a test case. The test ID carries the same class and the same number as the requirement: `T-OWNER-3` verifies `S-OWNER-3`. In addition there are four supplementary test cases that are not assigned to a single requirement but secure a class more broadly (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — in total **148 test cases** together.
 
-**Columns.** *Kind* is one of six: `Unit`, `Integration`, `Property` (fast-check), `Statistical`, `Concurrency`, `Static` (lint rule, AST analysis, type check); combinations are given with `+`. *Threshold* is a number or a hard criterion — no test in this plan passes with "no errors". *Runs in* is one of three tiers: `CI on every commit` (128 test cases, plus the static part of T-RACE-2 and the part of T-INTEG-5 other than its timing part), `CI nightly` (15, plus the concurrency part of T-RACE-2 and the timing part of T-INTEG-5), `before every release` (2).
+**Columns.** *Kind* is one of six: `Unit`, `Integration`, `Property` (fast-check), `Statistical`, `Concurrency`, `Static` (lint rule, AST analysis, type check); combinations are given with `+`. *Threshold* is a number or a hard criterion — no test in this plan passes with "no errors". *Runs in* is one of three tiers: `CI on every commit` (129 test cases, plus the static part of T-RACE-2 and the part of T-INTEG-5 other than its timing part), `CI nightly` (15, plus the concurrency part of T-RACE-2 and the timing part of T-INTEG-5), `before every release` (2).
 
 **Principle of the tier assignment.** Everything deterministic blocks every commit. Everything statistical and everything that runs longer than 60 seconds runs nightly on a dedicated runner and reports as a ticket, not as a red build. The reason is in section 6.20.
 
@@ -5096,6 +5132,7 @@ soften the first, so it is declined.
 | T-DEFAULT-5 | S-DEFAULT-5 | Integration | Three kinds of conflict once each: plugin route against core route, table prefix of two plugins, error code of two plugins. | **3/3 start errors**; **0 warnings without an error** | CI on every commit |
 | T-DEFAULT-6 | S-DEFAULT-6 | Unit | Configurations with `m = 19456/t = 2/p = 1`, with higher values and with one lower value per parameter each. | The default and higher values start; **3/3 lower values** lead to a start error | CI on every commit |
 | T-DEFAULT-7 | S-DEFAULT-7 | Integration | Hash the same set of 20 passwords once with the `hash-wasm` dependency present and once with it missing, and check them crosswise. | **20/20 created PHC strings byte-for-byte equal**; every cross-check successful: **40/40** | before every release |
+| T-DEFAULT-8 | S-DEFAULT-8 | Unit + Integration | With the option, read the registration options in a session and in the recovery. Register in a session with `rk: true`, `rk: false`, without `rk`, without `credProps`, without extension results, with `rk` as a string and with an inherited `rk`, and with `rk: true` without the flag `UV`, and present every refused challenge again with `rk: true`. Finish the recovery with `rk: false` and without `UV`, then the same challenge with `rk: true`. Without the option, register without extension results. Start with the option and `userVerification: "preferred"`, and with a value that is no boolean. | Options in **2/2** ceremonies with `residentKey: "required"`, `userVerification: "required"` and `credProps: true`; **exactly 1** acceptance with `rk: true`, every other answer **400** `webauthn_credential_not_discoverable`, without `UV` `webauthn_credential_rejected`, the challenge presented again `webauthn_challenge_invalid`; in the recovery **2/2** refusals with a **byte-identical** body `passkey_recovery_failed` as for an unknown challenge, then the same challenge accepted; **0** rows per refused registration; without the option accepted; **2/2** starts refused, **0** weakening reports for the option turned on | CI on every commit |
 
 ---
 
@@ -5228,7 +5265,7 @@ For a one-person team this is **not** worth it **on the whole estate**: a Stryke
 - **Target: mutation score ≥ 85 % on this section**, measured **before every release**, not on every commit.
 - **The value for a one-person team is not the number but the list of surviving mutants.** It is a work list of missing assertions and replaces the code review by a second person at exactly the place where such a review would be worth the most.
 
-**Coverage is not a security measure.** The 147 test cases of this plan are the security measure; the coverage number is only the warning light that shows that a new branch has been added without a test case. No test case of this plan may be dropped with the argument "the coverage is fine, after all".
+**Coverage is not a security measure.** The 148 test cases of this plan are the security measure; the coverage number is only the warning light that shows that a new branch has been added without a test case. No test case of this plan may be dropped with the argument "the coverage is fine, after all".
 
 ---
 
