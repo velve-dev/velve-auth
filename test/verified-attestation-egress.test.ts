@@ -3,6 +3,7 @@ import { decodeAttestationObject } from "@simplewebauthn/server/helpers";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { Actor } from "../src/core/db/actor.js";
 import type { Driver } from "../src/core/db/driver.js";
+import { attestationObjectToVerify } from "../src/core/factor/webauthn/attestation.js";
 import {
 	createWebAuthnService,
 	type WebAuthnService,
@@ -20,11 +21,13 @@ import {
 import { ORIGIN, RELYING_PARTY_ID, TEST_WEBAUTHN_CONFIG } from "./webauthn-fixtures.js";
 
 /**
- * S-INTEG-13 and E-3854: whatever format a client claims, a certificate it sends that names a
- * revocation list is refused before `@simplewebauthn/server` sees it, so no registration makes the
- * server reach a host the client chose. Each format whose verifier validates a chain is claimed in
- * turn — `x5c` in the statement, and the chain in the JWS header of `android-safetynet` — with and
- * without `webauthn.attestation`; the same chain without a distribution point is not refused here.
+ * S-INTEG-13, E-3854 and E-3855: whatever format a client claims, an attestation whose chain names
+ * a revocation list reaches `@simplewebauthn/server` as format `none` with an empty statement and
+ * the authenticator data byte for byte, so no registration makes the server reach a host the
+ * client chose and the credential registers unattested. Each format whose verifier validates a
+ * chain is claimed in turn — `x5c` in the statement, and the chain in the JWS header of
+ * `android-safetynet` — with and without `webauthn.attestation`; the same chain without a
+ * distribution point reaches the format's own verifier unchanged.
  */
 
 const AAGUID = "2fc0579f-8113-47ea-b116-bb5a8db9202a";
@@ -146,13 +149,13 @@ async function registrationClaiming(
 		},
 	};
 	try {
-		await service.register.finish({
+		const { credential } = await service.register.finish({
 			actor,
 			challengeToken: started.challengeToken,
 			response: claimed,
 			label: "key",
 		});
-		return "resolved";
+		return credential.attestationVerified ? "registered attested" : "registered unattested";
 	} catch (cause) {
 		return {
 			reason: cause instanceof ConcealedError ? cause.reason : "other",
@@ -172,7 +175,42 @@ async function createAccount(): Promise<Actor> {
 	return actorOfTestUser(row.id);
 }
 
+function randomBytesOf(length: number): Uint8Array {
+	return crypto.getRandomValues(new Uint8Array(length));
+}
+
 const FORMATS = ["packed", "fido-u2f", "android-key", "apple", "tpm", "android-safetynet"] as const;
+
+describe("the object the verifier is given (E-3855)", () => {
+	it("changes only the format and the statement and carries the authenticator data byte for byte", async () => {
+		const identity = await authority.issue({ aaguid: AAGUID, revocationListUrl: LIST_URL });
+		const authData = Uint8Array.from(randomBytesOf(180));
+		const sent = attestationObjectOf("packed", authData, identity.chain);
+		const given = decodeAttestationObject(
+			Uint8Array.from(Buffer.from(attestationObjectToVerify(sent), "base64url")),
+		) as unknown as Map<string, unknown> & ReturnType<typeof decodeAttestationObject>;
+		expect([...given.keys()]).toStrictEqual(["fmt", "attStmt", "authData"]);
+		expect(given.get("fmt")).toBe("none");
+		expect(given.get("attStmt").size).toBe(0);
+		expect(Buffer.from(given.get("authData")).equals(Buffer.from(authData))).toBe(true);
+		const clean = attestationObjectOf(
+			"packed",
+			authData,
+			(await authority.issue({ aaguid: AAGUID })).chain,
+		);
+		expect(attestationObjectToVerify(clean)).toBe(clean);
+	});
+
+	it("refuses what it cannot read strictly instead of passing it on", () => {
+		for (const unreadable of [
+			42,
+			"not base64url!",
+			attestationObjectOf("android-safetynet", new Uint8Array(37), [new Uint8Array([1, 2, 3])]),
+		]) {
+			expect(() => attestationObjectToVerify(unreadable)).toThrow(ConcealedError);
+		}
+	});
+});
 
 describe("no format reaches the network (S-INTEG-13, E-3854)", () => {
 	for (const [where, service] of [
@@ -180,7 +218,7 @@ describe("no format reaches the network (S-INTEG-13, E-3854)", () => {
 		["without webauthn.attestation", () => unconfigured],
 	] as const) {
 		for (const format of FORMATS) {
-			it(`refuses ${format} with a chain naming a revocation list before verifying it, ${where}`, async () => {
+			it(`registers ${format} with a chain naming a revocation list unattested and fetches nothing, ${where}`, async () => {
 				const fetched = vi
 					.spyOn(globalThis, "fetch")
 					.mockImplementation(() => Promise.reject(new Error("no network in a test")));
@@ -191,10 +229,7 @@ describe("no format reaches the network (S-INTEG-13, E-3854)", () => {
 						format,
 						LIST_URL,
 					);
-					expect(outcome).toEqual({
-						reason: "attestation_names_a_revocation_list",
-						visible: "webauthn_credential_rejected",
-					});
+					expect(outcome).toBe("registered unattested");
 					expect(fetched).not.toHaveBeenCalled();
 				} finally {
 					fetched.mockRestore();
@@ -215,10 +250,10 @@ describe("no format reaches the network (S-INTEG-13, E-3854)", () => {
 					format,
 					undefined,
 				);
-				expect(outcome, format).not.toMatchObject({
-					reason: "attestation_names_a_revocation_list",
+				expect(outcome, format).toEqual({
+					reason: "signature_invalid",
+					visible: "webauthn_credential_rejected",
 				});
-				expect(outcome, format).not.toMatchObject({ reason: "attestation_unreadable" });
 			}
 			expect(fetched).not.toHaveBeenCalled();
 		} finally {

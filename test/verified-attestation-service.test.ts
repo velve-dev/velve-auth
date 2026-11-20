@@ -259,28 +259,29 @@ describe("which attestation counts as verified (S-INTEG-13)", () => {
 		expect(credential.attestationVerified).toBe(false);
 	});
 
-	it("refuses a chain naming a revocation list before verification and never fetches it", async () => {
+	it("registers a chain naming a revocation list as unattested, never fetches it, and a list refuses it", async () => {
 		const fetched = vi.spyOn(globalThis, "fetch");
 		try {
-			const actor = await createAccount(bench);
-			const failure = await failureOf(
-				register(
-					bench,
-					actor,
-					await authenticatorWith(ALLOWED, {
-						kind: "packed",
-						identity: await authority.issue({
-							aaguid: ALLOWED,
-							revocationListUrl: "http://127.0.0.1:9/never.crl",
-						}),
+			const naming = async () =>
+				authenticatorWith(ALLOWED, {
+					kind: "packed",
+					identity: await authority.issue({
+						aaguid: ALLOWED,
+						revocationListUrl: "http://127.0.0.1:9/never.crl",
 					}),
-				),
-			);
-			expect(failure).toEqual({
-				reason: "attestation_names_a_revocation_list",
-				visible: "webauthn_credential_rejected",
+				});
+			const actor = await createAccount(bench);
+			const device = await naming();
+			const { credential } = await register(bench, actor, device);
+			expect(credential.attestationVerified).toBe(false);
+			expect((await signIn(bench, device)).userId).toBe(actor);
+			const listed = await createAccount(bench);
+			await limit(bench, listed, [ALLOWED], true);
+			expect(await failureOf(register(bench, listed, await naming()))).toEqual({
+				reason: "authenticator_not_allowed",
+				visible: "authenticator_not_allowed",
 			});
-			expect(await rowsOf(bench, actor)).toBe(0);
+			expect(await rowsOf(bench, listed)).toBe(0);
 			expect(fetched).not.toHaveBeenCalled();
 		} finally {
 			fetched.mockRestore();
