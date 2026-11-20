@@ -3616,7 +3616,7 @@ code on it rather than one class per failure.
 | Code | Raised when |
 |---|---|
 | `one_time_token_owner_unknown` | the account the token would belong to does not exist — it was deleted between whatever resolved it and this call |
-| `one_time_token_purpose_unknown` | the purpose is not one of the four; only reachable from a caller that is not type-checked |
+| `one_time_token_purpose_unknown` | the purpose is not one of the five; only reachable from a caller that is not type-checked |
 | `one_time_token_not_written` | the insert reported no row, which is a broken invariant rather than a caller error |
 
 The first two are guards standing in front of the driver: without them the
@@ -3626,7 +3626,7 @@ name out of the library. The purpose guard runs before any statement, so an
 unknown purpose reaches no driver; the account guard runs on the lock, which has
 already read the row it needs. Messages are fixed per code, so nothing a caller
 passed can reach an error string. What the failure was about travels beside the
-code in `purpose`, which is one of the four or `null` for the one code that fires
+code in `purpose`, which is one of the five or `null` for the one code that fires
 because the purpose was not one of them (E-129, E-265). All three become
 `internal_error` over HTTP.
 
@@ -6741,7 +6741,7 @@ directly, for a caller that is not a browser.
 ## Plugins
 
 Architecture 3.11 and 3.15 G: the registry, the
-topological sort over `dependsOn`, the frozen context, the eight enumerated hook
+topological sort over `dependsOn`, the frozen context, the nine enumerated hook
 points and the veto a hook holds, and what a plugin may contribute — routes under
 `/x/<plugin-id>/…`, tables prefixed `<plugin-id>_`, error codes, rate-limit rules
 and its own dependency declaration, which is how 3.11's first list reads. Also
@@ -6930,7 +6930,7 @@ short of `Object.prototype`. A plugin written as a **class** carries its methods
 on a prototype, which is the most ordinary way to write one — and it was accepted
 while `Object.keys` was what looked. `constructor` is the one name skipped,
 because every prototype carries it and nothing here reads it. The same reading is
-applied to `hooks`, so a hooks object written as a class is held to the eight
+applied to `hooks`, so a hooks object written as a class is held to the nine
 points as well.
 
 A field the interface **does** declare and this version does not read was a
@@ -8022,7 +8022,7 @@ the route's name.
 
 ### Not built here
 
-- **A hook point with no producer** does not run, and [the table above](#which-points-have-a-producer) is where that is said — one cell per point, so a feature that gives one its first producer flips a cell and never a count. All eight have a producer now. What the session points do not yet reach — the two password resets and the re-issue on a credential change — is stated in [the sign-in, session and user points](#the-sign-in-session-and-user-points).
+- **A hook point with no producer** does not run, and [the table above](#which-points-have-a-producer) is where that is said — one cell per point, so a feature that gives one its first producer flips a cell and never a count. All nine have a producer now. What the session points do not yet reach — the two password resets and the re-issue on a credential change — is stated in [the sign-in, session and user points](#the-sign-in-session-and-user-points).
 - **A plugin cannot roll a migration back.** There is no `down`, and removing a
   plugin from the configuration leaves its tables and its ledger rows standing.
   Dropping them is the application's to do, by hand — or the plugin's, in a
@@ -8062,7 +8062,7 @@ if (!answer.ok) {
 
 The `switch` is exhaustive and the compiler checks it, because `answer.error.code`
 is narrowed to the codes **that route** declares and not to the union of all
-twenty-five.
+twenty-nine.
 
 A call returns a result rather than throwing, and the asymmetry with the server
 is on purpose: on the server a call sits in a request handler with a central
@@ -8181,7 +8181,7 @@ try {
 ```
 
 `VelveError` rebuilds its message from its own copy of the error table rather
-than from the wire. For the twenty-five core codes the two are the same table and
+than from the wire. For the twenty-nine core codes the two are the same table and
 the strings are identical; for a code this build of the package does not know,
 `unwrap` throws with `internal_error`'s message and the response's status is
 lost. The un-unwrapped path always keeps what the server said, in
@@ -10781,7 +10781,7 @@ afterEmailChange?: (event: EmailChangedEvent, context: FrozenContext) => Promise
 interface EmailChangedEvent { readonly userId: string }
 ```
 
-The eighth hook point of [`PluginHooks`](#the-eight-hook-points), for an
+The eighth hook point of [`PluginHooks`](#the-nine-hook-points), for an
 application that writes its own notification or its own audit entry. The event
 carries **only the account id** — neither the previous nor the new address. A
 hook that needs the new one reads the account through
@@ -11010,8 +11010,8 @@ The flow, from the user's side:
    is told that the recovery completed.
 
 During the waiting period every session of the account can see the pending
-recovery and a fresh one can cancel it, because the mailbox the recovery went
-through may be the attacker's.
+recovery and cancel it, because the mailbox the recovery went through may be the
+attacker's.
 
 ### `webauthn.recovery` — turning it on
 
@@ -11056,7 +11056,9 @@ administrator. Its answer is clamped (E-3764):
 
 `LONGEST_PASSKEY_RECOVERY_WAIT_IN_SECONDS` is the upper bound, `2_592_000`,
 exported from `@velve/auth`. A function that throws fails the registration with
-`500 internal_error` before anything is written.
+`500 internal_error` before anything is written: the challenge is spent in the
+same transaction and rolls back with it, so the same registration finishes once
+the function answers (E-3782).
 
 The routes mount only when `webauthn.recovery` is set, `email` is configured and
 the identity mode has an address. A configuration the start cannot run refuses
@@ -11073,7 +11075,7 @@ begins a recovery.
 | `POST /passkey-recovery/start` | `auth.passkeyRecovery.start({ token, recoveryCode })` | — | — | address + account | `WebAuthnRegistrationChallenge`, or `400 passkey_recovery_failed` |
 | `POST /passkey-recovery/finish` | `auth.passkeyRecovery.finish({ challengeToken, response, label })` | — | — | address | `FinishPasskeyRecoveryResult`, or `400 passkey_recovery_failed` |
 | `GET /passkey-recovery` | `auth.passkeyRecovery.pending()` | session | — | address | `PendingPasskeyRecovery \| null` |
-| `POST /passkey-recovery/cancel` | `auth.passkeyRecovery.cancel()` | session | **yes** | address | `204` |
+| `POST /passkey-recovery/cancel` | `auth.passkeyRecovery.cancel()` | session | — | address | `204` |
 
 Each method takes the six call fields beside its own input, like every server
 method built from a route (`origin` required). `PasskeyRecoveryNamespace` is the
@@ -11174,11 +11176,15 @@ reports the recovery, until its next use activates it (E-3775).
 
 ### `auth.passkeyRecovery.cancel()`
 
-Cancels the pending recovery with a **fresh** session (`freshness_required`
-otherwise, E-3777). Cancelling discards the held passkey and nothing else: the
-spent link and the spent recovery code stay spent, and the account's
-credentials and sessions are untouched. With no recovery pending it answers
-`204` and does nothing.
+Cancels the pending recovery with **any valid session** of the account, fresh
+or not, because an owner whose passkey was lost may have no way to sign in again
+(E-3780, which replaces E-3777's freshness). It is still a state-changing route:
+the origin check and the address bucket apply. Cancelling discards the held
+passkey and every recovery challenge of the account still open, so a second
+start issued before the cancel cannot finish a registration after it (E-3781).
+Nothing else changes: the spent link and the spent recovery code stay spent, and
+the account's credentials and sessions are untouched. With no recovery pending it
+answers `204` and voids any open challenge.
 
 A cancel that arrives after `activatesAt` activates the recovery instead, and
 answers `401 session_required`, because the activation ended its session.
@@ -11288,9 +11294,9 @@ recovered (E-3774):
 
 The held passkey, its activation time and the generation of the purpose
 `passkey_recovery` are part of the account's seal (`S-INTEG-12`). A writer of
-the database without the root key who shortens the waiting period, moves the row
-to another account, plants a recovery or puts back one that was cancelled breaks
-the state: every check refuses and raises the alarm, and the held passkey never
+the database without the root key who shortens the waiting period — to
+`-infinity` or `infinity` too (E-3779) — moves the row to another account, plants
+a recovery or puts back one that was cancelled breaks the state: every check refuses and raises the alarm, and the held passkey never
 activates.
 
 `maintenance.resealSecurityState` reports a held recovery in the new field
