@@ -141,7 +141,7 @@ CI runs the whole test suite against 14 and against 16 on every push. 15, 17 and
 ## Schema
 
 Everything lives in its own PostgreSQL schema, `velve` by default, so nothing
-collides with the application's own tables. Seventeen tables.
+collides with the application's own tables. Eighteen tables.
 
 `user` is a reserved word in SQL, but `velve.user` is valid without quoting
 because PostgreSQL accepts any keyword after the dot. No statement in this
@@ -152,7 +152,7 @@ tokens, challenges, recovery codes. What it needs in cleartext is encrypted —
 the TOTP secret, third-party OAuth tokens, the PKCE verifier, the PHC string.
 Passwords are derived with a KDF. Nothing confidential is in cleartext.
 
-**The schema.** Seventeen tables in their own PostgreSQL schema, `velve` by
+**The schema.** Eighteen tables in their own PostgreSQL schema, `velve` by
 default. The SQL is shipped as files under `migrations/`, so it can be read,
 reviewed and applied with your own tooling; the library carries the same text
 and never reads a file at run time.
@@ -385,6 +385,20 @@ Legacy hashes that could not be carried over.
 | `detail` | `text` | for example `clerk:phpass` |
 | `created_at` | `timestamptz` | |
 
+### `velve.passkey_recovery`
+
+The new passkey a recovery holds back until its activation time, at most one row
+per account, added by migration 7. No sign-in path reads this table; see
+[Recovery to a new passkey](#recovery-to-a-new-passkey).
+
+| Column | Type | Notes |
+|---|---|---|
+| `user_id` | `uuid` | primary key, cascades from `velve.user` |
+| `credential_id` | `bytea` | unique; refused where a credential or another recovery already has it |
+| `public_key`, `sign_count`, `transports`, `aaguid`, `backup_eligible`, `backup_state`, `user_verified_at_registration`, `label` | | as in `velve.webauthn_credential`, moved there unchanged by the activation |
+| `created_at` | `timestamptz` | when the passkey was registered |
+| `activates_at` | `timestamptz` | when it may replace every other way in, by the database clock; sealed in whole microseconds |
+
 ### `velve.security_state`
 
 One seal per account, added by migration 3 (architecture section 3.18). What
@@ -403,6 +417,7 @@ the seal covers and when it is written and checked is in
 | `attempt_generation`, `attempt_last` | `bigint`, `bytea` | the generation drawn anew by every booked second-factor attempt, default 1, and the `token_sha256` of the pending row whose booking drew it, or null |
 | `email_verify_generation`, `password_reset_generation`, `email_change_generation`, `magic_link_generation` | `bigint` | one generation per one-time token purpose, default 1, drawn anew by every redemption of that purpose that takes effect |
 | `token_last` | `bytea` | the `token_sha256` of the one-time token whose redemption drew a generation last, or null |
+| `passkey_recovery_generation` | `bigint` | the generation of the fifth purpose, `passkey_recovery`, default 1; added by migration 7 and sealed only once it is not 1 ([Recovery to a new passkey](#recovery-to-a-new-passkey)) |
 | `sealed_at` | `timestamptz` | when the row was last written |
 
 ### `velve.schema_migration`
@@ -437,9 +452,10 @@ the two byte for byte.
 | `0004_token_mac.sql` | 4 | locks the four token tables, deletes every session, one-time token, pending authentication and WebAuthn challenge, and adds `token_mac` and an indexed `token_mac_key_version` to the four tables; stop every 1.x instance first, and rerun it if PostgreSQL aborted it with a deadlock against a 1.x request still in flight |
 | `0005_pending_password_reset.sql` | 5 | adds the nullable `new_password_phc` and `new_password_key_version` to `velve.pending_authentication`, with the constraint `pending_authentication_new_password_whole` that sets both or neither; rewrites no row, so nobody is signed out and no pending state ends |
 | `0006_recovery_disabled.sql` | 6 | adds the nullable `recovery_disabled_at` to `velve.user`, the [no-recovery switch](#the-no-recovery-switch); rewrites no row, so nobody is signed out and no seal changes |
+| `0007_passkey_recovery.sql` | 7 | adds `passkey_recovery_generation` with default 1 to `velve.security_state` and the table `velve.passkey_recovery`, the [recovery to a new passkey](#recovery-to-a-new-passkey); rewrites no row, so nobody is signed out and no seal changes |
 
 Exactly one of the three version-2 files is applied — the one matching the
-configured identity mode. Migrations 3 to 6 are the same in every mode; migration 4
+configured identity mode. Migrations 3 to 7 are the same in every mode; migration 4
 signs every user out, because no existing token row carries the MAC it adds. Changing the mode of a database that has already
 migrated is a schema change of its own; the runner will report the recorded
 migration 2 as changed rather than silently swapping the constraint.
@@ -1345,9 +1361,10 @@ There is one exception to the missing-header rule, because browsers send no
 `Origin` on a same-origin `fetch` GET. A request with no `Origin` header is
 accepted when all three of these hold:
 
-- the route is one of the seven reading `GET` routes of S-CSRF-4: `/session`,
+- the route is one of the eight reading `GET` routes of S-CSRF-4: `/session`,
   `/session/list`, `/username/available`, `/factor/webauthn/list`,
-  `/factor/recovery/remaining`, `/identity/list` and `/pending`;
+  `/factor/recovery/remaining`, `/identity/list`, `/pending` and
+  `/passkey-recovery`;
 - the request came through the web handler;
 - it carries `Sec-Fetch-Site: same-origin`, exactly. A page script cannot set
   this header, and the browser sends that value only when the calling page's
@@ -1583,7 +1600,7 @@ would keep it.
 
 The method throws where the client returns a result (3.15 E), and it throws
 exactly what a request would have answered: a `VelveError` carrying one of the
-28 codes, mapped and logged by the same code as the HTTP path. An application
+29 codes, mapped and logged by the same code as the HTTP path. An application
 that catches it and forwards `error.code` into its own response publishes
 nothing the HTTP answer would not have published.
 
@@ -1706,7 +1723,7 @@ the second.
 
 ### Error codes
 
-Every failure of the core carries one of 28 stable codes. The status, the
+Every failure of the core carries one of 29 stable codes. The status, the
 message and the mapping from internal reason to visible code live in
 `src/core/http/error-map.ts`, and no other module decides what a caller sees. A
 plugin adds codes of its own without widening that union; they are described
@@ -1728,6 +1745,7 @@ under [A plugin's own codes](#a-plugins-own-codes) below.
 | `too_many_factor_attempts` | 429 | `username_invalid` | 400 |
 | `internal_error` | 500 | `passkey_limit_reached` | 409 |
 | `identity_limit_reached` | 409 | `recovery_disabled` | 409 |
+| `passkey_recovery_failed` | 400 | | |
 
 This table is the whole of `VelveErrorCode`. It does not list a plugin's codes,
 which are not part of that union and are resolved separately.
@@ -5435,7 +5453,7 @@ The difference from a rollback is one window: a process that dies between the
 commit and the compensation leaves a live artefact whose message never arrived.
 It expires on its own deadline like any other.
 
-### The seven message kinds
+### The ten message kinds
 
 Declared in the configuration chapter as `EmailMessage`. Which flow sends which:
 
@@ -5446,8 +5464,11 @@ Declared in the configuration chapter as `EmailMessage`. Which flow sends which:
 | `email_change` | `email.requestChange` | yes |
 | `magic_link` | `signIn.magicLink.request`, known address | yes |
 | `sign_up_attempt_on_existing_account` | sign-up on a taken address | **no** |
-| `request_for_unknown_address` | reset or magic link, unknown address | **no** |
+| `request_for_unknown_address` | reset, magic link or recovery to a new passkey, unknown address or an account that turned recovery off; `requested` names which | **no** |
 | `email_change_notice` | `email.redeemChange`, to the previous address, after the change has committed — see [The address change notice](#the-address-change-notice) | **no** |
+| `passkey_recovery` | `passkeyRecovery.request`, known address — see [Recovery to a new passkey](#recovery-to-a-new-passkey) | yes |
+| `passkey_recovery_started` | `passkeyRecovery.finish` with a waiting period, after the commit; carries `activatesAt` | **no** |
+| `passkey_recovery_completed` | the activation of a recovery, after the commit | **no** |
 
 The fifth carries no token on purpose, and that satisfies `S-ENUM-4` rather
 than deviating from it: the library builds no URL on any path, so the
@@ -6116,7 +6137,7 @@ compile (E-349).
 | `rateLimit` | `Partial<RateLimitConfig>` | 30 @ 1 per 2 s per address, 5 @ 1 per 300 s per account | bucket sizes and the alert callback |
 | `email` | `EmailConfig` | — | the send callback; required in `"email"` and `"username_email"` |
 | `oauth` | `OAuthConfig` | none | the providers, `trustedProviders` and `storeTokens`; declared in `core/oauth/config.ts` and read by no route yet |
-| `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register: their routes join the table, their hooks are dispatched at the eight points — [the table says which of them have a producer](#which-points-have-a-producer) — and six ways of configuring them wrongly refuse the start |
+| `plugins` | `readonly VelvePlugin[]` | `[]` | the plugins to register: their routes join the table, their hooks are dispatched at the nine points — [the table says which of them have a producer](#which-points-have-a-producer) — and six ways of configuring them wrongly refuse the start |
 | `webauthn` | `WebAuthnConfig` | none | the relying party; its absence removes the WebAuthn routes |
 | `totp` | `Partial<TotpConfig>` | tolerance 1 step | issuer name and tolerance window; the tolerance reaches the code comparison |
 | `recoveryCodes` | `RecoveryCodesConfig` | 10 codes in groups of 5; **required** in `"username"` | how many codes and in what grouping; both reach the generator |
@@ -6162,7 +6183,7 @@ nothing else would tell you.
 | `plugin_id_duplicated` | two plugins claim the same `id` |
 | `plugin_dependency_missing` | a `dependsOn` names a plugin that is not configured |
 | `plugin_dependency_cycle` | the `dependsOn` graph has a cycle (3.11) |
-| `plugin_route_conflict` | a plugin route collides with a core route or with another plugin's, or the plugin's `id` or a route name's first segment is one of the twenty namespaces 3.15 B gives the instance |
+| `plugin_route_conflict` | a plugin route collides with a core route or with another plugin's, or the plugin's `id` or a route name's first segment is one of the twenty-one namespaces 3.15 B gives the instance |
 | `plugin_field_unknown` | a plugin carries a field the interface does not enumerate, at the top level or among `hooks` |
 | `plugin_anchor_incomplete` | a plugin's `securityStateAnchor` is not an object carrying the functions `recordSeal` and `minimumVersion` (E-3174) |
 | `plugin_route_reads_a_core_cookie` | a plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` |
@@ -6188,7 +6209,7 @@ through the optional field rather than by branching on the code first.
 
 `claimed` is what the two sides both claimed, in the form the collision was
 found in: a route name (`session.list`), a folded method and path
-(`POST /sign-out`), or one of the twenty surface namespaces of 3.15 B
+(`POST /sign-out`), or one of the twenty-one surface namespaces of 3.15 B
 (`session`). `contributors` is the two of them, in a fixed order: the side that
 already held the claim first, and the side that arrived second. A plugin appears
 under its own `id`; the library appears as `THE_CORE`, which is exported beside
@@ -6358,6 +6379,7 @@ none either; see
 | `auth.user` | `findById`, `findByEmail` (only in `"email"` and `"username_email"`), `findByUsername` (only in `"username"` and `"username_email"`), `disable`, `enable`, `disableRecovery`, `enableRecovery` ([The no-recovery switch](#the-no-recovery-switch)), `delete` |
 | `auth.username` | `isAvailable`, `change` — present only in `"username"` and `"username_email"` |
 | `auth.oneTimeToken` | `resolve` — present only in `"email"` and `"username_email"`; no route, see [Resolving a one-time token](#resolving-a-one-time-token) |
+| `auth.passkeyRecovery` | `request`, `start`, `finish`, `pending`, `cancel` — present only in `"email"` and `"username_email"` and only with `webauthn.recovery`, see [Recovery to a new passkey](#recovery-to-a-new-passkey) |
 
 Every method reached through a route takes the six call fields beside its own
 input: `origin` (required, `string | null`), `sessionToken`, `pendingToken`,
@@ -6731,7 +6753,7 @@ may add can only be read after the chapter that says what it is added to and wha
 happens when the addition is refused. Its migrations are the same versioned
 runner, which stands further above still.
 
-The registry, the frozen context and the eight hook points are built, and so is
+The registry, the frozen context and the nine hook points are built, and so is
 everything the three declared fields promise: a plugin's migrations run, its
 error codes answer, and its rate-limit rules replace the ones its routes
 declare. What is still not built is listed at the end of this chapter.
@@ -6824,7 +6846,7 @@ migration, and removing a plugin leaves its tables where they are.
 | `dependsOn` | `readonly string[]?` | Ids this plugin must run after. Sorted topologically at start. |
 | `migrations` | `readonly PluginMigration<Id>[]?` | Run by the same versioned runner the core's use, under a ledger of the plugin's own; see below. |
 | `routes` | `readonly PluginRoute<Id>[]?` | Route *declarations*. The registry passes each to `defineRoute`, so a plugin route reaches the table through the same constructor and the same checks as a core route. Three fields of the core declaration are **absent** from it and a fourth is narrowed to one value: see below. |
-| `hooks` | `PluginHooks?` | Any of the eight points below. |
+| `hooks` | `PluginHooks?` | Any of the nine points below. |
 | `errorCodes` | `readonly \`${Id}.${string}\`[]?` | The codes this plugin's routes may answer with. Each answers `400` with the library's own message; see below. |
 | `rateLimitRules` | `Readonly<Record<\`${Id}.${string}\`, RateLimitRule>>?` | A rule per route name, which **replaces** the `rateLimit` that route declares. The key must name a route this plugin contributes. |
 | `securityStateAnchor` | `SecurityStateAnchor?` | An anchor for the security state, which learns every new seal and sets a floor under its version (3.18). Not a hook point; see [`securityStateAnchor`](#securitystateanchor). |
@@ -6843,7 +6865,7 @@ route. All but one are decided when `createVelveAuth` runs;
 | `plugin_table_prefix_conflict` | One plugin's `id` is another's table prefix — `audit` and `audit_trail` — so `audit_trail_entry` belongs to both of them (S-DEFAULT-5). |
 | `plugin_dependency_missing` | A `dependsOn` names a plugin that is not configured, so nothing can order the two. |
 | `plugin_dependency_cycle` | The `dependsOn` graph has a cycle, which has no topological order (3.11). |
-| `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route or with another plugin's, or the plugin's `id` — or the first segment of one of its route names — is one of the twenty namespaces 3.15 B gives the instance. Those twenty are a list, `SURFACE_NAMESPACES` in `instance.ts`, and reading the built surface instead released five of them (E-779). |
+| `plugin_route_conflict` | A plugin route's name or its `METHOD path` collides with a core route or with another plugin's, or the plugin's `id` — or the first segment of one of its route names — is one of the twenty-one namespaces 3.15 B gives the instance. Those twenty-one are a list, `SURFACE_NAMESPACES` in `instance.ts`, and reading the built surface instead released five of them (E-779). |
 | `plugin_field_unknown` | The plugin carries a field the interface does not enumerate — at the top level or among `hooks`. |
 | `plugin_anchor_incomplete` | `securityStateAnchor` is `null`, not an object, or lacks a function `recordSeal` or `minimumVersion`. An anchor that cannot be asked would refuse every check, so it refuses the start instead (E-3174). |
 | `plugin_route_reads_a_core_cookie` | A plugin route declares `caller: "pending"`, `pendingCookie` or `oauthStateCookie` — as an own property or on a prototype. |
@@ -7288,7 +7310,7 @@ enumerates four.
 
 **Every field is now read once**, at the start, into a plain object nothing else
 can reach: the id, the dependencies, each migration's four fields, each route's
-ten, the eight hook points, the error codes and the rate-limit map. Every check
+ten, the nine hook points, the error codes and the rate-limit map. Every check
 below reads that object, and so do the route table, the migration runner and the
 hook dispatcher. There is one read and one value.
 
@@ -7299,7 +7321,7 @@ prototype still reaches the route the way it did before — which is what the
 copied, so a plugin that mutates its own declaration after `createVelveAuth`
 returns changes nothing that runs.
 
-### The eight hook points
+### The nine hook points
 
 ```ts
 beforeSignIn(event: SignInEvent, context: FrozenContext): Promise<void>
@@ -7310,6 +7332,7 @@ beforeUserCreate(event: UserCreateEvent, context: FrozenContext): Promise<void>
 afterUserCreate(event: UserCreatedEvent, context: FrozenContext): Promise<void>
 beforeSessionRevoke(event: SessionRevokeEvent, context: FrozenContext): Promise<void>
 afterEmailChange(event: EmailChangedEvent, context: FrozenContext): Promise<void>
+afterPasskeyRecoveryStart(event: PasskeyRecoveryStartedEvent, context: FrozenContext): Promise<void>
 ```
 
 Every return type is `Promise<void>`, and that is the whole of what "a listener
@@ -7325,7 +7348,7 @@ answers `500 internal_error` without the plugin's text.
 
 #### Which points have a producer
 
-The dispatcher runs all eight and the paragraph above describes all eight, but a
+The dispatcher runs all nine and the paragraph above describes all nine, but a
 point only fires if an operation reaches it. **This table is the one place that
 says which do**, and a plugin registering a point that does not is told nothing
 at start.
@@ -7340,6 +7363,7 @@ at start.
 | `afterUserCreate` | **yes** |
 | `beforeSessionRevoke` | **yes** |
 | `afterEmailChange` | **yes** |
+| `afterPasskeyRecoveryStart` | **yes** |
 
 Which operations reach a point is stated in the chapter of the feature that
 built them; `beforeSessionRevoke`'s are named below. **The cell is a yes or
@@ -7491,6 +7515,7 @@ that revokes under a named reason announces:
 | `password_changed` | `password.change`, `password.set` | every session of the account, the caller's included | inside the transaction, after the account row is locked |
 | `password_reset` | `password.redeemReset`, `password.redeemResetWithRecoveryCode` | every session of the account | inside the transaction, after the account row is locked |
 | `identity_linked` | the OAuth callback finishing a link | the one session the link began in, if the account still owns it | before the transaction opens |
+| `passkey_recovery` | the activation of a recovery to a new passkey, at `signIn.passkey.finish` or `passkeyRecovery.cancel` | every session of the account | inside the transaction, after the account row is locked and before any row goes |
 | `email_verified` | `signIn.magicLink.redeem`, `email.redeemVerification`, `email.redeemChange`, when it is the address's first confirmation and removes a password set in another session (S-LINK-4) | every session of the account | inside the transaction, after the account row is locked and before any of those sessions is deleted; the token is already redeemed, the password row deleted and the address confirmed, so the hook sees the account in that state |
 
 **A refusal on a credential change refuses the change.** A hook that throws on
@@ -7604,7 +7629,7 @@ missing either field throws before it reaches the database.
 
 `reason` on `revokeSession` is a `RevokeReason`: `"sign_out"`,
 `"revoked_by_user"`, `"password_changed"`, `"password_reset"`,
-`"identity_linked"` or `"email_verified"`. It is written to the log beside the
+`"identity_linked"`, `"email_verified"` or `"passkey_recovery"`. It is written to the log beside the
 actor **and announced**: `revokeSession` dispatches `beforeSessionRevoke` with
 the session, its owner and that reason, before the row goes, so a hook that
 throws leaves the session standing and the throw reaches the plugin that called
@@ -7651,10 +7676,10 @@ longer carried by recognising positions — but it is not free of the parse
 either, and the residual is named under Rule 1.
 
 **Rule 1 — a core table is refused by its name, wherever the name stands.**
-Eighteen core table names: seventeen read out of the SQL that creates them, so no
+Nineteen core table names: eighteen read out of the SQL that creates them, so no
 second list of those exists, and `plugin_schema_migration`, which no migration
 creates — the runner does — and which is therefore named from the one place it is
-defined. A statement containing any of the eighteen, bare or qualified, in any
+defined. A statement containing any of the nineteen, bare or qualified, in any
 position the reader treats as code, is refused. It is the one rule that does not
 depend on recognising a *position*, which is why the boundary rests on it.
 
@@ -8478,7 +8503,8 @@ way back into a locked-out account. This is recorded as `E-1182`.
 
 ## The factor and passkey routes
 
-Architecture 3.15 D.3 declares 47 rows over 46 distinct paths. Seventeen of them
+Architecture 3.15 D.3 declares 52 rows over 51 distinct paths, the five of the
+[recovery to a new passkey](#recovery-to-a-new-passkey) included. Seventeen of them
 had no source in the tree: the fourteen under `/factor/`, the two under
 `/sign-in/passkey/` and `POST /username/change`. This chapter is those rows, the
 configuration that reaches them and the two namespaces they add to the instance.
@@ -10959,7 +10985,350 @@ call that already resealed accounts whose switch is on needs no change (E-3746).
 
 ## Recovery to a new passkey
 
-> Reserved for the `passkey-recovery` feature of release 3.0.0 and not written yet. Only that feature writes into this chapter (`CLAUDE.md` §5), and its writer deletes this note when filling it.
+An account that signs in with passkeys only and has lost its passkey gets back in
+with a new passkey and never needs a password. The way back takes two factors —
+the mailbox and one recovery code — and ends in the registration of a new
+passkey, which replaces every other way into the account once a waiting period
+has passed. Architecture section 3.18 (*The recovery to a new passkey*) is the
+specification; `S-INTEG-12`, `S-ENUM-10`, `S-RACE-7` and `S-LINK-9` are its
+requirements, and E-3760 to E-3778 record the decisions.
+
+The flow, from the user's side:
+
+1. They enter their address. The library mails them a link.
+2. They open the link and enter one of their recovery codes. The library answers
+   with WebAuthn registration options.
+3. Their authenticator creates a passkey. The library holds it back until the
+   waiting period ends, and tells the address and the application that a
+   recovery is pending.
+4. When the waiting period has passed, the first sign-in with the new passkey
+   activates it: the password, TOTP, every other passkey, the remaining recovery
+   codes, every linked identity and every session are removed, and the address
+   is told that the recovery completed.
+
+During the waiting period every session of the account can see the pending
+recovery and a fresh one can cancel it, because the mailbox the recovery went
+through may be the attacker's.
+
+### `webauthn.recovery` — turning it on
+
+The recovery is **off** unless `webauthn.recovery` is configured. It lives under
+`webauthn` because its last step is a WebAuthn registration.
+
+```ts
+import type { PasskeyRecoveryConfig } from "@velve/auth";
+
+const auth = createVelveAuth({
+  identity: { mode: "email" },
+  // …
+  webauthn: {
+    relyingPartyId: "example.com",
+    relyingPartyName: "Example",
+    origins: ["https://example.com"],
+    userVerification: "required",
+    recovery: {
+      waitingPeriodInSeconds: ({ userId }) => 3 * 24 * 60 * 60,
+    },
+  },
+});
+```
+
+| Field | Type | Meaning |
+|---|---|---|
+| `recovery` | `PasskeyRecoveryConfig?` | absent: no recovery, no routes, no `auth.passkeyRecovery` |
+| `recovery.waitingPeriodInSeconds` | `(context: PasskeyRecoveryContext) => number` | seconds from the registration of the new passkey until it replaces every other way in |
+
+`PasskeyRecoveryContext` is `{ userId: string }`, the account being recovered.
+The function is called **once per recovery**, on the request that registers the
+new passkey, so it can give different accounts different waiting periods — a
+shorter one for an account with little at stake, a longer one for an
+administrator. Its answer is clamped (E-3764):
+
+| Answer | Waiting period |
+|---|---|
+| a number from 0 to 2,592,000 | that many seconds, rounded up |
+| below 0, `-Infinity` | 0 — the recovery completes at once |
+| above 2,592,000, `Infinity` | 2,592,000 (30 days) |
+| `NaN`, or anything that is not a number | 2,592,000 (30 days) |
+
+`LONGEST_PASSKEY_RECOVERY_WAIT_IN_SECONDS` is the upper bound, `2_592_000`,
+exported from `@velve/auth`. A function that throws fails the registration with
+`500 internal_error` before anything is written.
+
+The routes mount only when `webauthn.recovery` is set, `email` is configured and
+the identity mode has an address. A configuration the start cannot run refuses
+with `VelveStartupError` code **`passkey_recovery_unusable`**:
+`webauthn.recovery` is not an object carrying a function
+`waitingPeriodInSeconds`, or the identity mode is `"username"`, where no address
+begins a recovery.
+
+### The routes and the methods
+
+| Route | Method | Caller | Fresh | Limit | Answers |
+|---|---|---|---|---|---|
+| `POST /passkey-recovery/request` | `auth.passkeyRecovery.request({ email })` | — | — | address + account | `204` |
+| `POST /passkey-recovery/start` | `auth.passkeyRecovery.start({ token, recoveryCode })` | — | — | address + account | `WebAuthnRegistrationChallenge`, or `400 passkey_recovery_failed` |
+| `POST /passkey-recovery/finish` | `auth.passkeyRecovery.finish({ challengeToken, response, label })` | — | — | address | `FinishPasskeyRecoveryResult`, or `400 passkey_recovery_failed` |
+| `GET /passkey-recovery` | `auth.passkeyRecovery.pending()` | session | — | address | `PendingPasskeyRecovery \| null` |
+| `POST /passkey-recovery/cancel` | `auth.passkeyRecovery.cancel()` | session | **yes** | address | `204` |
+
+Each method takes the six call fields beside its own input, like every server
+method built from a route (`origin` required). `PasskeyRecoveryNamespace` is the
+type of `auth.passkeyRecovery`; it exists on `VelveAuth<"email">` and
+`VelveAuth<"username_email">` and not on `VelveAuth<"username">`. The client has
+the same five calls under `client.passkeyRecovery`.
+
+### `auth.passkeyRecovery.request({ email })`
+
+Mails a recovery link to the address, if an account has it. The answer is
+`204` **whatever the address names**, and the request runs the same statements
+and calls `email.send` exactly once on every branch, like
+`password.requestReset` (L-1, `S-ENUM-10`):
+
+| The address | `email.send` is called with |
+|---|---|
+| names an account | `{ kind: "passkey_recovery", to, userId, token, expiresAt }` |
+| names no account | `{ kind: "request_for_unknown_address", to, requested: "passkey_recovery" }` |
+| names an account that turned recovery off | `{ kind: "request_for_unknown_address", to, requested: "passkey_recovery" }` |
+
+The token is a one-time token of the purpose `passkey_recovery`: 256 bits, 15
+minutes, single-use, and a new request replaces the previous link. Render it as a
+link to your own page that asks for a recovery code; `auth.oneTimeToken.resolve`
+names its purpose if you route several kinds of link through one page. A `send`
+that throws fails the request and spends the link, as for every mailed artefact.
+
+### `auth.passkeyRecovery.start({ token, recoveryCode })`
+
+Spends the link and one recovery code and answers the registration options for
+the new passkey:
+
+```ts
+interface WebAuthnRegistrationChallenge {
+  readonly publicKeyOptions: PublicKeyCredentialCreationOptionsJSON;
+  readonly challengeToken: string;
+}
+```
+
+Hand `publicKeyOptions` to `navigator.credentials.create` (through
+`@simplewebauthn/browser` or your own conversion) and keep `challengeToken` for
+the finish. The options always ask for **user verification `required`**,
+whatever `webauthn.userVerification` says, and list the account's own passkeys in
+`excludeCredentials`, so an authenticator that still holds one of them says so
+instead of overwriting it (E-3766). The challenge lives five minutes.
+
+The link is spent first, then one recovery code under the account lock by
+`DELETE … RETURNING`, the statement that already decides recovery codes, so two
+starts with the same link or the same code have one winner (`S-RACE-7`). The
+account bucket counts the attempts made with one link (E-3772). Any failure
+rolls the whole step back: the link and the code are still valid, and a user who
+mistyped the code tries again with the same link.
+
+### `auth.passkeyRecovery.finish({ challengeToken, response, label })`
+
+Spends the challenge, verifies the attestation with the same ceremony
+`factor.webauthn.register.finish` uses — origin, RP ID, challenge, user
+verification — and holds the new passkey back:
+
+```ts
+type FinishPasskeyRecoveryResult =
+  | { readonly status: "pending"; readonly activatesAt: Date }
+  | { readonly status: "completed" };
+```
+
+`"pending"` names when the waiting period ends. After the commit
+`passkey_recovery_started` goes to the account's address and
+`afterPasskeyRecoveryStart` runs (below). `label` names the passkey once it is
+activated, as `factor.webauthn.register.finish`'s does.
+
+With a waiting period of 0 the same step replaces every way in at once, as the
+activation below does, and answers `"completed"`; only
+`passkey_recovery_completed` is mailed, and the plugin point does not run, since
+nothing is pending (E-3770).
+
+The finish issues **no session**. The new passkey signs in through
+`signIn.passkey.start` and `signIn.passkey.finish` like any other, once it is
+active.
+
+A credential ID another account already uses, or another recovery holds, is
+refused, and `factor.webauthn.register.finish` refuses a credential ID a
+recovery holds (E-3767). An account can have one recovery waiting at a time; a
+second finish while one waits fails.
+
+### `auth.passkeyRecovery.pending()`
+
+Answers every session of the account the pending recovery, or `null`:
+
+```ts
+interface PendingPasskeyRecovery {
+  readonly activatesAt: Date;
+}
+```
+
+Show it prominently — "a recovery of your account to a new passkey was started
+and takes effect at …, cancel it if this was not you". The route is a reading
+`GET` (S-CSRF-4) and changes no row: once `activatesAt` has passed it still
+reports the recovery, until its next use activates it (E-3775).
+
+### `auth.passkeyRecovery.cancel()`
+
+Cancels the pending recovery with a **fresh** session (`freshness_required`
+otherwise, E-3777). Cancelling discards the held passkey and nothing else: the
+spent link and the spent recovery code stay spent, and the account's
+credentials and sessions are untouched. With no recovery pending it answers
+`204` and does nothing.
+
+A cancel that arrives after `activatesAt` activates the recovery instead, and
+answers `401 session_required`, because the activation ended its session.
+
+### The activation
+
+A recovery is activated at its **first use after `activatesAt`**, measured by
+the database clock (E-3768):
+
+- the first `signIn.passkey.finish` that presents the held passkey, which then
+  signs in with it, or
+- the first `passkeyRecovery.cancel` of a session of the account.
+
+Until then the held passkey is not in `velve.webauthn_credential`: no sign-in, no
+second factor and no count of the last sign-in method sees it, and the old
+credentials and sessions keep working. There is no maintenance call; a recovery
+nobody uses changes nothing.
+
+The activation runs in one transaction under the account lock, and only when the
+account's sealed state still holds the recovery, the account is not disabled
+and recovery is not turned off. It:
+
+1. announces every session to `beforeSessionRevoke` with the reason
+   `passkey_recovery`, before any row goes — a hook that throws refuses the
+   activation and leaves everything as it was;
+2. deletes every session of the account;
+3. deletes the password, `velve.password_reset_required`, the TOTP secret and its
+   used steps, every passkey, every recovery code and every linked identity;
+4. moves the held passkey into `velve.webauthn_credential`;
+5. draws a new session epoch and new generations for every one-time token purpose
+   and every pending authentication, so no link mailed before and no sign-in
+   waiting for a second factor comes back (E-3769).
+
+After the commit `passkey_recovery_completed` goes to the address. The account
+now holds the new passkey and nothing else, so the passkey cannot be removed
+(`last_sign_in_method`, L-13), and it holds **no recovery codes**: have the user
+generate a new set with `factor.recovery.generate` after the first sign-in.
+
+### `passkey_recovery_failed`
+
+Every failing step after the request answers the same thing:
+
+| Code | Status | Message |
+|---|---|---|
+| `passkey_recovery_failed` | 400 | `The recovery could not be continued.` |
+
+It covers an invented, expired, replaced or spent link, a wrong recovery code, a
+disabled account, an account that turned recovery off, a recovery already
+waiting, an unknown or expired challenge, a challenge of another ceremony, an
+attestation that fails origin, RP ID or user verification, and a broken security
+state. The bodies are byte for byte identical; only the log names the inner
+reason (`passkey_recovery_link_refused`, `passkey_recovery_code_refused`,
+`passkey_recovery_refused_for_account`, `passkey_recovery_registration_refused`,
+`passkey_recovery_refused` or `broken_state_on_passkey_recovery`). The refusals
+for a disabled account, the switch and a waiting recovery are decided after the
+code is consumed, so they cost what a wrong code costs (`S-ENUM-10`, E-3776).
+`invalid_input` for a malformed body and `rate_limited` remain what they are
+everywhere.
+
+### The mails
+
+| Kind | When | Fields |
+|---|---|---|
+| `passkey_recovery` | `request`, an account has the address | `to`, `userId`, `token`, `expiresAt` |
+| `request_for_unknown_address` with `requested: "passkey_recovery"` | `request`, no account or recovery turned off | `to`, `requested` |
+| `passkey_recovery_started` | `finish` with a waiting period, after the commit | `to`, `userId`, `activatesAt` |
+| `passkey_recovery_completed` | the activation, after the commit | `to`, `userId` |
+
+The two notices carry no token and no link. Each goes to the address the
+library read under the account lock. A `send` that throws on a notice fails that
+request's answer and leaves the committed change standing, as the address change
+notice does (E-3771).
+
+### `afterPasskeyRecoveryStart`
+
+```ts
+afterPasskeyRecoveryStart?: (
+  event: PasskeyRecoveryStartedEvent,
+  context: FrozenContext,
+) => Promise<void>;
+
+interface PasskeyRecoveryStartedEvent {
+  readonly userId: string;
+}
+```
+
+The ninth hook point. It runs once a recovery has begun its waiting period, after
+the commit and after `passkey_recovery_started` was handed to `send`, and names
+the account and nothing else (`S-LINK-9`, E-3773). Use it to tell the user
+through a channel that is not the mailbox — a push notification, a banner on
+every device the account is signed in on. A hook that throws fails the finish's
+answer; the recovery stands, and the mail has already gone. It does not run for a
+recovery with a waiting period of 0.
+
+### With the no-recovery switch
+
+An account that turned recovery off with `auth.user.disableRecovery` cannot be
+recovered (E-3774):
+
+- `request` takes the branch of an unknown address;
+- a link mailed before the switch went on is retired, and stays refused after it
+  is off again; `oneTimeToken.resolve` answers `null` for it;
+- a recovery waiting when the switch goes on is removed in the same change;
+- `start` and `finish` answer `passkey_recovery_failed`.
+
+### In the sealed state
+
+The held passkey, its activation time and the generation of the purpose
+`passkey_recovery` are part of the account's seal (`S-INTEG-12`). A writer of
+the database without the root key who shortens the waiting period, moves the row
+to another account, plants a recovery or puts back one that was cancelled breaks
+the state: every check refuses and raises the alarm, and the held passkey never
+activates.
+
+`maintenance.resealSecurityState` reports a held recovery in the new field
+
+```ts
+passkeyRecovery: { credentialId: string; activatesAt: Date } | null;
+```
+
+of `SealedSecurityState` (`credentialId` in base64url), and a reseal that ends
+with recovery turned off removes it.
+
+Migration 7 adds the table [`velve.passkey_recovery`](#velvepasskey_recovery)
+and the column `passkey_recovery_generation` of `velve.security_state`. An
+account that never redeemed a recovery link and holds no recovery keeps the
+encoding and the seal it had, so nobody is signed out by the upgrade.
+
+### The types this feature exports
+
+| Name | From | What |
+|---|---|---|
+| `PasskeyRecoveryConfig` | `@velve/auth` | the type of `webauthn.recovery` |
+| `PasskeyRecoveryContext` | `@velve/auth` | `{ userId }`, what the waiting period is asked with |
+| `LONGEST_PASSKEY_RECOVERY_WAIT_IN_SECONDS` | `@velve/auth` | `2_592_000`, the upper bound of the waiting period |
+| `PasskeyRecoveryNamespace` | `@velve/auth` | the type of `auth.passkeyRecovery` |
+| `FinishPasskeyRecoveryResult` | `@velve/auth` | what `finish` answers |
+| `PendingPasskeyRecovery` | `@velve/auth` | what `pending` answers when a recovery waits |
+| `PasskeyRecoveryStartedEvent` | `@velve/auth` | the event of `afterPasskeyRecoveryStart` |
+
+### Upgrading
+
+Run `migrate()` before configuring `webauthn.recovery`. The migration rewrites
+no row and ends nothing. An instance older than 3.0.0 does not know the new table
+and column, so configure the recovery only once every instance runs 3.0.0.
+
+### What it does not do
+
+- It issues no session; the new passkey signs in through the passkey sign-in.
+- It does not activate a recovery nobody uses; there is no background job.
+- It does not give back a recovery code spent by a start whose registration was
+  abandoned.
+- It has no route without `webauthn.recovery`, and none in mode `"username"`.
 
 ## Discoverable registration
 
