@@ -2,9 +2,11 @@
 
 import { VelveError, VelveErrorCode } from "./core/http/error-map.mjs";
 import { AnyRoute } from "./core/http/route.mjs";
+import { ProofOfWorkRoute } from "./core/pow/config.mjs";
 import { ClientRoute, VELVE_CLIENT_ROUTES, VelveRouteTable } from "./client/routes.mjs";
 import { VelveFailure, VelveResult, VelveTransportError, unwrap } from "./client/result.mjs";
 import { ClientMethodOf, ClientSurface } from "./client/surface.mjs";
+import { ProofOfWorkTask, ProofOfWorkWorker } from "./client/proof-of-work-solver.mjs";
 import { VelveClientOptions } from "./client/transport.mjs";
 
 //#region src/client/index.d.ts
@@ -19,11 +21,17 @@ declare function createVelveClient<Auth extends {
 } = {
   readonly routes: VelveRouteTable;
 }>(options: VelveClientOptions): ClientSurface<RouteTableOf<Auth>>;
+/** solves a challenge for one route of a client ahead of its call, so the work runs while the user types */
+declare function prepareProofOfWork(client: object, input: {
+  readonly route: ProofOfWorkRoute;
+}): Promise<void>;
 //#endregion
 export {
 	type ClientMethodOf,
 	type ClientRoute,
 	type ClientSurface,
+	type ProofOfWorkTask,
+	type ProofOfWorkWorker,
 	VELVE_CLIENT_ROUTES,
 	type VelveClientOptions,
 	VelveError,
@@ -33,7 +41,36 @@ export {
 	type VelveRouteTable,
 	VelveTransportError,
 	createVelveClient,
+	prepareProofOfWork,
 	unwrap,
+};
+
+## client/proof-of-work-solver.d.mts
+
+//#region src/client/proof-of-work-solver.d.ts
+/** what the worker is asked to solve */
+interface ProofOfWorkTask {
+  readonly challenge: string;
+  readonly difficulty: number;
+}
+/** the worker a client solves in, which a `Worker` started from the shipped module satisfies */
+interface ProofOfWorkWorker {
+  postMessage(task: ProofOfWorkTask): void;
+  addEventListener(type: "error" | "message", listener: (event: {
+    readonly data?: unknown;
+  }) => void): void;
+  terminate(): void;
+}
+//#endregion
+export {
+	ProofOfWorkTask,
+	ProofOfWorkWorker,
+};
+
+## client/proof-of-work-worker.d.mts
+
+export {
+
 };
 
 ## client/result.d.mts
@@ -75,6 +112,7 @@ export {
 import { User } from "../core/auth/user.mjs";
 import { PendingAuthentication, Session } from "../core/http/caller.mjs";
 import { HttpMethod, Route } from "../core/http/route.mjs";
+import { ProofOfWorkRoute } from "../core/pow/config.mjs";
 import { SignInResult, SignUpResult } from "../core/auth/results.mjs";
 import { ResolvedSessionView, UsernameAvailabilityAnswer } from "../core/auth/routes.mjs";
 import { TotpEnrollment } from "../core/factor/totp/secret.mjs";
@@ -82,6 +120,7 @@ import { WebAuthnCredential } from "../core/factor/webauthn/credential-repositor
 import { WebAuthnAuthenticationChallenge, WebAuthnRegistrationChallenge } from "../core/factor/webauthn/service.mjs";
 import { ChangedUser, RedeemResetResult, SetPasswordResult } from "../core/flows/results.mjs";
 import { OAuthRouteTable } from "../core/oauth/routes.mjs";
+import { ProofOfWorkChallenge } from "../core/pow/challenge.mjs";
 import { FinishPasskeyRecoveryResult, PendingPasskeyRecovery } from "../core/recovery/flow.mjs";
 
 //#region src/client/routes.d.ts
@@ -102,10 +141,10 @@ type VelveRouteTable = readonly [Route<"signOut", "/sign-out", {} & {}, void, "i
   email: string;
   password: string;
   username: string;
-} & {}, SignUpResult, "invalid_input" | "origin_not_allowed" | "password_unacceptable" | "rate_limited" | "username_invalid" | "username_taken">, Route<"signUp.withoutPassword", "/sign-up/passwordless", {
+} & {}, SignUpResult, "invalid_input" | "origin_not_allowed" | "password_unacceptable" | "proof_of_work_required" | "rate_limited" | "username_invalid" | "username_taken">, Route<"signUp.withoutPassword", "/sign-up/passwordless", {
   email: string;
   username: string;
-} & {}, SignUpResult, "invalid_input" | "origin_not_allowed" | "rate_limited" | "username_invalid" | "username_taken">, Route<"password.redeemResetWithRecoveryCode", "/password/redeem-reset-with-recovery-code", {
+} & {}, SignUpResult, "invalid_input" | "origin_not_allowed" | "proof_of_work_required" | "rate_limited" | "username_invalid" | "username_taken">, Route<"password.redeemResetWithRecoveryCode", "/password/redeem-reset-with-recovery-code", {
   email: string;
   emailOrUsername: string;
   newPassword: string;
@@ -113,7 +152,7 @@ type VelveRouteTable = readonly [Route<"signOut", "/sign-out", {} & {}, void, "i
   username: string;
 } & {}, SetPasswordResult, "invalid_input" | "invalid_recovery_code" | "origin_not_allowed" | "password_unacceptable" | "rate_limited">, Route<"signIn.magicLink.request", "/sign-in/magic-link/request", {
   email: string;
-} & {}, void, "invalid_input" | "origin_not_allowed" | "rate_limited">, Route<"signIn.magicLink.redeem", "/sign-in/magic-link/redeem", {
+} & {}, void, "invalid_input" | "origin_not_allowed" | "proof_of_work_required" | "rate_limited">, Route<"signIn.magicLink.redeem", "/sign-in/magic-link/redeem", {
   token: string;
 } & {}, SignInResult, "invalid_input" | "invalid_token" | "origin_not_allowed" | "rate_limited">, Route<"email.requestVerification", "/email/request-verification", {} & {}, void, "account_disabled" | "invalid_input" | "origin_not_allowed" | "rate_limited" | "session_required">, Route<"email.redeemVerification", "/email/redeem-verification", {
   token: string;
@@ -123,7 +162,7 @@ type VelveRouteTable = readonly [Route<"signOut", "/sign-out", {} & {}, void, "i
   token: string;
 } & {}, ChangedUser, "invalid_input" | "invalid_token" | "origin_not_allowed" | "rate_limited">, Route<"password.requestReset", "/password/request-reset", {
   email: string;
-} & {}, void, "invalid_input" | "origin_not_allowed" | "rate_limited">, Route<"password.redeemReset", "/password/redeem-reset", {
+} & {}, void, "invalid_input" | "origin_not_allowed" | "proof_of_work_required" | "rate_limited">, Route<"password.redeemReset", "/password/redeem-reset", {
   newPassword: string;
   token: string;
 } & {}, RedeemResetResult, "invalid_input" | "invalid_token" | "origin_not_allowed" | "password_unacceptable" | "rate_limited">, Route<"signIn.password", "/sign-in/password", {
@@ -131,7 +170,7 @@ type VelveRouteTable = readonly [Route<"signOut", "/sign-out", {} & {}, void, "i
   emailOrUsername: string;
   password: string;
   username: string;
-} & {}, SignInResult, "invalid_credentials" | "invalid_input" | "origin_not_allowed" | "rate_limited">, Route<"password.set", "/password/set", {
+} & {}, SignInResult, "invalid_credentials" | "invalid_input" | "origin_not_allowed" | "proof_of_work_required" | "rate_limited">, Route<"password.set", "/password/set", {
   newPassword: string;
 } & {}, SetPasswordResult, "account_disabled" | "factor_already_enrolled" | "freshness_required" | "invalid_input" | "origin_not_allowed" | "password_unacceptable" | "rate_limited" | "session_required">, Route<"password.change", "/password/change", {
   currentPassword: string;
@@ -167,16 +206,18 @@ type VelveRouteTable = readonly [Route<"signOut", "/sign-out", {} & {}, void, "i
 } & {}, void, "account_disabled" | "freshness_required" | "invalid_input" | "last_sign_in_method" | "origin_not_allowed" | "rate_limited" | "session_required">, Route<"signIn.passkey.start", "/sign-in/passkey/start", {} & {}, WebAuthnAuthenticationChallenge, "invalid_input" | "origin_not_allowed" | "rate_limited">, Route<"signIn.passkey.finish", "/sign-in/passkey/finish", {
   challengeToken: string;
   response: Record<string, unknown>;
-} & {}, SignInResult, "invalid_input" | "origin_not_allowed" | "rate_limited" | "webauthn_challenge_invalid" | "webauthn_credential_rejected">, Route<"passkeyRecovery.request", "/passkey-recovery/request", {
+} & {}, SignInResult, "invalid_input" | "origin_not_allowed" | "proof_of_work_required" | "rate_limited" | "webauthn_challenge_invalid" | "webauthn_credential_rejected">, Route<"passkeyRecovery.request", "/passkey-recovery/request", {
   email: string;
-} & {}, void, "invalid_input" | "origin_not_allowed" | "rate_limited">, Route<"passkeyRecovery.start", "/passkey-recovery/start", {
+} & {}, void, "invalid_input" | "origin_not_allowed" | "proof_of_work_required" | "rate_limited">, Route<"passkeyRecovery.start", "/passkey-recovery/start", {
   recoveryCode: string;
   token: string;
 } & {}, WebAuthnRegistrationChallenge, "invalid_input" | "origin_not_allowed" | "passkey_recovery_failed" | "rate_limited">, Route<"passkeyRecovery.finish", "/passkey-recovery/finish", {
   challengeToken: string;
   label: string;
   response: Record<string, unknown>;
-} & {}, FinishPasskeyRecoveryResult, "invalid_input" | "origin_not_allowed" | "passkey_recovery_failed" | "rate_limited">, Route<"passkeyRecovery.pending", "/passkey-recovery", {} & {}, PendingPasskeyRecovery | null, "account_disabled" | "origin_not_allowed" | "rate_limited" | "session_required">, Route<"passkeyRecovery.cancel", "/passkey-recovery/cancel", {} & {}, void, "account_disabled" | "origin_not_allowed" | "rate_limited" | "session_required">];
+} & {}, FinishPasskeyRecoveryResult, "invalid_input" | "origin_not_allowed" | "passkey_recovery_failed" | "rate_limited">, Route<"passkeyRecovery.pending", "/passkey-recovery", {} & {}, PendingPasskeyRecovery | null, "account_disabled" | "origin_not_allowed" | "rate_limited" | "session_required">, Route<"passkeyRecovery.cancel", "/passkey-recovery/cancel", {} & {}, void, "account_disabled" | "origin_not_allowed" | "rate_limited" | "session_required">, Route<"proofOfWork.challenge", "/proof-of-work/challenge", {
+  route: ProofOfWorkRoute;
+} & {}, ProofOfWorkChallenge, "invalid_input" | "origin_not_allowed" | "rate_limited">];
 /** what a call needs from its own route row, with no handler reachable from it */
 interface ClientRoute {
   readonly method: HttpMethod;
@@ -392,6 +433,10 @@ declare const VELVE_CLIENT_ROUTES: readonly [{
   readonly method: "POST";
   readonly name: "passkeyRecovery.cancel";
   readonly path: "/passkey-recovery/cancel";
+}, {
+  readonly method: "GET";
+  readonly name: "proofOfWork.challenge";
+  readonly path: "/proof-of-work/challenge";
 }];
 //#endregion
 export {
@@ -419,10 +464,13 @@ export {
 ## client/transport.d.mts
 
 import "./routes.mjs";
+import { ProofOfWorkWorker } from "./proof-of-work-solver.mjs";
 
 //#region src/client/transport.d.ts
 interface VelveClientOptions {
   readonly baseURL: string;
+  /** starts the worker that solves a proof of work, the module the package ships beside the client when absent */
+  readonly createProofOfWorkWorker?: () => ProofOfWorkWorker;
   readonly fetch?: typeof globalThis.fetch;
 }
 //#endregion
@@ -437,6 +485,7 @@ import { IdentityMode } from "../db/migrations/identity-mode.mjs";
 import { BucketRule } from "../http/rate-limit.mjs";
 import { Clock } from "../http/environment.mjs";
 import { VelvePlugin } from "../plugin/config.mjs";
+import { ProofOfWorkConfig } from "../pow/config.mjs";
 import { KeyProvider } from "../keys/provider.mjs";
 import { SessionConfig } from "../session/config.mjs";
 import { SessionMetadataMode } from "../session/metadata.mjs";
@@ -567,6 +616,8 @@ interface RateLimitConfig {
     readonly alertThresholdPerMinute: number;
     readonly onAlert: (alert: RateAlert) => void;
   };
+  /** asks the request routes and repeatedly failing sign-ins for a solved challenge, and is off while absent */
+  readonly proofOfWork?: ProofOfWorkConfig;
 }
 /** whether every account must carry a seal, or the estate is still being sealed, and who hears of a broken one */
 interface SecurityStateConfig {
@@ -639,8 +690,8 @@ import { User } from "./user.mjs";
 import { MigrationReport } from "../db/migration.mjs";
 import { IdentityMode } from "../db/migrations/identity-mode.mjs";
 import { PendingAuthentication, Session } from "../http/caller.mjs";
-import { HttpEnvironment } from "../http/environment.mjs";
 import { VelveErrorCode } from "../http/error-map.mjs";
+import { HttpEnvironment } from "../http/environment.mjs";
 import { AnyRoute, ServerCallFields } from "../http/route.mjs";
 import { PendingToken } from "../factor/pending/token.mjs";
 import { ModeHasEmail, ModeHasUsername } from "./config.mjs";
@@ -651,6 +702,7 @@ import { FactorSurface } from "../factor/routes.mjs";
 import { EmailFlowSurface } from "../flows/routes.mjs";
 import { PasswordSurface } from "../password/routes.mjs";
 import { PluginSurface } from "../plugin/routes.mjs";
+import { ProofOfWorkSurface } from "../pow/routes.mjs";
 import { ResolvedOneTimeToken } from "../token/resolution.mjs";
 import { SweepReport } from "./maintenance.mjs";
 import { ChosenWeakening } from "./security-options.mjs";
@@ -767,7 +819,7 @@ interface AuthInternals {
   readonly weakenings: readonly ChosenWeakening[];
 }
 /** what each feature's own seam module contributes to the surface, joined into one type */
-type SeamSurface<M extends IdentityMode> = OAuthSurface<M> & EmailFlowSurface<M> & PasswordSurface<M> & PluginSurface<M> & FactorSurface & PasskeyRecoverySurface<M>;
+type SeamSurface<M extends IdentityMode> = OAuthSurface<M> & EmailFlowSurface<M> & PasswordSurface<M> & PluginSurface<M> & FactorSurface & PasskeyRecoverySurface<M> & ProofOfWorkSurface;
 type VelveAuth<M extends IdentityMode> = AuthInternals & SeamSurface<M> & {
   signOut(input: ServerCallFields): Promise<void>;
   readonly pending: PendingNamespace;
@@ -995,7 +1047,7 @@ export {
 
 //#region src/core/auth/startup.d.ts
 
-type StartupErrorCode = "email_callback_missing" | "keys_missing" | "keys_unusable" | "limits_unusable" | "oauth_provider_incomplete" | "origins_empty" | "passkey_recovery_unusable" | "plugin_anchor_incomplete" | "plugin_database_and_role_both_set" | "plugin_database_reaches_the_core" | "plugin_dependency_cycle" | "plugin_dependency_missing" | "plugin_error_code_not_namespaced" | "plugin_error_code_undeclared" | "plugin_field_unknown" | "plugin_id_duplicated" | "plugin_migration_table_not_an_identifier" | "plugin_migration_table_not_prefixed" | "plugin_rate_limit_rule_unmatched" | "plugin_route_conflict" | "plugin_route_exempts_the_origin_check" | "plugin_route_reads_a_core_cookie" | "plugin_route_without_address_rate_limit" | "plugin_table_prefix_conflict" | "rate_limit_bucket_unusable" | "recovery_code_shape_unusable" | "recovery_codes_required" | "route_name_segment_reserved" | "route_namespace_conflict" | "security_state_sealing_unknown";
+type StartupErrorCode = "email_callback_missing" | "keys_missing" | "keys_unusable" | "limits_unusable" | "oauth_provider_incomplete" | "origins_empty" | "passkey_recovery_unusable" | "plugin_anchor_incomplete" | "plugin_database_and_role_both_set" | "plugin_database_reaches_the_core" | "plugin_dependency_cycle" | "plugin_dependency_missing" | "plugin_error_code_not_namespaced" | "plugin_error_code_undeclared" | "plugin_field_unknown" | "plugin_id_duplicated" | "plugin_migration_table_not_an_identifier" | "plugin_migration_table_not_prefixed" | "plugin_rate_limit_rule_unmatched" | "plugin_route_conflict" | "plugin_route_exempts_the_origin_check" | "plugin_route_reads_a_core_cookie" | "plugin_route_without_address_rate_limit" | "plugin_table_prefix_conflict" | "proof_of_work_unusable" | "rate_limit_bucket_unusable" | "recovery_code_shape_unusable" | "recovery_codes_required" | "route_name_segment_reserved" | "route_namespace_conflict" | "security_state_sealing_unknown";
 /** the two contributors a route conflict names in its start error */
 interface RouteConflict {
   readonly claimed: string;
@@ -1709,6 +1761,7 @@ export {
 
 import { CallerResolver } from "./caller.mjs";
 import { CookieSameSite, HostPrefixedCookieName } from "./cookies.mjs";
+import { ProofOfWorkGate } from "./proof-of-work.mjs";
 import { RateLimiter } from "./rate-limit.mjs";
 import { FrozenContext } from "../plugin/config.mjs";
 import { AnyRoute, RouteMetadata } from "./route.mjs";
@@ -1727,6 +1780,8 @@ interface HttpEnvironment {
   readonly origins: readonly string[];
   /** the frozen context a route's handler gets, the core one for a route nobody registered */
   readonly pluginContextOf: (route: RouteMetadata) => FrozenContext;
+  /** the proof of work the guarded routes ask for, absent while it is not configured */
+  readonly proofOfWork?: ProofOfWorkGate;
   readonly rateLimiter: RateLimiter;
   readonly routes: readonly AnyRoute[];
   readonly sessionCookieMaximumAgeInSeconds: number;
@@ -1747,7 +1802,7 @@ export {
 ## core/http/error-map.d.mts
 
 //#region src/core/http/error-map.d.ts
-type VelveErrorCode = "account_disabled" | "authenticator_not_allowed" | "factor_already_enrolled" | "factor_not_enrolled" | "freshness_required" | "identity_already_linked" | "identity_limit_reached" | "internal_error" | "invalid_credentials" | "invalid_factor_code" | "invalid_input" | "invalid_pending_authentication" | "invalid_recovery_code" | "invalid_token" | "last_sign_in_method" | "oauth_flow_invalid" | "oauth_provider_error" | "origin_not_allowed" | "passkey_limit_reached" | "passkey_recovery_failed" | "password_unacceptable" | "provider_not_configured" | "rate_limited" | "recovery_disabled" | "session_required" | "too_many_factor_attempts" | "username_invalid" | "username_taken" | "webauthn_challenge_invalid" | "webauthn_credential_not_discoverable" | "webauthn_credential_rejected";
+type VelveErrorCode = "account_disabled" | "authenticator_not_allowed" | "factor_already_enrolled" | "factor_not_enrolled" | "freshness_required" | "identity_already_linked" | "identity_limit_reached" | "internal_error" | "invalid_credentials" | "invalid_factor_code" | "invalid_input" | "invalid_pending_authentication" | "invalid_recovery_code" | "invalid_token" | "last_sign_in_method" | "oauth_flow_invalid" | "oauth_provider_error" | "origin_not_allowed" | "passkey_limit_reached" | "passkey_recovery_failed" | "password_unacceptable" | "proof_of_work_required" | "provider_not_configured" | "rate_limited" | "recovery_disabled" | "session_required" | "too_many_factor_attempts" | "username_invalid" | "username_taken" | "webauthn_challenge_invalid" | "webauthn_credential_not_discoverable" | "webauthn_credential_rejected";
 /** an error code a plugin contributes, which begins with that plugin's id */
 type PluginErrorCode = `${string}.${string}`;
 type AnyErrorCode = VelveErrorCode | PluginErrorCode;
@@ -1776,6 +1831,32 @@ export {
 	VelveErrorCode,
 	registerPluginErrorCodes,
 	resolveErrorCode,
+};
+
+## core/http/proof-of-work.d.mts
+
+//#region src/core/http/proof-of-work.d.ts
+
+/** whose failures a sign-in is counted against */
+interface FailureScope {
+  readonly accountIdentifier: string | null;
+  readonly ipAddress: string | null;
+}
+/** what the pipeline asks of a configured proof of work */
+interface ProofOfWorkGate {
+  spend(routeName: string, presented: string | null): Promise<void>;
+  isRequiredAfterFailures(routeName: string, scope: FailureScope): Promise<boolean>;
+  recordFailure(routeName: string, scope: FailureScope): Promise<void>;
+}
+/** a solution as a direct server call passes it, the challenge as handed out and the nonce found for it */
+interface ProofOfWorkSolution {
+  readonly challenge: string;
+  readonly nonce: number;
+}
+//#endregion
+export {
+	ProofOfWorkGate,
+	ProofOfWorkSolution,
 };
 
 ## core/http/rate-limit.d.mts
@@ -1830,8 +1911,9 @@ export {
 
 import { ResolvedPendingAuthentication, Session } from "./caller.mjs";
 import { CookieWriter } from "./cookies.mjs";
-import { RateLimitRule } from "./rate-limit.mjs";
 import { AnyErrorCode } from "./error-map.mjs";
+import { ProofOfWorkSolution } from "./proof-of-work.mjs";
+import { RateLimitRule } from "./rate-limit.mjs";
 import { FrozenContext } from "../plugin/config.mjs";
 import { ObjectValidator } from "./validators.mjs";
 
@@ -1908,6 +1990,8 @@ interface ServerCallFields {
   readonly oauthStateToken?: string;
   readonly origin: string | null;
   readonly pendingToken?: string;
+  /** the solved challenge a guarded route asks for while the proof of work is configured */
+  readonly proofOfWork?: ProofOfWorkSolution;
   readonly sessionToken?: string;
   readonly userAgent?: string | null;
 }
@@ -2245,9 +2329,9 @@ export {
 import { User } from "../auth/user.mjs";
 import { IdentityMode } from "../db/migrations/identity-mode.mjs";
 import { AuthenticationFactor, Session } from "../http/caller.mjs";
+import { VelveErrorCode } from "../http/error-map.mjs";
 import { RateLimitRule } from "../http/rate-limit.mjs";
 import { Clock } from "../http/environment.mjs";
-import { VelveErrorCode } from "../http/error-map.mjs";
 import { SecurityStateFloor, SecurityStateSealedEvent } from "../security-state/anchor.mjs";
 import { RouteDeclaration } from "../http/route.mjs";
 
@@ -2398,6 +2482,95 @@ type PluginSurface<M extends IdentityMode> = M extends IdentityMode ? Record<nev
 //#endregion
 export {
 	PluginSurface,
+};
+
+## core/pow/challenge.d.mts
+
+//#region src/core/pow/challenge.d.ts
+
+/** a challenge as the challenge route hands it out, where `challenge` is the value the client hashes */
+interface ProofOfWorkChallenge {
+  readonly challenge: string;
+  readonly difficulty: number;
+  readonly expiresAt: Date;
+}
+/** how long a challenge can be solved and spent after it was handed out */
+declare const PROOF_OF_WORK_LIFETIME_IN_SECONDS = 600;
+//#endregion
+export {
+	PROOF_OF_WORK_LIFETIME_IN_SECONDS,
+	ProofOfWorkChallenge,
+};
+
+## core/pow/config.d.mts
+
+//#region src/core/pow/config.d.ts
+/** the five request routes that ask for a proof on every call while the proof of work is configured */
+declare const ALWAYS_GUARDED_ROUTES: readonly ["signUp.withPassword", "signUp.withoutPassword", "password.requestReset", "signIn.magicLink.request", "passkeyRecovery.request"];
+/** the two sign-in routes that ask for a proof once their failure counters reach the threshold */
+declare const SIGN_IN_ROUTES_GUARDED_AFTER_FAILURES: readonly ["signIn.password", "signIn.passkey.finish"];
+/** a route the proof of work can guard, which is the name a challenge is bound to */
+type ProofOfWorkRoute = (typeof ALWAYS_GUARDED_ROUTES)[number] | (typeof SIGN_IN_ROUTES_GUARDED_AFTER_FAILURES)[number];
+/** a sign-in route that asks for a proof only after repeated failures */
+type SignInRouteGuardedAfterFailures = (typeof SIGN_IN_ROUTES_GUARDED_AFTER_FAILURES)[number];
+/** what the difficulty of one challenge is asked with */
+interface ProofOfWorkContext {
+  readonly route: ProofOfWorkRoute;
+}
+/** what the failure threshold of one sign-in is asked with */
+interface SignInFailureContext {
+  readonly route: SignInRouteGuardedAfterFailures;
+}
+/** turns the proof of work on, which is off while this is absent */
+interface ProofOfWorkConfig {
+  /** leading zero bits a challenge for the route asks for, read on each request and clamped to 0 to 20 */
+  readonly difficulty: (context: ProofOfWorkContext) => number;
+  /** failed sign-ins on one account or address after which a sign-in asks for a proof, read on each request and clamped to 1 to 100 */
+  readonly signInFailuresBeforeProof: (context: SignInFailureContext) => number;
+}
+/** the fewest leading zero bits a challenge asks for */
+declare const LOWEST_PROOF_OF_WORK_DIFFICULTY = 0;
+/** the most leading zero bits a challenge asks for */
+declare const HIGHEST_PROOF_OF_WORK_DIFFICULTY = 20;
+/** the fewest failed sign-ins after which a sign-in asks for a proof */
+declare const FEWEST_SIGN_IN_FAILURES_BEFORE_PROOF = 1;
+/** the most failed sign-ins after which a sign-in asks for a proof */
+declare const MOST_SIGN_IN_FAILURES_BEFORE_PROOF = 100;
+//#endregion
+export {
+	FEWEST_SIGN_IN_FAILURES_BEFORE_PROOF,
+	HIGHEST_PROOF_OF_WORK_DIFFICULTY,
+	LOWEST_PROOF_OF_WORK_DIFFICULTY,
+	MOST_SIGN_IN_FAILURES_BEFORE_PROOF,
+	ProofOfWorkConfig,
+	ProofOfWorkContext,
+	ProofOfWorkRoute,
+	SignInFailureContext,
+	SignInRouteGuardedAfterFailures,
+};
+
+## core/pow/routes.d.mts
+
+import { ServerCallFields } from "../http/route.mjs";
+import { ProofOfWorkRoute } from "./config.mjs";
+import { ProofOfWorkChallenge } from "./challenge.mjs";
+
+//#region src/core/pow/routes.d.ts
+
+/** hands out a challenge for one guarded route, present only while the proof of work is configured */
+interface ProofOfWorkNamespace {
+  challenge(input: {
+    route: ProofOfWorkRoute;
+  } & ServerCallFields): Promise<ProofOfWorkChallenge>;
+}
+/** the `proofOfWork` namespace, present at run time only where `proofOfWork` is configured */
+interface ProofOfWorkSurface {
+  readonly proofOfWork: ProofOfWorkNamespace;
+}
+//#endregion
+export {
+	ProofOfWorkNamespace,
+	ProofOfWorkSurface,
 };
 
 ## core/recovery/activation.d.mts
@@ -2635,11 +2808,13 @@ import { ImportSource, User } from "./core/auth/user.mjs";
 import { IdentityMode } from "./core/db/migrations/identity-mode.mjs";
 import { AuthenticationFactor, PendingAuthentication, Session } from "./core/http/caller.mjs";
 import { CookieAttributes, CookieInstruction } from "./core/http/cookies.mjs";
-import { Clock } from "./core/http/environment.mjs";
 import { AnyErrorCode, PluginErrorCode, PluginErrorDefinition, VelveError, VelveErrorCode, registerPluginErrorCodes, resolveErrorCode } from "./core/http/error-map.mjs";
+import { ProofOfWorkSolution } from "./core/http/proof-of-work.mjs";
+import { Clock } from "./core/http/environment.mjs";
 import { SecurityStateFloor, SecurityStateSealedEvent } from "./core/security-state/anchor.mjs";
 import { EmailChangedEvent, FrozenContext, FrozenRepositories, PasskeyRecoveryStartedEvent, PluginActor, PluginHooks, PluginMigration, PluginRoute, RevokeReason, SecurityStateAnchor, SessionCreateEvent, SessionCreatedEvent, SessionRevokeEvent, SignInCompletedEvent, SignInEvent, UserCreateEvent, UserCreatedEvent, VelvePlugin } from "./core/plugin/config.mjs";
 import { AnyRoute, CallerRequirement, OriginRequirement } from "./core/http/route.mjs";
+import { FEWEST_SIGN_IN_FAILURES_BEFORE_PROOF, HIGHEST_PROOF_OF_WORK_DIFFICULTY, LOWEST_PROOF_OF_WORK_DIFFICULTY, MOST_SIGN_IN_FAILURES_BEFORE_PROOF, ProofOfWorkConfig, ProofOfWorkContext, ProofOfWorkRoute, SignInFailureContext, SignInRouteGuardedAfterFailures } from "./core/pow/config.mjs";
 import { PendingToken } from "./core/factor/pending/token.mjs";
 import { SessionToken } from "./core/session/token.mjs";
 import { Identity, OAuthCallbackResult, OAuthRedirect, SignInResult, SignUpResult } from "./core/auth/results.mjs";
@@ -2659,10 +2834,12 @@ import { WebAuthnCredential } from "./core/factor/webauthn/credential-repository
 import { WebAuthnAuthenticationChallenge, WebAuthnRegistrationChallenge } from "./core/factor/webauthn/service.mjs";
 import { ChangedUser, EmailNamespace, MagicLinkNamespace, MailedPasswordNamespace, RecoveryPasswordNamespace, RedeemResetResult, SetPasswordResult, SignUpNamespace } from "./core/flows/results.mjs";
 import { OAuthCallbackOutcome } from "./core/oauth/service.mjs";
+import { PROOF_OF_WORK_LIFETIME_IN_SECONDS, ProofOfWorkChallenge } from "./core/pow/challenge.mjs";
 import { FinishPasskeyRecoveryResult, PendingPasskeyRecovery } from "./core/recovery/flow.mjs";
 import { PasskeyRecoveryNamespace } from "./core/recovery/routes.mjs";
 import { AuthenticatorResponse, RecoveryNamespace, SignInPasskeyNamespace, TotpNamespace, WebAuthnNamespace } from "./core/factor/routes.mjs";
 import { EmailFlowSurface } from "./core/flows/routes.mjs";
+import { ProofOfWorkNamespace } from "./core/pow/routes.mjs";
 import { ResolvedOneTimeToken } from "./core/token/resolution.mjs";
 import { SweepReport } from "./core/auth/maintenance.mjs";
 import { ChosenWeakening, SECURITY_OPTIONS, SecurityOption } from "./core/auth/security-options.mjs";
@@ -2697,10 +2874,12 @@ export {
 	type EmailMessage,
 	EmailNamespace,
 	type EntityId,
+	FEWEST_SIGN_IN_FAILURES_BEFORE_PROOF,
 	type FinishPasskeyRecoveryResult,
 	FrozenContext,
 	FrozenRepositories,
 	GenericProviderConfig,
+	HIGHEST_PROOF_OF_WORK_DIFFICULTY,
 	type Identity,
 	type IdentityConfig,
 	type IdentityFields,
@@ -2710,7 +2889,9 @@ export {
 	type KeyProvider,
 	KnownProvider,
 	LONGEST_PASSKEY_RECOVERY_WAIT_IN_SECONDS,
+	LOWEST_PROOF_OF_WORK_DIFFICULTY,
 	type LimitsConfig,
+	MOST_SIGN_IN_FAILURES_BEFORE_PROOF,
 	MagicLinkNamespace,
 	MailedPasswordNamespace,
 	type ModeHasEmail,
@@ -2727,6 +2908,7 @@ export {
 	type OriginRequirement,
 	type OwnedRowRepository,
 	type OwnedRowRepositoryOptions,
+	PROOF_OF_WORK_LIFETIME_IN_SECONDS,
 	type PasskeyRecoveryConfig,
 	type PasskeyRecoveryContext,
 	type PasskeyRecoveryNamespace,
@@ -2741,6 +2923,12 @@ export {
 	PluginHooks,
 	PluginMigration,
 	PluginRoute,
+	type ProofOfWorkChallenge,
+	type ProofOfWorkConfig,
+	type ProofOfWorkContext,
+	type ProofOfWorkNamespace,
+	type ProofOfWorkRoute,
+	type ProofOfWorkSolution,
 	ProviderCredentials,
 	type ProviderId,
 	type RateAlert,
@@ -2777,9 +2965,11 @@ export {
 	SetPasswordResult,
 	SignInCompletedEvent,
 	SignInEvent,
+	type SignInFailureContext,
 	type SignInLookup,
 	type SignInPasskeyNamespace,
 	type SignInResult,
+	type SignInRouteGuardedAfterFailures,
 	SignUpNamespace,
 	type SignUpResult,
 	type SweepReport,

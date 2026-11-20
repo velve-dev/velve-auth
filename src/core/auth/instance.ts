@@ -52,6 +52,8 @@ import { createPluginConnection } from "../plugin/login-connection.js";
 import { pluginMigrations } from "../plugin/migrations.js";
 import { assertNoCoreRouteIsOverwritten, createPluginRuntime } from "../plugin/registry.js";
 import { type PluginSurface, pluginRoutes } from "../plugin/routes.js";
+import { createProofOfWork, type ProofOfWork } from "../pow/gate.js";
+import { type ProofOfWorkSurface, proofOfWorkRoutes } from "../pow/routes.js";
 import type { PasskeyRecoverySurface } from "../recovery/routes.js";
 import type { SecurityStateAnchorPort } from "../security-state/anchor.js";
 import {
@@ -95,7 +97,9 @@ import {
 } from "./security-state-maintenance.js";
 import {
 	assertConfigurationIsStartable,
+	assertCookieSigTakesMac,
 	assertKeysAnswerForEveryPurpose,
+	assertNoRouteDeclaresTheSolutionField,
 	type RouteConflict,
 	THE_CORE,
 	VelveStartupError,
@@ -198,7 +202,8 @@ type SeamSurface<M extends IdentityMode> = OAuthSurface<M> &
 	PasswordSurface<M> &
 	PluginSurface<M> &
 	FactorSurface &
-	PasskeyRecoverySurface<M>;
+	PasskeyRecoverySurface<M> &
+	ProofOfWorkSurface;
 
 export type VelveAuth<M extends IdentityMode> = AuthInternals &
 	SeamSurface<M> & {
@@ -254,6 +259,7 @@ export const SURFACE_NAMESPACES: readonly string[] = [
 	"username",
 	"oneTimeToken",
 	"passkeyRecovery",
+	"proofOfWork",
 	"routes",
 	"identityMode",
 	"errorCodes",
@@ -471,6 +477,21 @@ function securityStateOf<M extends IdentityMode>(
 	});
 }
 
+function proofOfWorkOf<M extends IdentityMode>(
+	config: VelveAuthConfig<M>,
+	resolved: { readonly driver: Driver; readonly schema: string; readonly clock: Clock },
+): ProofOfWork | undefined {
+	const configured = config.rateLimit?.proofOfWork;
+	return configured === undefined
+		? undefined
+		: createProofOfWork({ ...resolved, config: configured, keys: config.keys });
+}
+
+//an unconfigured proof of work must reach the pipeline as an absent key (E-1258)
+function gateOf(proofOfWork: ProofOfWork | undefined): { readonly proofOfWork?: ProofOfWork } {
+	return proofOfWork === undefined ? {} : { proofOfWork };
+}
+
 //the core reads no clock of its own, so the caller brings the fallback one (E-231)
 export function assembleVelveAuth<M extends IdentityMode>(
 	config: VelveAuthConfig<M>,
@@ -593,6 +614,8 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		pluginRuntime,
 	};
 
+	const proofOfWork = proofOfWorkOf(config, { driver, schema, clock });
+
 	const [signOut, read, list, revoke, revokeAllOther, revokeAll, refresh] = sessionRoutes(services);
 	const pendingTable = pendingRoutes(services);
 	const [, cancelPending] = pendingTable;
@@ -604,6 +627,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		...emailFlowRoutes(services),
 		...passwordRoutes(services),
 		...factorRoutes(services),
+		...proofOfWorkRoutes(services, proofOfWork),
 	];
 	const coreRoutes: readonly AnyRoute[] = [
 		signOut,
@@ -622,6 +646,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 	const ownerOfRoute = (route: RouteMetadata): string => pluginRuntime.ownerOf(route);
 	assertNoCoreRouteIsOverwritten(contributedRoutes, coreRoutes, ownerOfRoute);
 	assertNoPluginTakesACoreNamespace(pluginRuntime.plugins, contributedRoutes, ownerOfRoute);
+	assertNoRouteDeclaresTheSolutionField([...coreRoutes, ...contributedRoutes], proofOfWork);
 
 	const environment: HttpEnvironment = {
 		routes: [...coreRoutes, ...contributedRoutes],
@@ -643,6 +668,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 			clock,
 			config: { routeFlood: routeFloodWatchOf(rateLimit) },
 		}),
+		...gateOf(proofOfWork),
 		clock,
 		log,
 	};
@@ -674,6 +700,7 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		async migrate(): Promise<MigrationReport> {
 			//a start the keys refuse must have written nothing to the schema (E-3374)
 			await assertKeysAnswerForEveryPurpose(config.keys);
+			await assertCookieSigTakesMac(config.keys, proofOfWork);
 			if (await schemaHoldsTheSealTable(driver, schema)) {
 				await assertStoredIntegrityKeysTakeMac({ driver, keys: config.keys, schema });
 			}

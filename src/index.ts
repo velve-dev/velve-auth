@@ -118,11 +118,28 @@ export {
 	VelveError,
 	type VelveErrorCode,
 } from "./core/http/error-map.js";
+export type { ProofOfWorkSolution } from "./core/http/proof-of-work.js";
 export type { AnyRoute, CallerRequirement, OriginRequirement } from "./core/http/route.js";
 export type { UsernameRules } from "./core/identity/configuration.js";
 export { type KeyProvider, rootKeyProvider } from "./core/keys/index.js";
 export type * from "./core/oauth/index.js";
 export type * from "./core/plugin/index.js";
+export {
+	PROOF_OF_WORK_LIFETIME_IN_SECONDS,
+	type ProofOfWorkChallenge,
+} from "./core/pow/challenge.js";
+export {
+	FEWEST_SIGN_IN_FAILURES_BEFORE_PROOF,
+	HIGHEST_PROOF_OF_WORK_DIFFICULTY,
+	LOWEST_PROOF_OF_WORK_DIFFICULTY,
+	MOST_SIGN_IN_FAILURES_BEFORE_PROOF,
+	type ProofOfWorkConfig,
+	type ProofOfWorkContext,
+	type ProofOfWorkRoute,
+	type SignInFailureContext,
+	type SignInRouteGuardedAfterFailures,
+} from "./core/pow/config.js";
+export type { ProofOfWorkNamespace } from "./core/pow/routes.js";
 export type {
 	PasskeyRecoveryConfig,
 	PasskeyRecoveryContext,

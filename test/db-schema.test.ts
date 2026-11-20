@@ -61,7 +61,7 @@ async function userOwnedTableNames(): Promise<string[]> {
 }
 
 describe("the shipped schema", () => {
-	it("creates the eighteen tables of architecture 3.17 and 3.18", async () => {
+	it("creates the nineteen tables of architecture 3.9, 3.17 and 3.18", async () => {
 		const rows = await connection.query<{ table_name: string }>(
 			"SELECT table_name FROM information_schema.tables WHERE table_schema = $1 ORDER BY table_name",
 			[schema],
@@ -76,6 +76,7 @@ describe("the shipped schema", () => {
 			"password_credential",
 			"password_reset_required",
 			"pending_authentication",
+			"proof_of_work_spent",
 			"rate_bucket",
 			"recovery_code",
 			"schema_migration",

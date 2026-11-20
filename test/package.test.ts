@@ -25,6 +25,7 @@ describe("package manifest", () => {
 		expect(Object.keys(manifest.exports).sort()).toEqual([
 			".",
 			"./client",
+			"./client/proof-of-work-worker",
 			"./http",
 			"./package.json",
 			"./pg",

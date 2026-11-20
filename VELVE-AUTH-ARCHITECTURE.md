@@ -45,7 +45,7 @@ Velve Auth is a sign-in library for TypeScript and PostgreSQL that runs inside t
 
 **The runtime.** Pure TypeScript, no Rust/WASM module of its own, six dependencies without native bindings. Measured on 2 vCPU, so an order of magnitude rather than an absolute value: Argon2id at OWASP parameters costs 263 ms in JavaScript against 76 ms in WASM — but WASM fails in Cloudflare Workers on `Wasm code generation disallowed by embedder` and is untested on Caprock (ESTIMATE), and a Rust module of one's own would be only 1.6 times faster than off-the-shelf WASM, at the price of a second toolchain and an unauditable binary blob. The decisive finding: `@noble/hashes`, `hash-wasm` and a Rust WASI variant produce **byte-identical** Argon2id hashes. The compute engine is thereby exchangeable without touching a single stored hash.
 
-**The safeguarding.** 145 security requirements in nineteen error classes, each with at least one test case and a number fixed in advance as its threshold; 149 test cases, of which 130 block every commit. Fifteen of the 33 Better Auth advisories transfer directly to Velve Auth and are excluded by named requirements; eighteen are not applicable because the affected feature does not exist.
+**The safeguarding.** 149 security requirements in nineteen error classes, each with at least one test case and a number fixed in advance as its threshold; 153 test cases, of which 134 block every commit. Fifteen of the 33 Better Auth advisories transfer directly to Velve Auth and are excluded by named requirements; eighteen are not applicable because the affected feature does not exist.
 
 **Honestly named limits.** In the `username` configuration there is no reset by email — the library refuses to start there if no recovery codes are configured. Usernames are by definition enumerable as soon as an availability check is offered; that stands in the data sheet instead of being a silent gap in the code. The encrypted password storage means: key loss is password loss. Imported bcrypt hashes check only the first 72 bytes until the rehash has replaced them. A writer on the database who also has the root key has everything, and without the anchor from section 3.18 they can reset an account to an old, internally consistent state. And whether Node starts on Caprock and the chosen PostgreSQL driver works there is the only notable unverified assumption of the whole design.
 
@@ -57,8 +57,8 @@ Velve Auth is a sign-in library for TypeScript and PostgreSQL that runs inside t
 2. Language and runtime — the assessment, the measurements, the recommendation
 3. Target architecture — package structure, schema, sessions, verification path, identity, second factor, tokens, keys, rate limiting, third-party providers, plugins, public interface, error handling, decided gaps, integrity of the security state
 4. Migration module — five sources, per source schema, mapping, hash adoption, losses, follow-up work
-5. Security requirements — 145 requirements in nineteen error classes, with a coverage table of the 33 advisories
-6. Test plan — 149 test cases with thresholds fixed in advance
+5. Security requirements — 149 requirements in nineteen error classes, with a coverage table of the 33 advisories
+6. Test plan — 153 test cases with thresholds fixed in advance
 7. Decision log — E-01 to E-46, the initial stock for the case study
 
 The build brief lies separately as `CLAUDE-CODE-AUFTRAG.md`.
@@ -568,7 +568,7 @@ plugins themselves are already contained in A–M and are not counted twice here
 | H26 Custom schemes | `myapp://`, `chrome-extension://`, `exp://**` by string decomposition instead of `new URL()` (`trusted-origins.ts:32-73`) | Solve differently | Non-HTTP schemes are entered as a complete, exact origin and compared as such; no string decomposition of one's own and no `**`. A self-built URL parser alongside the built-in one is a parser differential (cf. GHSA-prpr-5gj3-qqhg). |
 | H27 Redirect URL validation | Rejects `//`, `\`, control characters, `%2f` (`trusted-origins.ts:14-105`) | Solve differently | Complete URLs are not taken in at all: `redirect_path` is a path, held server-side (section 3.10). What one does not take in one does not have to validate — five advisories of this class (no. 1, 3, 4, 5, 25 in the security report) could not have arisen that way. |
 | H28 `originCheckMiddleware` | Origin/referer check on all non-GET routes with a cookie (`origin-check.ts:67-151`) | Adopt | Adopted and tightened: it also runs on direct server calls and is not switchable off. |
-| H29 `Origin: null` special case | Reconstructs the origin with `Sec-Fetch-Site: same-origin` (`origin-check.ts:253-269`) | Omit | Not adopted: an `Origin: null` is rejected with `origin_not_allowed` like every origin that is not allowed, with `Sec-Fetch-Site: same-origin` too, and T-CSRF-3 lists `null` as a variant to be rejected. The check admits a missing `Origin` header only on the eight reading `GET` routes, when the request comes through the HTTP handler and carries `Sec-Fetch-Site: same-origin` (S-CSRF-1). |
+| H29 `Origin: null` special case | Reconstructs the origin with `Sec-Fetch-Site: same-origin` (`origin-check.ts:253-269`) | Omit | Not adopted: an `Origin: null` is rejected with `origin_not_allowed` like every origin that is not allowed, with `Sec-Fetch-Site: same-origin` too, and T-CSRF-3 lists `null` as a variant to be rejected. The check admits a missing `Origin` header only on the nine reading `GET` routes, when the request comes through the HTTP handler and carries `Sec-Fetch-Site: same-origin` (S-CSRF-1). |
 | H30 Callback URL validation | `callbackURL`, `redirectTo`, `errorCallbackURL`, `newUserCallbackURL` against `trustedOrigins` (`origin-check.ts:83-150`) | Solve differently | Four parameters with URL semantics become one path parameter (H27). Every additional URL parameter is a further place at which the validation can be forgotten — CVE-2024-56734 was exactly that. |
 | H31 `advanced.disableCSRFCheck` | Switches the CSRF check off (`create-context.ts:397`) | Omit | Nobody. The check is part of the fixed chain in front of every route (section 3.11) and knows no switch. Whoever wants to switch it off has in practice a missing origin in the list — that is fixed there, not at the check; and a switch that is thrown in development stays thrown in production. |
 | H32 `advanced.disableOriginCheck` | Switches the URL validation off, and out of compatibility CSRF too (`create-context.ts:398-403`) | Omit | Nobody. An option that switches two checks off at once although its name names only one is the reason why it may not exist. |
@@ -1094,6 +1094,7 @@ cross-package version drift.
 @velve/auth              core: createVelveAuth(), all core operations
 @velve/auth/http         toWebHandler(): (Request) => Promise<Response>
 @velve/auth/client       typed client, derived from the same route declaration
+@velve/auth/client/proof-of-work-worker   the worker module the client solves a proof of work in (3.9)
 @velve/auth/pg           driver for node-postgres
 @velve/auth/schema       generated SQL, migration runner
 @velve/auth/testing      test helpers (clock control, deterministic randomness)
@@ -1114,7 +1115,8 @@ core/
   token/        one-time artefacts: creation, atomic consumption
   factor/       TOTP, WebAuthn, recovery codes, intermediate state
   oauth/        authorisation code flow, PKCE, identity linking
-  limit/        token bucket
+  limit/        token bucket, failure counters of the proof of work
+  pow/          proof of work: challenge, check, spent challenges
   keys/         KeyProvider, HKDF purpose derivation, key ring
   db/           driver interface, repositories, migration runner
   http/         route declaration, origin check, cookies, error mapping
@@ -1145,7 +1147,7 @@ interface Driver {
 
 This is the initial form. The changes from decisions L-2 and L-3 and
 the two tables of the migration module are in 3.17; together the two
-blocks make up the schema with sixteen tables; the seventeenth, `velve.security_state`, and the token MAC columns are in 3.18, as is the eighteenth, `velve.passkey_recovery`.
+blocks make up the schema with sixteen tables; the seventeenth, `velve.security_state`, and the token MAC columns are in 3.18, as is the eighteenth, `velve.passkey_recovery`; the nineteenth, `velve.proof_of_work_spent`, is in 3.9.
 
 ```sql
 CREATE SCHEMA IF NOT EXISTS velve;
@@ -1659,6 +1661,39 @@ Negative means rejected. Three counters at once:
 The key contains the **resolved route name**, not the raw path —
 `//sign-in` and `/sign-in` are the same counter (GHSA-x732-6j76-qmhm).
 
+#### The proof of work
+
+An invisible puzzle the browser solves while the user types. It slows mass attempts and keeps the operator's mail server from being used against other people's addresses; the protection remains the counters above. Without `rateLimit.proofOfWork` (A.6) it is off: no route asks for it, and `/proof-of-work/challenge` does not exist (S-RATE-12).
+
+1. **The challenge.** `GET /proof-of-work/challenge` with `{ route }` hands out `{ challenge, difficulty, expiresAt }`. `challenge` is `<key version>.<difficulty>.<expiry>.<value>.<MAC>`: 32 bytes from the same source as the session token as base64url, the difficulty in leading zero bits, the expiry in Unix seconds ten minutes after the issue by the database clock, and an HMAC-SHA256 over a fixed domain, the name of the route and the four fields before it. Its key is no new secret: it arises by HKDF-Expand (RFC 5869) from the purpose key `cookie-sig` of the named version, so that a key provider of the application's own has to answer no new purpose. Nothing is stored at the issue; the route is reading (S-CSRF-4).
+2. **The solution.** The client looks for `n` with `SHA-256(challenge ‖ n)` beginning with `difficulty` zero bits, `challenge` as UTF-8 and `n` as eight bytes big-endian with `0 ≤ n ≤ 2^53 − 1`. It sends `<challenge>.<n>` in the header `Velve-Proof-Of-Work`; a direct server call passes `proofOfWork: { challenge, nonce }`.
+3. **The check.** One SHA-256, the MAC over the name of the called route, and in one statement the expiry against the database's `now()` and the insert of the challenge's SHA-256 into `velve.proof_of_work_spent` with `ON CONFLICT DO NOTHING`; of two simultaneous uses exactly one wins (S-RATE-10). A missing, malformed, foreign-route, altered, expired, unsolved or spent solution answers `400 proof_of_work_required`; only the log names the reason (F.1, S-RATE-9). `maintenance.sweep` deletes a row after its expiry by the same database clock, so that a deleted challenge is not accepted again. Where a route asks for no solution, one sent along is neither checked nor spent.
+4. **Where.** On every call of `signUp.withPassword`, `signUp.withoutPassword`, `password.requestReset`, `signIn.magicLink.request` and `passkeyRecovery.request`. `signIn.password` asks for it as soon as the failure counter of the account or that of the address reaches the threshold; `signIn.passkey.finish` only by the counter of the address, because a discoverable passkey names no account before the check. A failure is every answer `invalid_credentials`, or `webauthn_challenge_invalid` and `webauthn_credential_rejected`, also with a solution sent along. A counter is a row in `velve.rate_bucket`, keyed like the bucket (L-5, S-RATE-7), and forgets one failure per hour; a sign-in without an account counts like one with an account. The check runs before the account bucket, before every KDF call and before every mail; a refusal draws no token from the account bucket (S-RATE-11).
+5. **The configuration.** `difficulty({ route })` and `signInFailuresBeforeProof({ route })` are asked on every request, never at construction, and clamped to 0 to 20 bits and 1 to 100 failures respectively; an answer that is no number counts as the strictest bound. A `rateLimit.proofOfWork` without both functions is the start error `proof_of_work_unusable` (S-RATE-12), as is a route — a plugin's included — that declares an input field `proofOfWork`, the field a direct server call carries the solution in; and `migrate()` refuses with `keys_unusable` when the key provider answers `cookie-sig` with a key that cannot take HMAC-SHA256, since the challenge key is expanded from it (E-3677).
+
+```ts
+interface ProofOfWorkConfig {
+  difficulty: (context: { route: ProofOfWorkRoute }) => number                  // 0 to 20 bits, clamped
+  signInFailuresBeforeProof: (context: { route: SignInRouteGuardedAfterFailures }) => number   // 1 to 100, clamped
+}
+type SignInRouteGuardedAfterFailures = "signIn.password" | "signIn.passkey.finish"
+type ProofOfWorkRoute = SignInRouteGuardedAfterFailures | "signUp.withPassword" | "signUp.withoutPassword"
+  | "password.requestReset" | "signIn.magicLink.request" | "passkeyRecovery.request"
+interface ProofOfWorkChallenge { challenge: string; difficulty: number; expiresAt: Date }   // valid for ten minutes
+interface ProofOfWorkSolution  { challenge: string; nonce: number }                        // direct server call
+```
+
+The limits: whoever has computing power of their own pays milliseconds to seconds per attempt; the proof of work makes mass attempts more expensive, it does not replace the counters. A challenge can be solved in advance until its expiry, but each can be used only once. An instance before 3.0.0 does not know the table; the proof of work is configured only once every instance runs 3.0.0.
+
+```sql
+-- Migration 9
+CREATE TABLE velve.proof_of_work_spent (
+  challenge_sha256 bytea PRIMARY KEY CHECK (octet_length(challenge_sha256) = 32),
+  expires_at       timestamptz NOT NULL
+);
+CREATE INDEX proof_of_work_spent_sweep_idx ON velve.proof_of_work_spent (expires_at);
+```
+
 ### 3.10 Third-party sign-in
 
 Authorisation code flow with **PKCE S256 mandatory**, `state` server-side
@@ -1900,7 +1935,7 @@ declare function pg(pool: import("pg").Pool): Driver                       // @v
 | `session` | `SessionConfig` | A.5 | Lifetimes, cookie name, cookie options, freshness window. |
 | `sessionMetadata` | `"truncated" \| "full" \| "none"` | `"truncated"` | Truncation of `ip` and `user_agent` in `velve.session` (L-10). |
 | `trustedProxies` | `readonly string[]` | `[]` | CIDR blocks whose `X-Forwarded-For` counts; otherwise the connection address counts. |
-| `rateLimit` | `RateLimitConfig` | A.6 | Bucket sizes, alert callback. |
+| `rateLimit` | `RateLimitConfig` | A.6 | Bucket sizes, alert callback, proof of work (3.9). |
 | `email` | `EmailConfig` | none | Send callback; its absence is a start error in `email` and `username_email`. |
 | `oauth` | `OAuthConfig` | none | Providers, trusted providers, token storage. |
 | `webauthn` | `WebAuthnConfig` | none | Relying party; its absence removes all WebAuthn routes. |
@@ -1968,6 +2003,7 @@ interface RateLimitConfig {
   perIpAddress: BucketRule       // default { capacity: 30, refillPerSecond: 0.5 }
   perAccount: BucketRule         // default { capacity: 5, refillPerSecond: 1 / 300 }
   globalPerRoute: { alertThresholdPerMinute: number; onAlert: (alert: RateAlert) => void }
+  proofOfWork?: ProofOfWorkConfig  // absent: off; 3.9
 }
 interface RateAlert { routeName: string; requestsInLastMinute: number; observedAt: Date }
 ```
@@ -2131,6 +2167,7 @@ interface AuthSurface<M extends IdentityMode> {
   username: OnlyWhen<ModeHasUsername<M>, UsernameNamespace>
   oneTimeToken: OnlyWhen<ModeHasEmail<M>, OneTimeTokenNamespace>   // without an HTTP route, B.10
   passkeyRecovery: OnlyWhen<ModeHasEmail<M>, PasskeyRecoveryNamespace>   // only with webauthn.recovery, B.11
+  proofOfWork: { challenge(input: { route: ProofOfWorkRoute }): Promise<ProofOfWorkChallenge> }   // only with rateLimit.proofOfWork, 3.9
 }
 
 interface AuthInternals {
@@ -2170,8 +2207,8 @@ interface SealedSecurityState {                                   // what the re
 
 `routes` is not an implementation detail but the data structure from which part D builds the
 HTTP handler and part E the client. It is present at run time, because otherwise the client
-would have to guess. `AuthSurface` has 65 methods in mode `username_email`, 62 in `email`, 50 in
-`username`, counting the five of `passkeyRecovery`, which exist only with `webauthn.recovery`. `maintenance.sweep` deletes expired rows from the seven tables with
+would have to guess. `AuthSurface` has 66 methods in mode `username_email`, 63 in `email`, 51 in
+`username`, counting the five of `passkeyRecovery`, which exist only with `webauthn.recovery`, and the one of `proofOfWork`, which exists only with `rateLimit.proofOfWork`. `maintenance.sweep` deletes expired rows from the eight tables with
 `*_sweep_idx` (L-11); `@velve/auth/schema` delivers the same as SQL for `pg_cron`.
 `maintenance.sealSecurityState` and `maintenance.resealSecurityState` are the maintenance step
 and the resealing from 3.18; like `sweep` they have no route, and the application calls them
@@ -2853,6 +2890,7 @@ cookie; `caller: "session"` produces exactly this one difference between the sig
 | POST | `/passkey-recovery/finish` | `{ challengeToken, response, label }` | `FinishPasskeyRecoveryResult` | 200, 400 | IP | yes |
 | GET | `/passkey-recovery` | — | `PendingPasskeyRecovery \| null` | 200, 401 | IP | yes |
 | POST | `/passkey-recovery/cancel` | — | — | 204, 401 | IP | yes |
+| GET | `/proof-of-work/challenge` | Query `{ route }` | `ProofOfWorkChallenge` | 200, 400 | IP | yes |
 
 Not listed, because possible everywhere: `429 rate_limited` on every route with a limit (the
 three 429s shown are `too_many_factor_attempts`), `403 origin_not_allowed` on every
@@ -2864,7 +2902,9 @@ route with an origin check, `403 account_disabled` on every route with caller `s
 `webauthn` configured, without it the nine `webauthn` and `passkey` routes are missing. With
 `webauthn.recovery` the five routes `/passkey-recovery*` come on top in the two modes with an
 address, 52 in `username_email` and 50 in `email`; without it, without `webauthn` and in mode
-`username` they are missing (3.18, The recovery to a new passkey). The
+`username` they are missing (3.18, The recovery to a new passkey). With `rateLimit.proofOfWork`
+`/proof-of-work/challenge` comes on top in every mode; without it the route is missing, and no route
+asks for a solution (3.9). The
 table is filtered by mode and configuration when the instance is created; a route that does not
 exist in the chosen mode does not answer with 403 but does not exist and yields 404. `auth.user.*` and
 `auth.maintenance.*` have no routes (B.3). Every response carries `Cache-Control: no-store`
@@ -2887,8 +2927,9 @@ can be read off the declaration type.
 
 ```ts
 declare function createVelveClient<Auth extends { routes: readonly AnyRoute[] }>(
-  options: { baseURL: string; fetch?: typeof fetch }
+  options: { baseURL: string; fetch?: typeof fetch; createProofOfWorkWorker?: () => ProofOfWorkWorker }
 ): ClientSurface<Auth["routes"]>
+declare function prepareProofOfWork(client: object, input: { route: ProofOfWorkRoute }): Promise<void>
 ```
 
 ```
@@ -2937,6 +2978,17 @@ responses that are not a Velve error envelope. Both are `VelveTransportError`, n
 `VelveError` — "the server said no" against "the server did not answer".
 `retryAfterSeconds` is present only with `rate_limited`.
 
+**The proof of work in the client.** If a route answers `proof_of_work_required`, the client fetches
+a challenge for exactly this route through `/proof-of-work/challenge`, solves it and sends the call
+one single further time with the header `Velve-Proof-Of-Work` (3.9). `prepareProofOfWork`
+solves in advance, while the user types; the solution holds for one call. It stands beside the
+client and not in it, so that the client stays the route table and carries no leaf without a row. Solving happens in a
+module worker that `@velve/auth/client` ships beside itself and starts with
+`new Worker(new URL("./proof-of-work-worker.mjs", import.meta.url), { type: "module" })` —
+the form from which bundlers copy the worker along; a Content Security Policy has to admit it with
+`worker-src 'self'` and needs neither `blob:` nor `'unsafe-eval'`. If the page cannot start a
+worker, the calling thread solves with the same function. The worker reaches no network.
+
 ---
 
 #### F) Error types
@@ -2952,7 +3004,7 @@ type VelveErrorCode =
   | "factor_not_enrolled" | "factor_already_enrolled" | "last_sign_in_method"
   | "identity_already_linked" | "provider_not_configured"
   | "passkey_limit_reached" | "identity_limit_reached" | "recovery_disabled"
-  | "passkey_recovery_failed"
+  | "passkey_recovery_failed" | "proof_of_work_required"
   | "oauth_flow_invalid" | "oauth_provider_error"
   | "webauthn_challenge_invalid" | "webauthn_credential_rejected"
   | "webauthn_credential_not_discoverable" | "authenticator_not_allowed"
@@ -2965,7 +3017,7 @@ class VelveError extends Error {
 }
 ```
 
-31 codes, stable: a code disappears only at a major version jump, a new one arrives only with
+32 codes, stable: a code disappears only at a major version jump, a new one arrives only with
 a new route or a new refusal on an existing one.
 
 | Code | When | Status | Visible |
@@ -2993,6 +3045,7 @@ a new route or a new refusal on an existing one.
 | `identity_limit_reached` | The account already has `limits.identitiesPerAccount` identities | 409 | yes |
 | `recovery_disabled` | Generating recovery codes while the account has turned recovery off (3.18) | 409 | yes |
 | `passkey_recovery_failed` | A step of the recovery to a new passkey after the request fails (3.18) | 400 | yes, **merged** |
+| `proof_of_work_required` | A route asks for a proof of work, and the solution is missing or not accepted (3.9) | 400 | yes, **merged** |
 | `provider_not_configured` | Provider not in `oauth.providers` | 400 | yes |
 | `oauth_flow_invalid` | `state`, PKCE, `nonce` or `iss` do not match | 400 | yes, **merged** |
 | `oauth_provider_error` | Provider answers faultily or not at all | 502 | yes |
@@ -3022,6 +3075,7 @@ the inner codes are only logged.
 | `invalid_input` | `session_issue_missed_on_sign_up` |
 | `factor_already_enrolled` | `session_issue_missed_on_password_set` |
 | `passkey_recovery_failed` | `passkey_recovery_link_refused`, `passkey_recovery_code_refused`, `passkey_recovery_refused_for_account`, `passkey_recovery_registration_refused`, `passkey_recovery_refused`, `broken_state_on_passkey_recovery` |
+| `proof_of_work_required` | `proof_of_work_missing`, `proof_of_work_malformed`, `proof_of_work_forged`, `proof_of_work_unsolved`, `proof_of_work_expired`, `proof_of_work_spent` |
 
 Seven operations produce **no** error at all although something failed inside, because an
 error would give away existence: `signUp.*` with an email already taken (200 as on success, plus mail
@@ -3529,7 +3583,7 @@ CREATE TABLE velve.passkey_recovery (
 );
 ```
 
-With that the schema comprises **eighteen tables**.
+With that the schema comprises **eighteen tables**; with `velve.proof_of_work_spent` from 3.9 (migration 9) there are nineteen.
 
 #### Verified attestation and the authenticator allowlist
 
@@ -3558,7 +3612,7 @@ ALTER TABLE velve.passkey_recovery
     CHECK (NOT attestation_verified OR aaguid IS NOT NULL);
 ```
 
-Migration 8 creates no table; the schema still comprises **eighteen tables**.
+Migration 8 creates no table; the schema still comprises **eighteen tables** here, and with migration 9 from 3.9 nineteen.
 
 ---
 
@@ -4597,6 +4651,10 @@ The design is **not** changed here. Where the elaboration exposed a gap in the t
 - **S-RATE-6:** The counter is advanced in a single database statement (`INSERT … ON CONFLICT … DO UPDATE … RETURNING tokens`); with *n* simultaneous requests against a limit *L* at most *L* are accepted. *(Section 3.9, SQL block: "one round trip")*
 - **S-RATE-7:** The key of the account-related counter is `HMAC(token-pepper, normalised identifier)`, not the account id; it is formed before the user is resolved, so that existing and non-existing accounts advance the same row and the identifier does not stand in cleartext in `velve.rate_bucket`. An empty bucket leads to a rejection with `rate_limited`, never to an artificial delay and never to a lock; the bucket refills at the configured rate, and after arbitrarily many failed attempts by third parties an account remains reachable for the rightful owner with correct credentials. *(Section 3.16, L-5; section 3.9: "a bucket with a slowly refilling rate instead of a lock … A lock is a denial of service against a known user.")*
 - **S-RATE-8:** The counter per route and instance triggers on overrun exclusively the alarm callback and rejects no request. *(Section 3.9, third enumeration point)*
+- **S-RATE-9:** A challenge of the proof of work is not stored at its issue; it carries 32 random bytes, the difficulty, the expiry and an HMAC-SHA256 under a key derived from `cookie-sig` over the name of the route it was issued for. The server checks a solution with one SHA-256; a missing, malformed, foreign-route, altered, expired, unsolved or spent solution answers with the same code `proof_of_work_required`, the same status and the same body. *(Section 3.9, The proof of work, points 1 to 3; section 3.15 F.1)*
+- **S-RATE-10:** Each challenge is accepted at most once: spending it is one statement that checks the expiry against the database clock and inserts the challenge's SHA-256 into `velve.proof_of_work_spent` with `ON CONFLICT DO NOTHING`; of *n* simultaneous uses of the same solution exactly one is accepted. The row stays until the expiry and is deleted by `maintenance.sweep` afterwards. *(Section 3.9, The proof of work, point 3)*
+- **S-RATE-11:** With `rateLimit.proofOfWork`, `signUp.withPassword`, `signUp.withoutPassword`, `password.requestReset`, `signIn.magicLink.request` and `passkeyRecovery.request` ask for a solved challenge on every call, `signIn.password` as soon as the failure counter of the account or that of the address reaches the threshold, and `signIn.passkey.finish` as soon as that of the address reaches it. The check runs before the account bucket, before every KDF call and before every mail; the failure counters are keyed like the account bucket, so that an identifier without an account is asked for a solution after exactly as many failures as one with an account. *(Section 3.9, The proof of work, point 4; section 3.16, L-5)*
+- **S-RATE-12:** Without `rateLimit.proofOfWork` no route asks for a proof of work, and the route `/proof-of-work/challenge` does not exist. Difficulty and failure threshold are functions asked on every request, never at construction; the library clamps the difficulty to 0 to 20 bits and the threshold to 1 to 100 failures, and an answer that is no number counts as the strictest bound. *(Section 3.9, The proof of work, point 5; section 3.15 A.6)*
 
 ---
 
@@ -4625,10 +4683,10 @@ The design is **not** changed here. Where the elaboration exposed a gap in the t
 
 **(c) The requirements.**
 
-- **S-CSRF-1:** Every route except `GET /sign-in/oauth/callback/:provider` and `POST /sign-in/oauth/callback/:provider` carries `originCheck: "checked"` and runs through the origin check before the handler runs; this holds also for the direct server call through the server method generated from the route declaration. Exempt are exactly these two, and both for the same reason: a redirect back from the provider carries no `Origin` header the library would be allowed to compare. The origin check admits a missing `Origin` header in exactly one place: on one of the eight reading `GET` routes of S-CSRF-4, when the request comes through the HTTP handler and carries `Sec-Fetch-Site: same-origin` — this is how a browser calls such a route with `fetch` from its own origin, and no page can set that header. Every other value, a missing `Sec-Fetch-Site` header, every other route and the direct server call stay at `origin_not_allowed`; an `Origin` header that is present is still compared under S-CSRF-2 (E-2390). *(Section 3.15 D.3: "The OAuth callback is the only route without an origin check, and it stands in the table twice"; section 3.11: "The origin check and the rate limiting always come first — for direct server calls too.")*
+- **S-CSRF-1:** Every route except `GET /sign-in/oauth/callback/:provider` and `POST /sign-in/oauth/callback/:provider` carries `originCheck: "checked"` and runs through the origin check before the handler runs; this holds also for the direct server call through the server method generated from the route declaration. Exempt are exactly these two, and both for the same reason: a redirect back from the provider carries no `Origin` header the library would be allowed to compare. The origin check admits a missing `Origin` header in exactly one place: on one of the nine reading `GET` routes of S-CSRF-4, when the request comes through the HTTP handler and carries `Sec-Fetch-Site: same-origin` — this is how a browser calls such a route with `fetch` from its own origin, and no page can set that header. Every other value, a missing `Sec-Fetch-Site` header, every other route and the direct server call stay at `origin_not_allowed`; an `Origin` header that is present is still compared under S-CSRF-2 (E-2390). *(Section 3.15 D.3: "The OAuth callback is the only route without an origin check, and it stands in the table twice"; section 3.11: "The origin check and the rate limiting always come first — for direct server calls too.")*
 - **S-CSRF-2:** The origin check compares `new URL(header).origin` by string equality against an entry from `origins`; the library contains no prefix, substring or pattern matching on origins. *(Section 3.12, `origins: ["https://app.example.com"]`)*
 - **S-CSRF-3:** An origin that differs from the permitted one only in the scheme, the port, a prefix or a suffix is rejected with `origin_not_allowed`; the rejection is byte-identical for all failure variants. *(Section 3.12, `origins`; section 3.15 F, `origin_not_allowed`)*
-- **S-CSRF-4:** No state-changing operation is reachable through `GET`; the only exception is the OAuth callback, which is instead protected by `state`, PKCE and `iss`, and the remaining `GET` routes (`/session`, `/session/list`, `/username/available`, `/factor/webauthn/list`, `/factor/recovery/remaining`, `/identity/list`, `/pending`, `/passkey-recovery`) are reading. *(Section 3.10, first paragraph; section 3.15 D.3, route table)*
+- **S-CSRF-4:** No state-changing operation is reachable through `GET`; the only exception is the OAuth callback, which is instead protected by `state`, PKCE and `iss`, and the remaining `GET` routes (`/session`, `/session/list`, `/username/available`, `/factor/webauthn/list`, `/factor/recovery/remaining`, `/identity/list`, `/pending`, `/passkey-recovery`, `/proof-of-work/challenge`) are reading. *(Section 3.10, first paragraph; section 3.15 D.3, route table)*
 - **S-CSRF-5:** The OAuth `state` lies server-side in `velve.oauth_flow`; the cookie holds only the pointer to it, and a callback with a valid `state` but a missing or foreign pointer cookie is rejected. *(Section 3.10: "`state` server-side in `velve.oauth_flow` (the cookie holds only the pointer)")*
 - **S-CSRF-6:** A plugin can neither replace nor bypass the origin check nor be executed before it. *(Section 3.11, "What a plugin may not do", points 3 and 6)*
 
@@ -4879,7 +4937,7 @@ While this section and the test plan were being elaborated, thirteen gaps in the
 | Attempt limit in the pending state | L-8 |
 | Regressing `sign_count` | L-9, a documented deviation from WebAuthn Level 3 §7.2 |
 | Full IP and user agent in `velve.session` | L-10 |
-| No named sweep run (seven `*_sweep_idx`) | L-11 |
+| No named sweep run (eight `*_sweep_idx`) | L-11 |
 | Unverified pre-registered account (GHSA-qq9h-g4jm-xgf3) | L-12 (takes effect on S-LINK-4) |
 | Removing the last sign-in path | L-13 |
 
@@ -4911,9 +4969,9 @@ While this section and the test plan were being elaborated, thirteen gaps in the
 
 ## 6. Test plan
 
-To each of the 145 requirements from section 5 belongs a test case. The test ID carries the same class and the same number as the requirement: `T-OWNER-3` verifies `S-OWNER-3`. In addition there are four supplementary test cases that are not assigned to a single requirement but secure a class more broadly (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — in total **149 test cases** together.
+To each of the 149 requirements from section 5 belongs a test case. The test ID carries the same class and the same number as the requirement: `T-OWNER-3` verifies `S-OWNER-3`. In addition there are four supplementary test cases that are not assigned to a single requirement but secure a class more broadly (`T-TIM-1b`, `T-RAND-Verteilung`, `T-RAND-Kollision`, `T-CSRF-Parser`) — in total **153 test cases** together.
 
-**Columns.** *Kind* is one of six: `Unit`, `Integration`, `Property` (fast-check), `Statistical`, `Concurrency`, `Static` (lint rule, AST analysis, type check); combinations are given with `+`. *Threshold* is a number or a hard criterion — no test in this plan passes with "no errors". *Runs in* is one of three tiers: `CI on every commit` (130 test cases, plus the static part of T-RACE-2 and the part of T-INTEG-5 other than its timing part), `CI nightly` (15, plus the concurrency part of T-RACE-2 and the timing part of T-INTEG-5), `before every release` (2).
+**Columns.** *Kind* is one of six: `Unit`, `Integration`, `Property` (fast-check), `Statistical`, `Concurrency`, `Static` (lint rule, AST analysis, type check); combinations are given with `+`. *Threshold* is a number or a hard criterion — no test in this plan passes with "no errors". *Runs in* is one of three tiers: `CI on every commit` (134 test cases, plus the static part of T-RACE-2 and the part of T-INTEG-5 other than its timing part), `CI nightly` (15, plus the concurrency part of T-RACE-2 and the timing part of T-INTEG-5), `before every release` (2).
 
 **Principle of the tier assignment.** Everything deterministic blocks every commit. Everything statistical and everything that runs longer than 60 seconds runs nightly on a dedicated runner and reports as a ticket, not as a red build. The reason is in section 6.20.
 
@@ -5036,6 +5094,10 @@ soften the first, so it is declined.
 | T-RATE-6 | S-RATE-6 | Concurrency | 200 requests via `Promise.all` against real Postgres at limit 20; 50 repetitions. | **Exactly 20 successes and 180 rejections in 50/50 runs, tolerance 0** | CI nightly |
 | T-RATE-7 | S-RATE-7 | Integration + Static, controlled clock | `capacity` failed attempts plus one against an existing account and against a non-existent identifier; then advance the clock by the refill time and sign in with the correct password. Search `rate_bucket.bucket_key` for the identifier. Type check: the options type contains no key for a delay or a lockout. | The **(capacity + 1)-th** attempt returns `rate_limited` — for both identifiers after the same number; sign-in after the refill **successful**; median latency of the rejected responses **lower** than that of a regular failed sign-in (no KDF, no delay); **0 plaintext hits** in `bucket_key`; **0 option keys** | CI on every commit |
 | T-RATE-8 | S-RATE-8 | Integration | Configure the global route counter with a low threshold value, exceed the threshold. | Alarm callback called **≥ 1 time**; **0 requests rejected** | CI on every commit |
+| T-RATE-9 | S-RATE-9 | Unit + Property + Integration | Issue and solve a challenge; check it against its route, another route, every altered field, a key version outside the ring and a nonce that misses the difficulty; 2000 random or single-character-altered inputs from a fixed seed, plus a nonce above 2^53 − 1, wrong lengths and foreign spellings. Over HTTP send to `/sign-up` a missing, malformed, foreign-route, unsolved and spent solution. | **Exactly 1** accepted check, its own route; **0** accepted other inputs; **0 exceptions**; over HTTP **5 × 400** with **1** distinct body, **0** new accounts | CI on every commit |
+| T-RATE-10 | S-RATE-10 | Integration | Send one solution 20 times via `Promise.all` to `/password/request-reset`; use a challenge whose expiry the database clock has passed; `maintenance.sweep` before and after the expiry of the spent row. | **Exactly 1 × 204 and 19 × 400**, **1 mail**, **1 row** in `velve.proof_of_work_spent`; expired **0 rows**; sweep before **0**, afterwards **1** deleted | CI on every commit |
+| T-RATE-11 | S-RATE-11 | Integration | Call each of the five routes without a solution; password sign-in with threshold 3 against an existing and a non-existent account from an address of its own each, then ten attempts without a solution; let passkey sign-in fail four times and repeat from a second address. | **0 accounts, 0 mails** without a solution; the **4th** sign-in asks for the solution for **both** identifiers; **0** account tokens drawn in the ten attempts; passkey: the **4th** asks for it, the second address does not, **0** account counters | CI on every commit |
+| T-RATE-12 | S-RATE-12 | Unit + Integration | Without `rateLimit.proofOfWork` fetch the challenge and sign up; answer difficulty and threshold with values outside the bounds and with non-numbers; count the questions per request; start with a `rateLimit.proofOfWork` without the two functions. | **404** and **200**; clamped to **0 to 20** and **1 to 100**, non-number **20** and **1**; **1 question per request**; start error `proof_of_work_unusable` in **4/4** cases | CI on every commit |
 
 ---
 
@@ -5056,10 +5118,10 @@ soften the first, so it is declined.
 
 | Test ID | verifies | Kind | Procedure | Threshold | runs in |
 |---|---|---|---|---|---|
-| T-CSRF-1 | S-CSRF-1 | Integration, generated + Static | Over every route the widest configuration mounts (mode `username_email`, OAuth and WebAuthn configured, so every row of 3.15 D.3), every call with a valid session: (a) with a foreign `Origin` through the HTTP handler and through the server method generated from the route declaration; (b) through the server method without `origin`; (c) through the HTTP handler without an `Origin` header, once each with `Sec-Fetch-Site: same-origin`, `same-site`, `cross-site`, `none` and without the header; (d) each of the eight reading `GET` routes of S-CSRF-4 through the HTTP handler with the allowed `Origin` and without `Sec-Fetch-Site`. Compare the content of every table except `velve.rate_bucket` before and after the calls (a) to (c) to the checked routes, leaving out the `same-origin` calls admitted in (c) to the eight reading routes. Static: filter the routes with `originCheck: "exempt"` out of the table. | Every route except `signIn.oauth.callback` and `signIn.oauth.callbackFormPost` is rejected with `origin_not_allowed` in (a) and (b), and in (c) in every form except `same-origin` on one of the eight reading routes; every one of these rejections through the HTTP handler is **byte-for-byte identical** to every other (status, headers, body); across all these rejections **0 row changes** in every table except `velve.rate_bucket`. The admitted `same-origin` calls are not among them; as in T-CSRF-4 they may write `velve.rate_bucket` as well as `last_used_at` and `idle_expires_at` of the caller's own session. The eight reading routes answer `same-origin` in (c) **byte-for-byte as in (d)**, and that is not a rejection. The two callbacks **never** answer `origin_not_allowed` in (a) to (c). Static: **exactly 2** routes with `exempt`, and those are `signIn.oauth.callback` and `signIn.oauth.callbackFormPost` (E-2731, E-2732) | CI on every commit |
+| T-CSRF-1 | S-CSRF-1 | Integration, generated + Static | Over every route the widest configuration mounts (mode `username_email`, OAuth and WebAuthn configured, so every row of 3.15 D.3), every call with a valid session: (a) with a foreign `Origin` through the HTTP handler and through the server method generated from the route declaration; (b) through the server method without `origin`; (c) through the HTTP handler without an `Origin` header, once each with `Sec-Fetch-Site: same-origin`, `same-site`, `cross-site`, `none` and without the header; (d) each of the nine reading `GET` routes of S-CSRF-4 through the HTTP handler with the allowed `Origin` and without `Sec-Fetch-Site`. Compare the content of every table except `velve.rate_bucket` before and after the calls (a) to (c) to the checked routes, leaving out the `same-origin` calls admitted in (c) to the nine reading routes. Static: filter the routes with `originCheck: "exempt"` out of the table. | Every route except `signIn.oauth.callback` and `signIn.oauth.callbackFormPost` is rejected with `origin_not_allowed` in (a) and (b), and in (c) in every form except `same-origin` on one of the nine reading routes; every one of these rejections through the HTTP handler is **byte-for-byte identical** to every other (status, headers, body); across all these rejections **0 row changes** in every table except `velve.rate_bucket`. The admitted `same-origin` calls are not among them; as in T-CSRF-4 they may write `velve.rate_bucket` as well as `last_used_at` and `idle_expires_at` of the caller's own session. The nine reading routes answer `same-origin` in (c) **byte-for-byte as in (d)**, and that is not a rejection. The two callbacks **never** answer `origin_not_allowed` in (a) to (c). Static: **exactly 2** routes with `exempt`, and those are `signIn.oauth.callback` and `signIn.oauth.callbackFormPost` (E-2731, E-2732) | CI on every commit |
 | T-CSRF-2 | S-CSRF-2 | Static + Unit | AST scan: in `core/http/origin.ts` no `startsWith`, `includes`, `endsWith`, `RegExp`. Unit: allowed origin, same origin with a different port, with a different scheme. | **0 hits**; **3/3 unit cases** correct | CI on every commit |
 | T-CSRF-3 | S-CSRF-3 | Integration, exhaustive | All state-changing routes × 8 origin variants: allowed, missing, `null`, `http://` instead of `https://`, `sub.erlaubt.de`, `erlaubt.de.evil.com`, `erlaubt.de:8443`, `evil.de`. | Only the *allowed* variant is successful; **all rejections byte-for-byte identical** | CI on every commit |
-| T-CSRF-4 | S-CSRF-4 | Static + Integration | Filter the route table: every `GET` route is the OAuth callback or one of the eight reading routes from S-CSRF-4. Integration: call every reading `GET` route and compare the row counts of all tables except `velve.rate_bucket` before and afterwards (`last_used_at`/`idle_expires_at` of the caller's own session excepted). | **0 unclassified GET routes**; **0 row changes** by reading routes in every table except `velve.rate_bucket` | CI on every commit |
+| T-CSRF-4 | S-CSRF-4 | Static + Integration | Filter the route table: every `GET` route is the OAuth callback or one of the nine reading routes from S-CSRF-4. Integration: call every reading `GET` route and compare the row counts of all tables except `velve.rate_bucket` before and afterwards (`last_used_at`/`idle_expires_at` of the caller's own session excepted). | **0 unclassified GET routes**; **0 row changes** by reading routes in every table except `velve.rate_bucket` | CI on every commit |
 | T-CSRF-5 | S-CSRF-5 | Integration | Start a complete OAuth flow in context A, call the callback URL in context B (different pointer cookie); additionally without any cookie. | **2/2 rejected**; **0** new rows in `session` and `identity` | CI on every commit |
 | T-CSRF-6 | S-CSRF-6 | Integration + Static | Test plugin that tries to register a middleware before the origin check and to replace the check function. | Registration leads to a **start error**; the context is frozen (`Object.isFrozen` = true) | CI on every commit |
 | T-CSRF-Parser | S-CSRF-2/3 (supplementary) | Property | fast-check generates host names with prefix, suffix, port, Unicode and punycode variants of the allowed hosts. | **2000 cases, 0 counterexamples**, fixed seed | CI nightly |
@@ -5313,7 +5375,7 @@ For a one-person team this is **not** worth it **on the whole estate**: a Stryke
 - **Target: mutation score ≥ 85 % on this section**, measured **before every release**, not on every commit.
 - **The value for a one-person team is not the number but the list of surviving mutants.** It is a work list of missing assertions and replaces the code review by a second person at exactly the place where such a review would be worth the most.
 
-**Coverage is not a security measure.** The 149 test cases of this plan are the security measure; the coverage number is only the warning light that shows that a new branch has been added without a test case. No test case of this plan may be dropped with the argument "the coverage is fine, after all".
+**Coverage is not a security measure.** The 153 test cases of this plan are the security measure; the coverage number is only the warning light that shows that a new branch has been added without a test case. No test case of this plan may be dropped with the argument "the coverage is fine, after all".
 
 ---
 

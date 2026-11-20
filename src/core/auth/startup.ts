@@ -1,10 +1,12 @@
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { isUsableBucketRule } from "../http/rate-limit.js";
+import type { RouteMetadata } from "../http/route.js";
 import { KEY_PURPOSES, type KeyProvider, type KeyPurpose } from "../keys/index.js";
 import { isStorableKeyVersion } from "../keys/key-version.js";
 import { isKeyShaped, keyTakesMac, sameKeyFingerprintOf } from "../keys/mac.js";
 import { type IntegrityKeyPurpose, isIntegrityPurpose } from "../keys/purpose.js";
 import { type GenericProviderConfig, KNOWN_PROVIDERS } from "../oauth/config.js";
+import { isUsableProofOfWorkConfig } from "../pow/config.js";
 import { isUsablePasskeyRecoveryConfig } from "../recovery/config.js";
 import { resolveLimits } from "../security-state/limits.js";
 import type { BaseConfig } from "./config.js";
@@ -40,7 +42,8 @@ type StartupErrorCode =
 	| "route_name_segment_reserved"
 	| "security_state_sealing_unknown"
 	| "limits_unusable"
-	| "passkey_recovery_unusable";
+	| "passkey_recovery_unusable"
+	| "proof_of_work_unusable";
 
 const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> = {
 	keys_missing: "keys is required: every purpose key is derived from a root key of 32 bytes",
@@ -99,6 +102,8 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		"limits.passkeysPerAccount and limits.identitiesPerAccount must each be a whole number of at least 1, since every check of the seal reads and encodes them all",
 	passkey_recovery_unusable:
 		'webauthn.recovery must be an object carrying the function waitingPeriodInSeconds, and it needs the identity mode "email" or "username_email", since the recovery begins at an address',
+	proof_of_work_unusable:
+		"rateLimit.proofOfWork must be an object carrying the functions difficulty and signInFailuresBeforeProof, since both are asked on every request they decide",
 };
 
 /** the two contributors a route conflict names in its start error */
@@ -259,6 +264,18 @@ export function assertConfigurationIsStartable<M extends IdentityMode>(
 	assertSealingModeIsKnown(config.securityState);
 	assertLimitsAreUsable(config.limits);
 	assertPasskeyRecoveryIsUsable(config.identity.mode, config.webauthn);
+	assertProofOfWorkIsUsable(config.rateLimit);
+}
+
+//a proof of work the requests cannot ask must refuse the start rather than fail every guarded call (E-3662)
+function assertProofOfWorkIsUsable(rateLimit: unknown): void {
+	const proofOfWork =
+		typeof rateLimit === "object" && rateLimit !== null
+			? (rateLimit as { proofOfWork?: unknown }).proofOfWork
+			: undefined;
+	if (proofOfWork !== undefined && !isUsableProofOfWorkConfig(proofOfWork)) {
+		throw new VelveStartupError("proof_of_work_unusable");
+	}
 }
 
 //a recovery the start cannot run must refuse the start rather than mount routes that always fail (E-3761)
@@ -315,6 +332,48 @@ function keySharedByTwoPurposes(first: KeyPurpose, second: KeyPurpose): VelveSta
 	const refusal = new VelveStartupError("keys_unusable");
 	refusal.message = `keys answered ${first} and ${second} with the same key, so a value taken for one purpose would verify for the other`;
 	return refusal;
+}
+
+//a proof of work whose challenges cannot be signed would answer every guarded call with a 500 (E-3677)
+export async function assertCookieSigTakesMac(
+	keys: KeyProvider,
+	proofOfWork: object | undefined,
+): Promise<void> {
+	if (proofOfWork === undefined) {
+		return;
+	}
+	const current = await keys.current("cookie-sig").catch(() => null);
+	if (current === null || !(await keyTakesMac(current.key))) {
+		const refusal = new VelveStartupError("keys_unusable");
+		refusal.message =
+			"keys answered cookie-sig with a key that cannot take HMAC-SHA256, and rateLimit.proofOfWork expands its challenge key from it";
+		throw refusal;
+	}
+}
+
+//the call envelope reads the field while the proof of work is configured, so no route may also declare it (E-3677)
+export function assertNoRouteDeclaresTheSolutionField(
+	routes: readonly RouteMetadata[],
+	proofOfWork: object | undefined,
+): void {
+	if (proofOfWork === undefined) {
+		return;
+	}
+	for (const route of routes) {
+		if (inputFieldsOf(route).includes(PROOF_OF_WORK_CALL_FIELD)) {
+			const refusal = new VelveStartupError("proof_of_work_unusable");
+			refusal.message = `route ${route.name} declares an input field ${PROOF_OF_WORK_CALL_FIELD}, which a server call carries the solution in while rateLimit.proofOfWork is configured`;
+			throw refusal;
+		}
+	}
+}
+
+const PROOF_OF_WORK_CALL_FIELD = "proofOfWork";
+
+//every route defineRoute built carries its validator, which the metadata type leaves out
+function inputFieldsOf(route: RouteMetadata): readonly string[] {
+	const input = (route as { readonly input?: { readonly fields?: unknown } }).input;
+	return Array.isArray(input?.fields) ? (input.fields as readonly string[]) : [];
 }
 
 //a key provider that answers for no purpose protects nothing and must refuse the start

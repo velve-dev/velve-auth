@@ -1,4 +1,6 @@
 import type { VelveErrorCode } from "../core/http/error-map.js";
+import { PROOF_OF_WORK_HEADER } from "../core/pow/work.js";
+import type { ProofOfWorkWorker } from "./proof-of-work-solver.js";
 import { type VelveFailure, type VelveResult, VelveTransportError } from "./result.js";
 import type { ClientRoute } from "./routes.js";
 
@@ -7,6 +9,8 @@ const JSON_CONTENT_TYPE = "application/json";
 export interface VelveClientOptions {
 	readonly baseURL: string;
 	readonly fetch?: typeof globalThis.fetch;
+	/** starts the worker that solves a proof of work, the module the package ships beside the client when absent */
+	readonly createProofOfWorkWorker?: () => ProofOfWorkWorker;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -65,7 +69,21 @@ function queryOf(fields: Readonly<Record<string, unknown>>): string {
 	return query === "" ? "" : `?${query}`;
 }
 
-function requestInitOf(route: ClientRoute, addressed: AddressedRoute): RequestInit {
+function headersOf(route: ClientRoute, solution: string | null): Record<string, string> {
+	const headers: Record<string, string> =
+		route.method === "GET" ? {} : { "Content-Type": JSON_CONTENT_TYPE };
+	if (solution !== null) {
+		headers[PROOF_OF_WORK_HEADER] = solution;
+	}
+	return headers;
+}
+
+function requestInitOf(
+	route: ClientRoute,
+	addressed: AddressedRoute,
+	solution: string | null,
+): RequestInit {
+	const headers = headersOf(route, solution);
 	const envelope = {
 		//the method must be the row's so no state change is reachable with a get (S-CSRF-4)
 		method: route.method,
@@ -76,13 +94,10 @@ function requestInitOf(route: ClientRoute, addressed: AddressedRoute): RequestIn
 		//a call must never follow a redirect as the only one belongs to a navigation (S-REDIR-3)
 		redirect: "manual",
 	} as const;
+	const withHeaders = Object.keys(headers).length === 0 ? envelope : { ...envelope, headers };
 	return route.method === "GET"
-		? envelope
-		: {
-				...envelope,
-				headers: { "Content-Type": JSON_CONTENT_TYPE },
-				body: JSON.stringify(addressed.rest),
-			};
+		? withHeaders
+		: { ...withHeaders, body: JSON.stringify(addressed.rest) };
 }
 
 async function answerTo(
@@ -90,12 +105,13 @@ async function answerTo(
 	baseURL: string,
 	route: ClientRoute,
 	addressed: AddressedRoute,
+	solution: string | null,
 ): Promise<Response> {
 	const query = route.method === "GET" ? queryOf(addressed.rest) : "";
 	try {
 		return await send(
 			`${endpointOf(baseURL, addressed.path)}${query}`,
-			requestInitOf(route, addressed),
+			requestInitOf(route, addressed, solution),
 		);
 	} catch (cause) {
 		throw new VelveTransportError(`The call to ${route.name} did not reach the server`, cause);
@@ -143,15 +159,23 @@ function refusedAnswer(
 	return failure;
 }
 
+/** one call of one route row, carrying a solved proof of work where one is given */
 export type RouteCall = (
 	route: ClientRoute,
 	input: unknown,
+	solution?: string | null,
 ) => Promise<VelveResult<unknown, VelveErrorCode>>;
 
 export function createRouteCall(options: VelveClientOptions): RouteCall {
 	const send = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
-	return async (route, input) => {
-		const response = await answerTo(send, options.baseURL, route, addressOf(route, input));
+	return async (route, input, solution) => {
+		const response = await answerTo(
+			send,
+			options.baseURL,
+			route,
+			addressOf(route, input),
+			solution ?? null,
+		);
 		const text = await readAnswer(route, response);
 		return response.ok
 			? { ok: true, value: text === "" ? undefined : parsedAnswer(route, text) }

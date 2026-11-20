@@ -8,6 +8,7 @@ import type { SetPasswordResult } from "../flows/results.js";
 import type { Session } from "../http/caller.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
 import { deferUntilAnswered } from "../http/pipeline.js";
+import { guardedByProofOfWork } from "../http/proof-of-work.js";
 import type { RateLimitRule } from "../http/rate-limit.js";
 import { defineRoute, type RequestContext, type ServerCallFields } from "../http/route.js";
 import { object, string } from "../http/validators.js";
@@ -262,7 +263,13 @@ export function passwordRoutes(services: RouteServices) {
 		method: "POST",
 		path: "/sign-in/password",
 		input: object({ ...signInLookupOf(services.identity), password: string() }),
-		errors: ["invalid_input", "invalid_credentials", "rate_limited", "origin_not_allowed"] as const,
+		errors: [
+			"invalid_input",
+			"invalid_credentials",
+			"rate_limited",
+			"origin_not_allowed",
+			"proof_of_work_required",
+		] as const,
 		caller: "anonymous",
 		freshness: "not_required",
 		originCheck: "checked",
@@ -306,6 +313,12 @@ export function passwordRoutes(services: RouteServices) {
 			}
 			return signedIn(services, context, userId, check);
 		},
+	});
+	//every answer a wrong password gives counts, so an unknown account counts alike (S-RATE-11)
+	guardedByProofOfWork(signIn, {
+		when: "after_failures",
+		counters: "address_and_account",
+		failures: ["invalid_credentials"],
 	});
 
 	const set = defineRoute({

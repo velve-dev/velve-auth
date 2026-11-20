@@ -3,6 +3,7 @@ import type { SignInResult, SignUpResult } from "../auth/results.js";
 import type { RouteServices } from "../auth/routes.js";
 import type { IdentityMode } from "../db/migrations/identity-mode.js";
 import { ConcealedError } from "../http/error-map.js";
+import { guardedByProofOfWork } from "../http/proof-of-work.js";
 import type { RateLimitRule } from "../http/rate-limit.js";
 import { type AnyRoute, defineRoute, type RequestContext } from "../http/route.js";
 import { object, string } from "../http/validators.js";
@@ -72,6 +73,10 @@ function addressOnly(services: RouteServices): RateLimitRule {
 }
 
 const ANONYMOUS_ERRORS = ["invalid_input", "rate_limited", "origin_not_allowed"] as const;
+const MAILING_REQUEST_ERRORS = [...ANONYMOUS_ERRORS, "proof_of_work_required"] as const;
+
+//a request that writes an account or mails an address asks for a proof on every call (S-RATE-11)
+const ON_EVERY_CALL = { when: "always" } as const;
 const SESSION_ERRORS = [
 	"invalid_input",
 	"session_required",
@@ -104,6 +109,7 @@ function routesInEveryMode(environment: FlowEnvironment, email: EmailConfig | un
 			"username_invalid",
 			"rate_limited",
 			"origin_not_allowed",
+			"proof_of_work_required",
 		] as const,
 		caller: "anonymous",
 		freshness: "not_required",
@@ -112,6 +118,7 @@ function routesInEveryMode(environment: FlowEnvironment, email: EmailConfig | un
 		handler: async (input, context): Promise<SignUpResult> =>
 			signUp(flow, context, { identifiers: identifiersIn(input), password: input.password }),
 	});
+	guardedByProofOfWork(withPassword, ON_EVERY_CALL);
 
 	const withoutPassword = defineRoute({
 		name: "signUp.withoutPassword",
@@ -124,6 +131,7 @@ function routesInEveryMode(environment: FlowEnvironment, email: EmailConfig | un
 			"username_invalid",
 			"rate_limited",
 			"origin_not_allowed",
+			"proof_of_work_required",
 		] as const,
 		caller: "anonymous",
 		freshness: "not_required",
@@ -132,6 +140,7 @@ function routesInEveryMode(environment: FlowEnvironment, email: EmailConfig | un
 		handler: async (input, context): Promise<SignUpResult> =>
 			signUp(flow, context, { identifiers: identifiersIn(input), password: null }),
 	});
+	guardedByProofOfWork(withoutPassword, ON_EVERY_CALL);
 
 	const withRecoveryCode = defineRoute({
 		name: "password.redeemResetWithRecoveryCode",
@@ -173,7 +182,7 @@ function routesThatNeedAnAddress(environment: FlowEnvironment, email: EmailConfi
 		method: "POST",
 		path: "/sign-in/magic-link/request",
 		input: object({ email: string() }),
-		errors: ANONYMOUS_ERRORS,
+		errors: MAILING_REQUEST_ERRORS,
 		caller: "anonymous",
 		freshness: "not_required",
 		originCheck: "checked",
@@ -182,6 +191,7 @@ function routesThatNeedAnAddress(environment: FlowEnvironment, email: EmailConfi
 		handler: async (input, context): Promise<void> =>
 			requestMagicLink(environment, email, context, input),
 	});
+	guardedByProofOfWork(magicLinkRequest, ON_EVERY_CALL);
 
 	const magicLinkRedeem = defineRoute({
 		name: "signIn.magicLink.redeem",
@@ -258,7 +268,7 @@ function routesThatNeedAnAddress(environment: FlowEnvironment, email: EmailConfi
 		method: "POST",
 		path: "/password/request-reset",
 		input: object({ email: string() }),
-		errors: ANONYMOUS_ERRORS,
+		errors: MAILING_REQUEST_ERRORS,
 		caller: "anonymous",
 		freshness: "not_required",
 		originCheck: "checked",
@@ -266,6 +276,7 @@ function routesThatNeedAnAddress(environment: FlowEnvironment, email: EmailConfi
 		handler: async (input, context): Promise<void> =>
 			requestReset(environment, email, context, input),
 	});
+	guardedByProofOfWork(resetRequest, ON_EVERY_CALL);
 
 	const resetRedeem = defineRoute({
 		name: "password.redeemReset",

@@ -27,7 +27,7 @@ const ORIGIN_REJECTION = [
 	'{"error":{"code":"origin_not_allowed","message":"The request origin is not allowed."}}',
 ].join("\n");
 
-/** The seven reading routes of S-CSRF-4, which with the callback are every GET the core serves. */
+/** The nine reading routes of S-CSRF-4, which with the callback are every GET the core serves. */
 const READING_ROUTES = [
 	"session.read",
 	"session.list",
@@ -37,10 +37,12 @@ const READING_ROUTES = [
 	"identity.list",
 	"pending.read",
 	"passkeyRecovery.pending",
+	"proofOfWork.challenge",
 ];
 
 const QUERY_BY_ROUTE: Readonly<Record<string, string>> = {
 	"username.isAvailable": "?username=someone",
+	"proofOfWork.challenge": "?route=signUp.withPassword",
 };
 
 function readFrom(
@@ -167,7 +169,7 @@ describe("every reading GET of the widest mount", () => {
 		return `${filled}${QUERY_BY_ROUTE[route.name] ?? ""}`;
 	}
 
-	it("is exactly the eight reading routes S-CSRF-4 names", () => {
+	it("is exactly the nine reading routes S-CSRF-4 names", () => {
 		expect(reading.map((route) => route.name).sort()).toStrictEqual([...READING_ROUTES].sort());
 	});
 

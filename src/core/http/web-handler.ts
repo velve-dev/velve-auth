@@ -1,4 +1,5 @@
 import { resolveClientAddress } from "../limit/client-address.js";
+import { PROOF_OF_WORK_HEADER } from "../pow/work.js";
 import {
 	assertCookieNamesAreEnumerated,
 	type CookieInstruction,
@@ -119,6 +120,7 @@ function readRouteCall(
 		fetchSite: request.headers.get("sec-fetch-site"),
 		ipAddress: readClientAddress(request),
 		userAgent: request.headers.get("user-agent"),
+		proofOfWork: request.headers.get(PROOF_OF_WORK_HEADER),
 		readCallerTokens: () => {
 			const cookies = readCookies(request.headers.get("cookie"), cookiePolicyOf(environment).names);
 			//which route may see which cookie is decided in route.ts and nowhere else (E-335)

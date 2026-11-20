@@ -10,6 +10,7 @@ import { type Actor, actorOfResolvedSession } from "../db/actor.js";
 import { completeResetBySecondFactor } from "../flows/reset.js";
 import type { ResolvedPendingAuthentication, Session } from "../http/caller.js";
 import { ConcealedError, VelveError } from "../http/error-map.js";
+import { guardedByProofOfWork } from "../http/proof-of-work.js";
 import {
 	type AnyRoute,
 	defineRoute,
@@ -592,6 +593,7 @@ function passkeyRoutes(services: RouteServices, webauthn: WebAuthnService) {
 			"webauthn_credential_rejected",
 			"rate_limited",
 			"origin_not_allowed",
+			"proof_of_work_required",
 		] as const,
 		caller: "anonymous",
 		freshness: "not_required",
@@ -639,6 +641,12 @@ function passkeyRoutes(services: RouteServices, webauthn: WebAuthnService) {
 				signCountRegressed: assertion.signCountRegressed,
 			};
 		},
+	});
+	//a discoverable passkey names no account before it verifies, so only the address counts (E-3666)
+	guardedByProofOfWork(finish, {
+		when: "after_failures",
+		counters: "address",
+		failures: ["webauthn_challenge_invalid", "webauthn_credential_rejected"],
 	});
 
 	return [start, finish] as const;

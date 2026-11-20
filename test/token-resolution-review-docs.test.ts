@@ -13,6 +13,7 @@ const NUMBER_WORDS: Readonly<Record<string, number>> = {
 	nineteen: 19,
 	twenty: 20,
 	"twenty-one": 21,
+	"twenty-two": 22,
 };
 
 describe("the documentation counts the namespaces the instance reserves (3.11, 3.15 B)", () => {

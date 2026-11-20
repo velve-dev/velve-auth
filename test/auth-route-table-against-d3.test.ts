@@ -42,9 +42,14 @@ describe("the mounted table against 3.15 D.3", () => {
 	it("serves every row the widest configuration declares, and no row D.3 does not", () => {
 		const widest = widestVelveAuth();
 
-		expect(everyRowDeclaredByD3()).toHaveLength(52);
+		expect(everyRowDeclaredByD3()).toHaveLength(53);
 		expect(servedAddresses(widest.routes)).toStrictEqual(
-			declaredAddresses({ mode: "username_email", webauthn: true, passkeyRecovery: true }),
+			declaredAddresses({
+				mode: "username_email",
+				webauthn: true,
+				passkeyRecovery: true,
+				proofOfWork: true,
+			}),
 		);
 	});
 
@@ -57,7 +62,7 @@ describe("the mounted table against 3.15 D.3", () => {
 		const routes = widestVelveAuth().routes;
 		const exempt = routes.filter((route) => route.originCheck !== "checked");
 
-		expect(routes).toHaveLength(52);
+		expect(routes).toHaveLength(53);
 		expect(exempt.map((route) => route.name)).toStrictEqual([
 			"signIn.oauth.callback",
 			"signIn.oauth.callbackFormPost",
@@ -79,6 +84,21 @@ describe("the mounted table against 3.15 D.3", () => {
 		expect(
 			declaredAddresses({ mode: "username", webauthn: true, passkeyRecovery: true }),
 		).toHaveLength(39);
+		//rateLimit.proofOfWork adds the challenge row in every mode (E-3670)
+		expect(
+			declaredAddresses({
+				mode: "username_email",
+				webauthn: true,
+				passkeyRecovery: true,
+				proofOfWork: true,
+			}),
+		).toHaveLength(53);
+		expect(declaredAddresses({ mode: "email", webauthn: true, proofOfWork: true })).toHaveLength(
+			46,
+		);
+		expect(declaredAddresses({ mode: "username", webauthn: true, proofOfWork: true })).toHaveLength(
+			40,
+		);
 	});
 });
 
@@ -112,7 +132,7 @@ describe("every row the table serves is reachable as the server method its name 
 		const widest = widestVelveAuth() as unknown as Record<string, unknown>;
 		const served = widest.routes as readonly AnyRoute[];
 
-		expect(served).toHaveLength(52);
+		expect(served).toHaveLength(53);
 		expect(Object.keys(NAMED_DIFFERENTLY_IN_B)).toHaveLength(2);
 		expect(
 			served

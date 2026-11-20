@@ -14,6 +14,7 @@ const SWEPT_TABLES: readonly (readonly [table: string, deadlineColumn: string])[
 	["webauthn_challenge", "expires_at"],
 	["oauth_flow", "expires_at"],
 	["rate_bucket", "expires_at"],
+	["proof_of_work_spent", "expires_at"],
 ];
 
 function sweepStatements(schema: string): readonly string[] {

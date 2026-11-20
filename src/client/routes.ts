@@ -11,6 +11,8 @@ import type { ChangedUser, RedeemResetResult, SetPasswordResult } from "../core/
 import type { PendingAuthentication, Session } from "../core/http/caller.js";
 import type { AnyRoute, HttpMethod, Route } from "../core/http/route.js";
 import type { OAuthRouteTable } from "../core/oauth/routes.js";
+import type { ProofOfWorkChallenge } from "../core/pow/challenge.js";
+import type { ProofOfWorkRoute } from "../core/pow/config.js";
 import type { FinishPasskeyRecoveryResult, PendingPasskeyRecovery } from "../core/recovery/flow.js";
 
 //the table names its routes and never the services that build them, which stay off the declarations (E-3488)
@@ -139,6 +141,7 @@ export type VelveRouteTable = readonly [
 		| "password_unacceptable"
 		| "username_taken"
 		| "username_invalid"
+		| "proof_of_work_required"
 	>,
 	Route<
 		"signUp.withoutPassword",
@@ -148,7 +151,12 @@ export type VelveRouteTable = readonly [
 			email: string;
 		} & {},
 		SignUpResult,
-		"invalid_input" | "rate_limited" | "origin_not_allowed" | "username_taken" | "username_invalid"
+		| "invalid_input"
+		| "rate_limited"
+		| "origin_not_allowed"
+		| "username_taken"
+		| "username_invalid"
+		| "proof_of_work_required"
 	>,
 	Route<
 		"password.redeemResetWithRecoveryCode",
@@ -174,7 +182,7 @@ export type VelveRouteTable = readonly [
 			email: string;
 		} & {},
 		void,
-		"invalid_input" | "rate_limited" | "origin_not_allowed"
+		"invalid_input" | "rate_limited" | "origin_not_allowed" | "proof_of_work_required"
 	>,
 	Route<
 		"signIn.magicLink.redeem",
@@ -235,7 +243,7 @@ export type VelveRouteTable = readonly [
 			email: string;
 		} & {},
 		void,
-		"invalid_input" | "rate_limited" | "origin_not_allowed"
+		"invalid_input" | "rate_limited" | "origin_not_allowed" | "proof_of_work_required"
 	>,
 	Route<
 		"password.redeemReset",
@@ -261,7 +269,11 @@ export type VelveRouteTable = readonly [
 			emailOrUsername: string;
 		} & {},
 		SignInResult,
-		"invalid_input" | "rate_limited" | "origin_not_allowed" | "invalid_credentials"
+		| "invalid_input"
+		| "rate_limited"
+		| "origin_not_allowed"
+		| "invalid_credentials"
+		| "proof_of_work_required"
 	>,
 	Route<
 		"password.set",
@@ -512,6 +524,7 @@ export type VelveRouteTable = readonly [
 		| "origin_not_allowed"
 		| "webauthn_challenge_invalid"
 		| "webauthn_credential_rejected"
+		| "proof_of_work_required"
 	>,
 	Route<
 		"passkeyRecovery.request",
@@ -520,7 +533,7 @@ export type VelveRouteTable = readonly [
 			email: string;
 		} & {},
 		void,
-		"invalid_input" | "rate_limited" | "origin_not_allowed"
+		"invalid_input" | "rate_limited" | "origin_not_allowed" | "proof_of_work_required"
 	>,
 	Route<
 		"passkeyRecovery.start",
@@ -556,6 +569,15 @@ export type VelveRouteTable = readonly [
 		{} & {},
 		void,
 		"rate_limited" | "origin_not_allowed" | "account_disabled" | "session_required"
+	>,
+	Route<
+		"proofOfWork.challenge",
+		"/proof-of-work/challenge",
+		{
+			route: ProofOfWorkRoute;
+		} & {},
+		ProofOfWorkChallenge,
+		"invalid_input" | "rate_limited" | "origin_not_allowed"
 	>,
 ];
 
@@ -655,4 +677,5 @@ export const VELVE_CLIENT_ROUTES = [
 	{ name: "passkeyRecovery.finish", method: "POST", path: "/passkey-recovery/finish" },
 	{ name: "passkeyRecovery.pending", method: "GET", path: "/passkey-recovery" },
 	{ name: "passkeyRecovery.cancel", method: "POST", path: "/passkey-recovery/cancel" },
+	{ name: "proofOfWork.challenge", method: "GET", path: "/proof-of-work/challenge" },
 ] as const satisfies ClientRoutesOf<VelveRouteTable>;

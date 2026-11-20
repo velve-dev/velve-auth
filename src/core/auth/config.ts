@@ -8,6 +8,7 @@ import type { KeyProvider } from "../keys/provider.js";
 import type { OAuthConfig } from "../oauth/config.js";
 import type { PasswordConfig } from "../password/config.js";
 import type { VelvePlugin } from "../plugin/config.js";
+import type { ProofOfWorkConfig } from "../pow/config.js";
 import type { PasskeyRecoveryConfig } from "../recovery/config.js";
 import type { SecurityStateAlarm } from "../security-state/alarm.js";
 import type { LimitsConfig } from "../security-state/limits.js";
@@ -108,6 +109,8 @@ export interface RateLimitConfig {
 		readonly alertThresholdPerMinute: number;
 		readonly onAlert: (alert: RateAlert) => void;
 	};
+	/** asks the request routes and repeatedly failing sign-ins for a solved challenge, and is off while absent */
+	readonly proofOfWork?: ProofOfWorkConfig;
 }
 
 /** whether every account must carry a seal, or the estate is still being sealed, and who hears of a broken one */

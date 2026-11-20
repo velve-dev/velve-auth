@@ -3,6 +3,7 @@ import { type IdentityMode, identityModeMigration } from "./identity-mode.js";
 import { initialSchema } from "./initial-schema.js";
 import { passkeyRecoverySchema } from "./passkey-recovery.js";
 import { pendingPasswordResetSchema } from "./pending-password-reset.js";
+import { proofOfWorkSchema } from "./proof-of-work.js";
 import { recoveryDisabledSchema } from "./recovery-disabled.js";
 import { securityStateSchema } from "./security-state.js";
 import { tokenMacSchema } from "./token-mac.js";
@@ -18,6 +19,7 @@ export function coreMigrations(identityMode: IdentityMode): readonly Migration[]
 		recoveryDisabledSchema,
 		passkeyRecoverySchema,
 		verifiedAttestationSchema,
+		proofOfWorkSchema,
 	];
 }
 

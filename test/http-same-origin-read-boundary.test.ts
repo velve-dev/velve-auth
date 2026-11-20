@@ -33,6 +33,7 @@ const READING_ROUTES = [
 	"identity.list",
 	"pending.read",
 	"passkeyRecovery.pending",
+	"proofOfWork.challenge",
 ];
 
 const EXEMPT_ROUTES = ["signIn.oauth.callback", "signIn.oauth.callbackFormPost"];

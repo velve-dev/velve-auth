@@ -32,9 +32,9 @@ describe("migration runner", () => {
 			migrations: coreMigrations("username_email"),
 		});
 
-		expect(report.appliedVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
-		expect(report.currentVersion).toBe(8);
-		expect(await tableNames()).toHaveLength(18);
+		expect(report.appliedVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+		expect(report.currentVersion).toBe(9);
+		expect(await tableNames()).toHaveLength(19);
 	});
 
 	it("applies nothing on a second run", async () => {
@@ -45,7 +45,7 @@ describe("migration runner", () => {
 		});
 
 		expect(report.appliedVersions).toEqual([]);
-		expect(report.currentVersion).toBe(8);
+		expect(report.currentVersion).toBe(9);
 	});
 
 	it("records name and checksum for every applied migration", async () => {
@@ -63,6 +63,7 @@ describe("migration runner", () => {
 			[6, "recovery_disabled"],
 			[7, "passkey_recovery"],
 			[8, "verified_attestation"],
+			[9, "proof_of_work"],
 		]);
 		for (const row of ledger) {
 			expect(row.checksum).toMatch(/^[0-9a-f]{64}$/);
@@ -108,10 +109,10 @@ describe("migration runner", () => {
 			);
 
 			expect(reports.flatMap((report) => report.appliedVersions).sort()).toEqual([
-				1, 2, 3, 4, 5, 6, 7, 8,
+				1, 2, 3, 4, 5, 6, 7, 8, 9,
 			]);
 			for (const report of reports) {
-				expect(report.currentVersion).toBe(8);
+				expect(report.currentVersion).toBe(9);
 			}
 		} finally {
 			await connection.query(`DROP SCHEMA IF EXISTS ${concurrentSchema} CASCADE`, []);
