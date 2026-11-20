@@ -33,7 +33,7 @@ const PROVIDER: ResolvedProvider = {
 	redirectUri: "https://api.example.com/sign-in/oauth/callback/stubby",
 	prompt: null,
 	responseMode: "query",
-	trustedForAutomaticLinking: false,
+	trustedToVerifyAddresses: false,
 };
 
 function servingKeys(keys: readonly JWK[]): typeof globalThis.fetch {

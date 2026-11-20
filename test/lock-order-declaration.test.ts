@@ -259,7 +259,9 @@ describe("every account lock outside the interleavings is declared before the ta
 	 * count fell from thirteen to nine (E-3163). The administrator reseal takes it once more, outside
 	 * the sealing path, because it seals a state that path refuses, which makes ten (E-3177). A
 	 * revocation of a single session whose seal the sealing path refuses still removes its row under
-	 * the lock, without moving the session generation, which makes eleven (E-3520).
+	 * the lock, without moving the session generation, which makes eleven (E-3520). The automatic
+	 * link of E-3225 is gone with the link by address, which makes ten, four remain of the five the
+	 * audit skips, and an eleventh site is now the one that reddens this (E-3895).
 	 */
 	it("counts the statements that take the account lock, so the reach cannot drift unnoticed", () => {
 		const CALL = /\blockAccountRow(?:Statement)?\s*\(/g;
@@ -288,6 +290,6 @@ describe("every account lock outside the interleavings is declared before the ta
 
 		expect(sites.length, listing).toBeGreaterThan(5);
 		//one of them issues a session and one seals every change under the account lock (E-3163)
-		expect(total, listing).toBe(11);
+		expect(total, listing).toBe(10);
 	});
 });

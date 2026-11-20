@@ -62,6 +62,7 @@ const CALLBACK_ERRORS = [
 	"oauth_flow_invalid",
 	"oauth_provider_error",
 	"identity_already_linked",
+	"identity_link_required",
 	"rate_limited",
 ] as const;
 
@@ -250,6 +251,7 @@ export type OAuthRouteTable = readonly [
 		| "invalid_input"
 		| "rate_limited"
 		| "identity_already_linked"
+		| "identity_link_required"
 		| "oauth_flow_invalid"
 		| "oauth_provider_error"
 	>,
@@ -267,6 +269,7 @@ export type OAuthRouteTable = readonly [
 		| "invalid_input"
 		| "rate_limited"
 		| "identity_already_linked"
+		| "identity_link_required"
 		| "oauth_flow_invalid"
 		| "oauth_provider_error"
 	>,

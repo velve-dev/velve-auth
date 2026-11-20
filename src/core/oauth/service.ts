@@ -5,7 +5,7 @@ import type {
 	SignInResult,
 } from "../auth/results.js";
 import type { RouteServices } from "../auth/routes.js";
-import { createUserRepository, type User, type UserRepository } from "../auth/user.js";
+import { createUserRepository, type User } from "../auth/user.js";
 import { type Actor, actorOfConsumedOAuthFlow, type ConsumedOAuthFlow } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { lockAccountRow } from "../db/lock.js";
@@ -68,7 +68,6 @@ import {
 	type IdentityFacts,
 	type OwnedIdentity,
 } from "./identity-repository.js";
-import { accountAnAutomaticLinkMayJoin } from "./linking.js";
 import type { OutboundFetch } from "./outbound.js";
 import type { ProviderTable, ResolvedProvider } from "./providers.js";
 import { acceptedRedirectPath, DEFAULT_REDIRECT_PATH } from "./redirect-path.js";
@@ -146,14 +145,26 @@ function refuseAFlowWhoseSessionIsGone(cause: unknown): never {
 
 const UNIQUE_VIOLATION = "23505";
 
-//an identifier another sign-up took after the check must end the flow as a taken one does (E-2874)
-function refuseAnIdentifierTakenMeanwhile(cause: unknown): never {
-	const fields = typeof cause === "object" && cause !== null ? cause : {};
-	const { code, sqlState } = fields as { readonly code?: unknown; readonly sqlState?: unknown };
-	if (code === UNIQUE_VIOLATION || sqlState === UNIQUE_VIOLATION) {
-		throw new VelveError("oauth_flow_invalid");
+class IdentifierTakenMeanwhile extends Error {
+	readonly email: string | null;
+
+	constructor(email: string | null) {
+		super("a concurrent sign-up took an identifier of the account being created");
+		this.name = "IdentifierTakenMeanwhile";
+		this.email = email;
 	}
-	throw cause;
+}
+
+//an identifier another sign-up took after the check must end the flow as a taken one does (E-2874)
+function markAnIdentifierTakenMeanwhile(email: string | null): (cause: unknown) => never {
+	return (cause) => {
+		const fields = typeof cause === "object" && cause !== null ? cause : {};
+		const { code, sqlState } = fields as { readonly code?: unknown; readonly sqlState?: unknown };
+		if (code === UNIQUE_VIOLATION || sqlState === UNIQUE_VIOLATION) {
+			throw new IdentifierTakenMeanwhile(email);
+		}
+		throw cause;
+	};
 }
 
 //a link flow writes both columns, so a row carrying one alone was not written by this library
@@ -331,12 +342,12 @@ export function createOAuthService(input: {
 			);
 		}
 		const users = createUserRepository({ driver: transaction, schema });
-		//an address that belongs to another account must end the flow before the insert (E-560)
+		//an address another account holds is linked only from that account's session (S-LINK-2)
 		if (
 			columns.value.email !== null &&
 			(await users.findUserByEmail(columns.value.email)) !== null
 		) {
-			throw new VelveError("oauth_flow_invalid");
+			throw new VelveError("identity_link_required");
 		}
 		//a hook must see the uncommitted account and not ask the pool for a connection (E-2797)
 		const hooks = hooksOnTheTransaction(services.pluginRuntime.hooks, transaction);
@@ -349,17 +360,26 @@ export function createOAuthService(input: {
 				...columns.value,
 				//a provider claim verifies an address only where the operator trusts it (E-558)
 				emailVerifiedAt:
-					account.emailVerified && provider.trustedForAutomaticLinking
-						? services.clock.now()
-						: null,
+					account.emailVerified && provider.trustedToVerifyAddresses ? services.clock.now() : null,
 			})
-			.catch(refuseAnIdentifierTakenMeanwhile);
+			.catch(markAnIdentifierTakenMeanwhile(columns.value.email));
 		await hooks.afterUserCreate({
 			email: created.email,
 			username: created.username,
 			userId: created.id,
 		});
 		return created;
+	}
+
+	//the address is asked again once the losing transaction rolled back, so a race answers as no race does (E-3897)
+	async function answerAnIdentifierTakenMeanwhile(cause: unknown): Promise<never> {
+		if (!(cause instanceof IdentifierTakenMeanwhile)) {
+			throw cause;
+		}
+		if (cause.email !== null && (await services.users.findUserByEmail(cause.email)) !== null) {
+			throw new VelveError("identity_link_required");
+		}
+		throw new VelveError("oauth_flow_invalid");
 	}
 
 	//every write to an account's provider tokens runs under the account lock (E-3222)
@@ -380,23 +400,6 @@ export function createOAuthService(input: {
 		) {
 			throw new ConcealedError("state_not_found");
 		}
-		return locked;
-	}
-
-	//an automatic link joins only the account that still qualifies once its lock is held (E-3227)
-	async function theJoinableAccountUnderItsLock(
-		transaction: Driver,
-		users: UserRepository,
-		joinable: User,
-		provider: ResolvedProvider,
-		account: ProviderAccount,
-	): Promise<User> {
-		await lockAccountRow(transaction, schema, joinable.id);
-		const locked = await accountAnAutomaticLinkMayJoin({ users, account, provider });
-		if (locked === null || locked.id !== joinable.id) {
-			throw new ConcealedError("state_not_found");
-		}
-		assertTheAccountIsEnabled(locked);
 		return locked;
 	}
 
@@ -438,29 +441,27 @@ export function createOAuthService(input: {
 		account: ProviderAccount,
 		facts: IdentityFacts,
 	): Promise<ResolvedAccount> {
-		return driver.transaction(async (transaction) => {
-			const owned = createOAuthIdentityRepository({ driver: transaction, schema, keys });
-			const users: UserRepository = createUserRepository({ driver: transaction, schema });
-			const existing = await owned.findIdentityBySubject({
-				provider: provider.id,
-				subject: account.subject,
-			});
+		return driver
+			.transaction(async (transaction) => {
+				const owned = createOAuthIdentityRepository({ driver: transaction, schema, keys });
+				const existing = await owned.findIdentityBySubject({
+					provider: provider.id,
+					subject: account.subject,
+				});
 
-			if (existing !== null) {
-				//the anchor is asked before the lock so no connection holds it while the application answers (S-INTEG-6)
-				const anchored = await consultAnchors(services.securityState.anchors, existing.userId);
-				const locked = await theIdentityUnderItsAccountLock(transaction, owned, existing);
-				const checked = await checkedIdentityOf(transaction, locked, anchored);
-				return {
-					userId: locked.userId,
-					identity: await owned.refreshIdentity({ existing: locked, ...facts }),
-					...checked,
-					toRecord: null,
-				};
-			}
+				if (existing !== null) {
+					//the anchor is asked before the lock so no connection holds it while the application answers (S-INTEG-6)
+					const anchored = await consultAnchors(services.securityState.anchors, existing.userId);
+					const locked = await theIdentityUnderItsAccountLock(transaction, owned, existing);
+					const checked = await checkedIdentityOf(transaction, locked, anchored);
+					return {
+						userId: locked.userId,
+						identity: await owned.refreshIdentity({ existing: locked, ...facts }),
+						...checked,
+						toRecord: null,
+					};
+				}
 
-			const joinable = await accountAnAutomaticLinkMayJoin({ users, account, provider });
-			if (joinable === null) {
 				const owner = await createAccountFor(transaction, provider, account);
 				const identity = refuseIfAlreadyLinked(
 					await owned.insertIdentityOfSignIn({ userId: owner.id, ...facts }),
@@ -474,50 +475,8 @@ export function createOAuthService(input: {
 					secondFactors: secondFactorsOf(sealed.read),
 					toRecord: sealed,
 				};
-			}
-			const anchored = await consultAnchors(services.securityState.anchors, joinable.id);
-			const joined = await theJoinableAccountUnderItsLock(
-				transaction,
-				users,
-				joinable,
-				provider,
-				account,
-			);
-			const sealed = await sealChange(
-				services.securityState,
-				{ unproven: joined.id },
-				{
-					epoch: "keep",
-					write: async (tx, read) => {
-						assertBelowCredentialLimit(read, "identity", services.securityState.limits);
-						return refuseIfAlreadyLinked(
-							await createOAuthIdentityRepository({
-								driver: tx,
-								schema,
-								keys,
-							}).insertIdentityOfSignIn({
-								userId: joined.id,
-								...facts,
-							}),
-						);
-					},
-					after: (read) => sealedIdentityAfter(read, provider.id, account.subject),
-				},
-				{
-					driver: transaction,
-					occasion: "sign_in",
-					refusal: "broken_state_on_oauth_sign_in",
-					anchorReading: anchored,
-				},
-			);
-			return {
-				userId: joined.id,
-				identity: sealed.written,
-				authorisedBy: issueAuthorisationOf(sealed),
-				secondFactors: secondFactorsOf(sealed.read),
-				toRecord: sealed,
-			};
-		});
+			})
+			.catch(answerAnIdentifierTakenMeanwhile);
 	}
 
 	async function issueSessionAround(
@@ -785,7 +744,7 @@ export function createOAuthService(input: {
 			}
 
 			const resolved = await accountForSignIn(provider, account, facts);
-			//the sign-up's first seal and an automatic link's seal reach the anchor once their transaction committed (S-INTEG-6)
+			//the sign-up's first seal reaches the anchor once its transaction committed (S-INTEG-6)
 			if (resolved.toRecord !== null) {
 				recordSealLater(services.securityState, resolved.toRecord, "sign_in");
 			}

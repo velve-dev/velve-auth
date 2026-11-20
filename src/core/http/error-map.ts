@@ -18,6 +18,7 @@ export type VelveErrorCode =
 	| "factor_already_enrolled"
 	| "last_sign_in_method"
 	| "identity_already_linked"
+	| "identity_link_required"
 	| "provider_not_configured"
 	| "oauth_flow_invalid"
 	| "oauth_provider_error"
@@ -52,6 +53,7 @@ const HTTP_STATUS_BY_ERROR_CODE: Readonly<Record<VelveErrorCode, number>> = {
 	factor_already_enrolled: 409,
 	last_sign_in_method: 409,
 	identity_already_linked: 409,
+	identity_link_required: 409,
 	provider_not_configured: 400,
 	oauth_flow_invalid: 400,
 	oauth_provider_error: 502,
@@ -87,6 +89,8 @@ const MESSAGE_BY_ERROR_CODE: Readonly<Record<VelveErrorCode, string>> = {
 	factor_already_enrolled: "The factor is already enrolled.",
 	last_sign_in_method: "The last remaining sign-in method cannot be removed.",
 	identity_already_linked: "This provider identity is already linked to an account.",
+	identity_link_required:
+		"An account already uses this address; sign in to it and link the provider from there.",
 	provider_not_configured: "The provider is not configured.",
 	oauth_flow_invalid: "The authorization flow is not valid.",
 	oauth_provider_error: "The provider did not answer correctly.",

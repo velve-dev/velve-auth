@@ -101,7 +101,7 @@ interface OAuthIdentityRepository {
 	}): Promise<OwnedIdentity | null>;
 	//null means the pair is already linked, to this account or to another (E-989)
 	insertIdentity(input: { readonly actor: Actor } & IdentityFacts): Promise<Identity | null>;
-	//a sign-in binds the account it created or automatic linking joined and holds no proof (E-2434)
+	//a sign-in binds the account it created in the same transaction and holds no proof (E-2434)
 	insertIdentityOfSignIn(
 		input: { readonly userId: string } & IdentityFacts,
 	): Promise<Identity | null>;

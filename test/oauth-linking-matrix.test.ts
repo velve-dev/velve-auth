@@ -100,7 +100,7 @@ async function rowsOf<T>(mount: Mounted, sql: string, values: unknown[]): Promis
  * ------------------------------------------------------------------ */
 
 type LocalState = "absent" | "unverified" | "verified";
-type LinkOutcome = "new_account" | "linked" | "refused";
+type LinkOutcome = "new_account_verified" | "new_account_unverified" | "link_required";
 
 interface MatrixCase {
 	readonly localAccount: LocalState;
@@ -110,81 +110,83 @@ interface MatrixCase {
 }
 
 /**
- * S-LINK-2: an automatic link needs all three conditions. Only the last row has all three, and the
- * row this matrix exists for is `unverified / true / true` — the shape of CVE-2026-53516.
+ * S-LINK-2: no row links, whatever the three former conditions say (E-3895). Every row with a local
+ * account answers identity_link_required, `verified / true / true` included, which is the row that
+ * linked until 3.0.0; the rows without one create an account, and only `absent / true / true`
+ * marks its address confirmed (E-558).
  */
 const T_LINK_2_EXPECTATIONS: readonly MatrixCase[] = [
 	{
 		localAccount: "absent",
 		providerReportsVerified: false,
 		providerIsTrusted: false,
-		expected: "new_account",
+		expected: "new_account_unverified",
 	},
 	{
 		localAccount: "absent",
 		providerReportsVerified: false,
 		providerIsTrusted: true,
-		expected: "new_account",
+		expected: "new_account_unverified",
 	},
 	{
 		localAccount: "absent",
 		providerReportsVerified: true,
 		providerIsTrusted: false,
-		expected: "new_account",
+		expected: "new_account_unverified",
 	},
 	{
 		localAccount: "absent",
 		providerReportsVerified: true,
 		providerIsTrusted: true,
-		expected: "new_account",
+		expected: "new_account_verified",
 	},
 	{
 		localAccount: "unverified",
 		providerReportsVerified: false,
 		providerIsTrusted: false,
-		expected: "refused",
+		expected: "link_required",
 	},
 	{
 		localAccount: "unverified",
 		providerReportsVerified: false,
 		providerIsTrusted: true,
-		expected: "refused",
+		expected: "link_required",
 	},
 	{
 		localAccount: "unverified",
 		providerReportsVerified: true,
 		providerIsTrusted: false,
-		expected: "refused",
+		expected: "link_required",
 	},
 	{
 		localAccount: "unverified",
 		providerReportsVerified: true,
 		providerIsTrusted: true,
-		expected: "refused",
+		expected: "link_required",
 	},
 	{
 		localAccount: "verified",
 		providerReportsVerified: false,
 		providerIsTrusted: false,
-		expected: "refused",
+		expected: "link_required",
 	},
 	{
 		localAccount: "verified",
 		providerReportsVerified: false,
 		providerIsTrusted: true,
-		expected: "refused",
+		expected: "link_required",
 	},
 	{
 		localAccount: "verified",
 		providerReportsVerified: true,
 		providerIsTrusted: false,
-		expected: "refused",
+		expected: "link_required",
 	},
 	{
 		localAccount: "verified",
 		providerReportsVerified: true,
 		providerIsTrusted: true,
-		expected: "linked",
+		expected: "link_required",
 	},
 ];
 
@@ -208,7 +210,8 @@ async function seedLocalAccount(mount: Mounted, matrixCase: MatrixCase): Promise
 	return row?.id ?? null;
 }
 
-async function runMatrixCase(mount: Mounted, matrixCase: MatrixCase): Promise<LinkOutcome> {
+//anything but the two shapes the table names is reported as itself, so a drift shows what it drifted to
+async function runMatrixCase(mount: Mounted, matrixCase: MatrixCase): Promise<string> {
 	const subject = `subject-${addressFor(matrixCase)}`;
 	const seeded = await seedLocalAccount(mount, matrixCase);
 	mount.provider.reportClaims({
@@ -218,15 +221,37 @@ async function runMatrixCase(mount: Mounted, matrixCase: MatrixCase): Promise<Li
 	});
 
 	const answer = await signInThrough(mount, "stubby");
-	if (answer.status !== 302) {
-		return "refused";
-	}
-	const [identity] = await rowsOf<{ user_id: string }>(
+	const identities = await rowsOf<{ user_id: string }>(
 		mount,
 		"SELECT user_id FROM $schema.identity WHERE subject = $1",
 		[subject],
 	);
-	return identity !== undefined && identity.user_id === seeded ? "linked" : "new_account";
+	if (answer.status === 409) {
+		const { error } = (await answer.json()) as { error: { code: string } };
+		const pending = await rowsOf<{ user_id: string }>(
+			mount,
+			"SELECT user_id FROM $schema.pending_authentication WHERE user_id = $1",
+			[seeded],
+		);
+		const sessions = await rowsOf<{ id: string }>(
+			mount,
+			"SELECT id FROM $schema.session WHERE user_id = $1",
+			[seeded],
+		);
+		const nothingWritten = identities.length === 0 && pending.length === 0 && sessions.length === 0;
+		return error.code === "identity_link_required" && nothingWritten
+			? "link_required"
+			: `409 ${error.code}, wrote ${identities.length}/${pending.length}/${sessions.length}`;
+	}
+	if (answer.status !== 302 || identities.length !== 1 || identities[0]?.user_id === seeded) {
+		return `${answer.status} with ${identities.length} identities`;
+	}
+	const [created] = await rowsOf<{ email_verified_at: Date | null }>(
+		mount,
+		"SELECT email_verified_at FROM $schema.user WHERE id = $1",
+		[identities[0]?.user_id],
+	);
+	return created?.email_verified_at === null ? "new_account_unverified" : "new_account_verified";
 }
 
 describe("T-LINK-2: the twelve-case state matrix (S-LINK-2)", () => {
@@ -239,7 +264,10 @@ describe("T-LINK-2: the twelve-case state matrix (S-LINK-2)", () => {
 		expect(T_LINK_2_EXPECTATIONS).toHaveLength(12);
 		expect(localStates.size).toBe(3);
 		expect(new Set(keys).size).toBe(12);
-		expect(T_LINK_2_EXPECTATIONS.filter((one) => one.expected === "linked")).toHaveLength(1);
+		expect(T_LINK_2_EXPECTATIONS.filter((one) => one.expected === "link_required")).toHaveLength(8);
+		expect(
+			T_LINK_2_EXPECTATIONS.filter((one) => one.expected === "new_account_verified"),
+		).toHaveLength(1);
 	});
 
 	it("runs all twelve against the flow and matches the expectation table", async () => {
@@ -265,26 +293,52 @@ describe("T-LINK-2: the twelve-case state matrix (S-LINK-2)", () => {
 		expect(observed).toStrictEqual(expected);
 	});
 
-	it("does not silently link an unverified local account to a trusted, verified provider", async () => {
+	it("does not link a verified local account to a trusted, verified provider", async () => {
 		const mount = await mountWith({
 			providerIds: ["stubby"],
 			trusted: ["stubby"],
 			claims: { sub: "unused" },
 		});
 		const singled: MatrixCase = {
-			localAccount: "unverified",
+			localAccount: "verified",
 			providerReportsVerified: true,
 			providerIsTrusted: true,
-			expected: "refused",
+			expected: "link_required",
 		};
 
 		const outcome = await runMatrixCase(mount, singled);
 		const identities = await rowsOf<{ id: string }>(mount, "SELECT id FROM $schema.identity", []);
 		const sessions = await rowsOf<{ id: string }>(mount, "SELECT id FROM $schema.session", []);
 
-		expect(outcome).toBe("refused");
+		expect(outcome).toBe("link_required");
 		expect(identities).toHaveLength(0);
 		expect(sessions).toHaveLength(0);
+	});
+
+	it("links the same identity once the owner starts the link from a session of the account", async () => {
+		const mount = await mountWith({
+			providerIds: ["stubby", "stubbier"],
+			trusted: ["stubby"],
+			claims: { sub: "owner-first", email: "owner@example.com", email_verified: true },
+		});
+		const signedIn = await signInThrough(mount, "stubby");
+		mount.provider.reportClaims({
+			sub: "owner-second",
+			email: "owner@example.com",
+			email_verified: true,
+		});
+		const refused = await signInThrough(mount, "stubbier");
+		const linked = await linkThrough(mount, "stubbier", sessionCookieOf(signedIn));
+		const owners = await rowsOf<{ user_id: string }>(
+			mount,
+			"SELECT DISTINCT user_id FROM $schema.identity",
+			[],
+		);
+
+		expect(signedIn.status).toBe(302);
+		expect(refused.status).toBe(409);
+		expect(linked.status).toBe(302);
+		expect(owners).toHaveLength(1);
 	});
 });
 

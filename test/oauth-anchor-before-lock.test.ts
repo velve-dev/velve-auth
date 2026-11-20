@@ -21,22 +21,21 @@ function anchorAskedBefore(lockCall: string, branch: (body: string) => string): 
 
 describe("the OAuth sign-in asks the anchor before it takes the account lock (S-INTEG-6)", () => {
 	it("checks a linked identity's account with the anchor asked before theIdentityUnderItsAccountLock", () => {
-		const linked = (body: string) => body.slice(0, body.indexOf("accountAnAutomaticLinkMayJoin("));
+		const linked = (body: string) => body.slice(0, body.indexOf("createAccountFor("));
 
 		expect(anchorAskedBefore("theIdentityUnderItsAccountLock(", linked)).toBe(true);
 		expect(bodyOf("checkedIdentityOf")).toContain("anchorReading");
 	});
 
-	it("seals the automatic link with the anchor asked before theJoinableAccountUnderItsLock", () => {
-		const joining = (body: string) => body.slice(body.indexOf("accountAnAutomaticLinkMayJoin("));
+	//the automatic link that sealed an existing account under its lock is gone (E-3895)
+	it("takes no lock on an existing account after the linked-identity branch", () => {
+		const creating = (body: string) => body.slice(body.indexOf("createAccountFor("));
 
-		expect(anchorAskedBefore("theJoinableAccountUnderItsLock(", joining)).toBe(true);
-		expect(joining(bodyOf("accountForSignIn"))).toContain("anchorReading: anchored");
+		expect(creating(bodyOf("accountForSignIn"))).not.toContain("lockAccountRow(");
+		expect(creating(bodyOf("accountForSignIn"))).not.toContain("sealChange(");
 	});
 
 	it("asks no anchor inside a function that holds the lock", () => {
-		for (const name of ["theIdentityUnderItsAccountLock", "theJoinableAccountUnderItsLock"]) {
-			expect(bodyOf(name)).not.toContain("consultAnchors(");
-		}
+		expect(bodyOf("theIdentityUnderItsAccountLock")).not.toContain("consultAnchors(");
 	});
 });

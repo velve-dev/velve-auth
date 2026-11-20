@@ -4,7 +4,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { Driver } from "../src/core/db/driver.js";
 import { toWebHandler } from "../src/core/http/web-handler.js";
 import { ID_TOKEN_SIGNATURE_ALGORITHMS } from "../src/core/oauth/id-token.js";
-import { automaticLinkIsAllowed } from "../src/core/oauth/linking.js";
 import type { VelvePlugin } from "../src/core/plugin/config.js";
 import type { SessionConfig } from "../src/core/session/config.js";
 import { createVelveAuth, registerPluginErrorCodes, VelveError } from "../src/index.js";
@@ -278,67 +277,42 @@ describe("S-CSRF-5: the pointer cookie is half of the check", () => {
 	});
 });
 
-describe("S-LINK-2: all three conditions, and never two of them", () => {
-	it("allows the link only where every condition holds", () => {
-		const cases = [false, true].flatMap((first) =>
-			[false, true].flatMap((second) =>
-				[false, true].map((third) => ({
-					providerReportsTheAddressVerified: first,
-					localAccountHasEmailVerifiedAt: second,
-					providerIsTrusted: third,
-				})),
-			),
-		);
-
-		expect(cases).toHaveLength(8);
-		expect(cases.filter(automaticLinkIsAllowed)).toStrictEqual([
-			{
-				providerReportsTheAddressVerified: true,
-				localAccountHasEmailVerifiedAt: true,
-				providerIsTrusted: true,
-			},
-		]);
-	});
-
-	it("does not join an unverified local account even from a trusted provider", async () => {
-		const mounted = await mountWith({ claims: VERIFIED_CLAIMS, trusted: true });
+describe("S-LINK-2: a new identity never joins an existing account by its address", () => {
+	/**
+	 * The automatic link of the three conditions is gone (E-3895): whatever the local account's
+	 * verification state and whether or not the provider is trusted, a sign-in through a subject
+	 * nobody linked answers identity_link_required and writes neither identity nor session.
+	 */
+	it.each([
+		{ localVerified: false, trusted: false },
+		{ localVerified: false, trusted: true },
+		{ localVerified: true, trusted: false },
+		{ localVerified: true, trusted: true },
+	])("refuses with identity_link_required for %o", async ({ localVerified, trusted }) => {
+		const mounted = await mountWith({ claims: VERIFIED_CLAIMS, trusted });
 		await mounted.auth.connection.query(
-			`INSERT INTO ${mounted.auth.schema}.user (email) VALUES ($1)`,
+			`INSERT INTO ${mounted.auth.schema}.user (email, email_verified_at) VALUES ($1, ${localVerified ? "now()" : "NULL"})`,
 			["signed.in@example.com"],
 		);
 		await resealEveryAccount(mounted);
 		const refused = await mounted.auth.handler(callbackRequest(await start(mounted)));
 
-		expect(refused.status).toBe(400);
+		expect(refused.status).toBe(409);
+		expect(await refused.json()).toMatchObject({ error: { code: "identity_link_required" } });
+		expect(sessionCookieOf(refused)).toBeNull();
 		expect(await countRows(mounted, "identity")).toBe(0);
+		expect(await countRows(mounted, "session")).toBe(0);
 		expect(await countRows(mounted, "user")).toBe(1);
 	});
 
-	it("joins a verified local account from a trusted provider", async () => {
-		const mounted = await mountWith({ claims: VERIFIED_CLAIMS, trusted: true });
-		await mounted.auth.connection.query(
-			`INSERT INTO ${mounted.auth.schema}.user (email, email_verified_at) VALUES ($1, now())`,
-			["signed.in@example.com"],
+	it("contains no code that joins an existing account by address", () => {
+		const service = readFileSync(
+			fileURLToPath(new URL("../src/core/oauth/service.ts", import.meta.url)),
+			"utf8",
 		);
-		await resealEveryAccount(mounted);
-		const response = await mounted.auth.handler(callbackRequest(await start(mounted)));
 
-		expect(response.status).toBe(302);
-		expect(await countRows(mounted, "user")).toBe(1);
-		expect(await countRows(mounted, "identity")).toBe(1);
-	});
-
-	it("refuses to join a verified local account from a provider that is not trusted", async () => {
-		const mounted = await mountWith({ claims: VERIFIED_CLAIMS });
-		await mounted.auth.connection.query(
-			`INSERT INTO ${mounted.auth.schema}.user (email, email_verified_at) VALUES ($1, now())`,
-			["signed.in@example.com"],
-		);
-		await resealEveryAccount(mounted);
-		const refused = await mounted.auth.handler(callbackRequest(await start(mounted)));
-
-		expect(refused.status).toBe(400);
-		expect(await countRows(mounted, "identity")).toBe(0);
+		expect(service).not.toMatch(/AutomaticLink|theJoinableAccount/);
+		expect(service).toContain('throw new VelveError("identity_link_required")');
 	});
 });
 
@@ -391,11 +365,12 @@ describe("S-LINK-5: no address is invented", () => {
 	});
 });
 
-describe("S-LINK-2, condition one: the verified flag is a boolean", () => {
+describe("E-558: the verified flag is a boolean", () => {
 	/**
 	 * `"true"` and `1` were accepted once, from memory of provider payloads rather than from any
-	 * clause; OpenID Connect Core §5.1 makes the claim a boolean. It is the first of the three
-	 * conditions, so the wide reading was the condition read widely (E-579).
+	 * clause; OpenID Connect Core §5.1 makes the claim a boolean. It was the first of the three
+	 * conditions of the automatic link E-3895 removed, and it still decides whether a trusted
+	 * provider verifies the address of the account it signs up (E-579, E-558).
 	 */
 	it("stores the flag as false when the provider spells it as a string", async () => {
 		const mounted = await mountWith({
@@ -416,21 +391,24 @@ describe("S-LINK-2, condition one: the verified flag is a boolean", () => {
 		expect(user?.email_verified_at).toBeNull();
 	});
 
-	it("joins no verified account when the provider spells the flag as a number", async () => {
+	it("verifies no address when the provider spells the flag as a number", async () => {
 		const mounted = await mountWith({
 			claims: { sub: "number-flag", email: "number.flag@example.com", email_verified: 1 },
 			trusted: true,
 		});
-		await mounted.auth.connection.query(
-			`INSERT INTO ${mounted.auth.schema}.user (email, email_verified_at) VALUES ($1, now())`,
-			["number.flag@example.com"],
+		const answered = await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const [identity] = await mounted.auth.connection.query<{ provider_email_verified: boolean }>(
+			`SELECT provider_email_verified FROM ${mounted.auth.schema}.identity`,
+			[],
 		);
-		await resealEveryAccount(mounted);
-		const refused = await mounted.auth.handler(callbackRequest(await start(mounted)));
+		const [user] = await mounted.auth.connection.query<{ email_verified_at: Date | null }>(
+			`SELECT email_verified_at FROM ${mounted.auth.schema}.user`,
+			[],
+		);
 
-		expect(refused.status).toBe(400);
-		expect(await countRows(mounted, "identity")).toBe(0);
-		expect(await countRows(mounted, "user")).toBe(1);
+		expect(answered.status).toBe(302);
+		expect(identity?.provider_email_verified).toBe(false);
+		expect(user?.email_verified_at).toBeNull();
 	});
 });
 

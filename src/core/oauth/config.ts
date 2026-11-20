@@ -71,7 +71,7 @@ export interface OAuthConfig {
 	};
 	/** the absolute callback URL the provider id is appended to, never derived from a request */
 	readonly callbackBaseUrl: string;
-	/** the providers trusted for an automatic link, one of the three conditions it requires */
+	/** the providers whose verified address marks the address of an account they sign up verified */
 	readonly trustedProviders: readonly string[];
 	/** off by default, so omitting it stores no provider token */
 	readonly storeTokens?: boolean;

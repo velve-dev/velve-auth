@@ -24,7 +24,6 @@ import { testKeyRing } from "./totp-fixtures.js";
 
 const keys = testKeyRing(1).providerAt(1);
 const LOCK_WAIT_POLLS = 60;
-const LOCK_HELD_MS = 1_500;
 const POLL_INTERVAL_MS = 50;
 
 let connection: TestConnection;
@@ -198,8 +197,9 @@ describe("a sign-in that refreshes provider tokens during the account rewrite (S
 	});
 });
 
-describe("an automatic link writes provider tokens into an existing account (S-INTEG-1)", () => {
-	it("waits for a transaction holding that account's lock before its identity row and tokens land", async () => {
+describe("a new subject carrying an existing account's address writes nothing into it (S-LINK-2)", () => {
+	//the automatic link that waited for this lock and then wrote the identity is gone (E-3895)
+	it("answers identity_link_required without waiting for that account's lock", async () => {
 		const handler = handlerOn(other, true);
 		const subject = `autolink-${randomBytes(4).toString("hex")}`;
 		const address = `${subject}@provider.example`;
@@ -212,29 +212,20 @@ describe("an automatic link writes provider tokens into an existing account (S-I
 		const flow = await startedFlow(handler);
 		const holder = await openTestConnection();
 
-		let landedWhileLocked = -1;
-		let signIn: Promise<Response> = Promise.resolve(new Response());
+		let answer: Response = new Response();
 		await holder.transaction(async (holding) => {
 			await lockAccountRow(holding, schema, userId);
-			signIn = completed(handler, flow);
-			await new Promise((resolve) => setTimeout(resolve, LOCK_HELD_MS));
-			const [row] = await connection.query<{ landed: number }>(
-				`SELECT count(*)::int AS landed FROM ${schema}.identity
-				 WHERE user_id = $1 AND access_token_enc IS NOT NULL`,
-				[userId],
-			);
-			landedWhileLocked = row?.landed ?? -1;
+			answer = await completed(handler, flow);
 		});
 		await holder.close();
-		const answer = await signIn;
-
-		expect(landedWhileLocked).toBe(0);
-		expect(answer.status).toBeLessThan(400);
 		const [linked] = await connection.query<{ landed: number }>(
-			`SELECT count(*)::int AS landed FROM ${schema}.identity WHERE user_id = $1`,
-			[userId],
+			`SELECT count(*)::int AS landed FROM ${schema}.identity WHERE user_id = $1 OR subject = $2`,
+			[userId, subject],
 		);
-		expect(linked?.landed).toBe(1);
+
+		expect(answer.status).toBe(409);
+		expect(await answer.json()).toMatchObject({ error: { code: "identity_link_required" } });
+		expect(linked?.landed).toBe(0);
 	});
 });
 
@@ -281,89 +272,6 @@ async function identityOf(subject: string): Promise<{ id: string; user_id: strin
 	);
 	return row ?? { id: "", user_id: "" };
 }
-
-describe("an automatic link decides again under the lock which account it joins (S-LINK-2)", () => {
-	async function linkWhileTheAccountChanges(
-		change: (holding: Driver, userId: string, address: string) => Promise<unknown>,
-	) {
-		const handler = handlerOn(other, true);
-		const subject = `requalify-${randomBytes(4).toString("hex")}`;
-		const address = `${subject}@provider.example`;
-		const [user] = await connection.query<{ id: string }>(
-			`INSERT INTO ${schema}.user (email, email_verified_at) VALUES ($1, now()) RETURNING id`,
-			[address],
-		);
-		const userId = user?.id ?? "";
-		provider.reportClaims({ sub: subject, email: address, email_verified: true });
-		const flow = await startedFlow(handler);
-		const holder = await openTestConnection();
-
-		let waited = false;
-		let signIn: Promise<Response> = Promise.resolve(new Response());
-		await holder.transaction(async (holding) => {
-			await lockAccountRow(holding, schema, userId);
-			signIn = completed(handler, flow);
-			waited = await aBackendWaitsForALock();
-			await change(holding, userId, address);
-		});
-		await holder.close();
-		const answer = await signIn;
-		const unknown = await handlerOn(connection)(
-			requestTo("/sign-in/oauth/callback/stubby?code=x&state=nope", {
-				method: "GET",
-				cookie: `${DEFAULT_COOKIE_NAMES.oauthState}=nope`,
-			}),
-		);
-		const [linked] = await connection.query<{ count: number }>(
-			`SELECT count(*)::int AS count FROM ${schema}.identity WHERE subject = $1`,
-			[subject],
-		);
-		return { waited, answer, unknown, identities: linked?.count };
-	}
-
-	it("links nothing into an account whose address moved while the sign-in waited", async () => {
-		const outcome = await linkWhileTheAccountChanges((holding, userId, address) =>
-			holding.query(`UPDATE ${schema}.user SET email = $2 WHERE id = $1`, [
-				userId,
-				`moved-${address}`,
-			]),
-		);
-
-		expect(outcome.waited).toBe(true);
-		expect(outcome.identities).toBe(0);
-		expect(outcome.answer.status).toBe(outcome.unknown.status);
-		expect(await outcome.answer.text()).toBe(await outcome.unknown.text());
-	});
-
-	it("links into neither account when the address moved to another verified account while the sign-in waited", async () => {
-		const outcome = await linkWhileTheAccountChanges(async (holding, userId, address) => {
-			await holding.query(`UPDATE ${schema}.user SET email = $2 WHERE id = $1`, [
-				userId,
-				`moved-${address}`,
-			]);
-			await holding.query(
-				`INSERT INTO ${schema}.user (email, email_verified_at) VALUES ($1, now())`,
-				[address],
-			);
-		});
-
-		expect(outcome.waited).toBe(true);
-		expect(outcome.identities).toBe(0);
-		expect(outcome.answer.status).toBe(outcome.unknown.status);
-		expect(await outcome.answer.text()).toBe(await outcome.unknown.text());
-	});
-
-	it("links nothing into an account whose address lost its verification while the sign-in waited", async () => {
-		const outcome = await linkWhileTheAccountChanges((holding, userId) =>
-			holding.query(`UPDATE ${schema}.user SET email_verified_at = NULL WHERE id = $1`, [userId]),
-		);
-
-		expect(outcome.waited).toBe(true);
-		expect(outcome.identities).toBe(0);
-		expect(outcome.answer.status).toBe(outcome.unknown.status);
-		expect(await outcome.answer.text()).toBe(await outcome.unknown.text());
-	});
-});
 
 describe("a known identity's sign-in reads the identity again under the account lock (S-INTEG-1)", () => {
 	it("refuses a sign-in whose identity changed owner while it waited for the lock", async () => {

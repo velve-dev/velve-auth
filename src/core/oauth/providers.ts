@@ -181,8 +181,8 @@ export interface ResolvedProvider {
 	readonly redirectUri: string;
 	readonly prompt: OAuthPrompt | null;
 	readonly responseMode: OAuthResponseMode;
-	//the trust list is read once at start and no handler re-reads it (S-LINK-2)
-	readonly trustedForAutomaticLinking: boolean;
+	//the trust list is read once at start and no handler re-reads it (E-3896)
+	readonly trustedToVerifyAddresses: boolean;
 }
 
 export type ProviderTable = ReadonlyMap<string, ResolvedProvider>;
@@ -256,7 +256,7 @@ function resolveProvider(
 		),
 		prompt: configured.prompt ?? null,
 		responseMode: configured.responseMode ?? descriptor.responseMode ?? "query",
-		trustedForAutomaticLinking: oauth.trustedProviders.includes(id),
+		trustedToVerifyAddresses: oauth.trustedProviders.includes(id),
 	};
 }
 
