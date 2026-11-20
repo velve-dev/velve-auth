@@ -122,7 +122,7 @@ function toUser(row: UserRowShape): User {
 	};
 }
 
-//the two switches of an account are set only by the application itself and share one statement
+//only the application itself sets either switch of an account, after its own authorisation decision (S-OWNER-7)
 function switchStatement(
 	users: string,
 	column: "disabled_at" | "recovery_disabled_at",
