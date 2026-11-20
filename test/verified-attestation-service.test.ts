@@ -259,22 +259,28 @@ describe("which attestation counts as verified (S-INTEG-13)", () => {
 		expect(credential.attestationVerified).toBe(false);
 	});
 
-	it("never fetches the revocation list a certificate names and does not count its chain", async () => {
+	it("refuses a chain naming a revocation list before verification and never fetches it", async () => {
 		const fetched = vi.spyOn(globalThis, "fetch");
 		try {
 			const actor = await createAccount(bench);
-			const { credential } = await register(
-				bench,
-				actor,
-				await authenticatorWith(ALLOWED, {
-					kind: "packed",
-					identity: await authority.issue({
-						aaguid: ALLOWED,
-						revocationListUrl: "http://127.0.0.1:9/never.crl",
+			const failure = await failureOf(
+				register(
+					bench,
+					actor,
+					await authenticatorWith(ALLOWED, {
+						kind: "packed",
+						identity: await authority.issue({
+							aaguid: ALLOWED,
+							revocationListUrl: "http://127.0.0.1:9/never.crl",
+						}),
 					}),
-				}),
+				),
 			);
-			expect(credential.attestationVerified).toBe(false);
+			expect(failure).toEqual({
+				reason: "attestation_names_a_revocation_list",
+				visible: "webauthn_credential_rejected",
+			});
+			expect(await rowsOf(bench, actor)).toBe(0);
 			expect(fetched).not.toHaveBeenCalled();
 		} finally {
 			fetched.mockRestore();
