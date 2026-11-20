@@ -39,12 +39,12 @@ describe("the advisory lock in the migration runner (E-08)", () => {
 				);
 
 				const claimed = reports.flatMap((report) => report.appliedVersions).sort();
-				expect(claimed).toEqual([1, 2, 3, 4, 5, 6, 7, 9]);
+				expect(claimed).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
 				expect(reports.map((report) => report.currentVersion)).toEqual(
 					Array.from({ length: RUNNERS }, () => 9),
 				);
 				expect((await ledgerRows(schema)).map((row) => row.version)).toEqual([
-					1, 2, 3, 4, 5, 6, 7, 9,
+					1, 2, 3, 4, 5, 6, 7, 8, 9,
 				]);
 
 				const [tables] = await observer.query<{ present: number }>(
@@ -75,8 +75,8 @@ describe("the advisory lock in the migration runner (E-08)", () => {
 			);
 
 			expect(reports.map((report) => report.appliedVersions)).toEqual([
-				[1, 2, 3, 4, 5, 6, 7, 9],
-				[1, 2, 3, 4, 5, 6, 7, 9],
+				[1, 2, 3, 4, 5, 6, 7, 8, 9],
+				[1, 2, 3, 4, 5, 6, 7, 8, 9],
 			]);
 		} finally {
 			await Promise.all(connections.map((connection) => connection.close()));

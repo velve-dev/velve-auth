@@ -7,6 +7,7 @@ import { proofOfWorkSchema } from "./proof-of-work.js";
 import { recoveryDisabledSchema } from "./recovery-disabled.js";
 import { securityStateSchema } from "./security-state.js";
 import { tokenMacSchema } from "./token-mac.js";
+import { verifiedAttestationSchema } from "./verified-attestation.js";
 
 export function coreMigrations(identityMode: IdentityMode): readonly Migration[] {
 	return [
@@ -17,6 +18,7 @@ export function coreMigrations(identityMode: IdentityMode): readonly Migration[]
 		pendingPasswordResetSchema,
 		recoveryDisabledSchema,
 		passkeyRecoverySchema,
+		verifiedAttestationSchema,
 		proofOfWorkSchema,
 	];
 }

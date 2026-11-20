@@ -14,6 +14,7 @@ import {
 	consultAnchors,
 	recordSealWithAnchors,
 } from "../security-state/anchor.js";
+import { normalisedAllowlistOf } from "../security-state/authenticator-allowlist.js";
 import {
 	FIRST_GENERATIONS,
 	type SealedComponents,
@@ -88,6 +89,10 @@ export interface SealedSecurityState {
 		readonly credentialId: string;
 		readonly activatesAt: Date;
 	} | null;
+	/** the AAGUIDs the account's passkeys are limited to, or null while no list is set */
+	readonly authenticatorAllowlist: readonly string[] | null;
+	/** the credential id of every passkey whose verified attestation the reseal kept, in base64url */
+	readonly attestedPasskeyCredentialIds: readonly string[];
 }
 
 type SecurityStateMaintenanceErrorCode =
@@ -98,6 +103,7 @@ type SecurityStateMaintenanceErrorCode =
 	| "security_state_changed_during_reseal"
 	| "security_state_envelope_unreadable"
 	| "security_state_recovery_switch_unconfirmed"
+	| "security_state_authenticator_allowlist_unconfirmed"
 	| "security_state_account_failed";
 
 /** a maintenance call refused, with a stable code and the account it was about where there is one */
@@ -336,6 +342,10 @@ function ratifiedStateOf(
 						credentialId: encodeBase64Url(read.passkeyRecovery.credentialId),
 						activatesAt: seal.heldPasskeyActivatesAt,
 					},
+		authenticatorAllowlist: read.authenticatorAllowlist,
+		attestedPasskeyCredentialIds: read.passkeys
+			.filter((passkey) => passkey.attestedAaguid !== null)
+			.map((passkey) => encodeBase64Url(passkey.credentialId)),
 	};
 }
 
@@ -449,15 +459,22 @@ async function lastSealHadTheOtherSwitch(
 	return verdict === "valid";
 }
 
+async function sealConfirms(
+	runtime: SecurityStateRuntime,
+	stored: SecurityStateRead,
+	floor: number,
+): Promise<boolean> {
+	const { verdict } = await checkSecurityState(runtime.keys, stored, runtime.sealing);
+	return verdict === "unsealed" || (verdict === "valid" && (stored.seal?.version ?? 0) >= floor);
+}
+
 //a state the seal does not confirm may hide a cleared switch, which only the operator can name (S-INTEG-11)
 async function switchTheRowsMayKeep(
 	runtime: SecurityStateRuntime,
 	stored: SecurityStateRead,
 	floor: number,
 ): Promise<boolean> {
-	const { verdict } = await checkSecurityState(runtime.keys, stored, runtime.sealing);
-	const confirmedBySeal =
-		verdict === "unsealed" || (verdict === "valid" && (stored.seal?.version ?? 0) >= floor);
+	const confirmedBySeal = await sealConfirms(runtime, stored, floor);
 	if (
 		(!confirmedBySeal && !stored.recoveryDisabled) ||
 		(await lastSealHadTheOtherSwitch(runtime, stored))
@@ -500,12 +517,71 @@ async function withTheConfirmedSwitch(
 	return { ...read, recoveryDisabled: true, recoveryCodes: [], passkeyRecovery: null };
 }
 
+/** what the reseal knows about the authenticator allowlist before it takes the lock */
+interface AllowlistConfirmation {
+	/** the list the operator names, null for none, or undefined where the operator names nothing */
+	readonly named: readonly string[] | null | undefined;
+	/** whether the instance verifies attestation, where a list may exist whatever the rows show */
+	readonly attestationConfigured: boolean;
+}
+
+function holdsAnyAttestation(read: SecurityStateRead): boolean {
+	return (
+		read.passkeys.some((passkey) => passkey.attestedAaguid !== null) ||
+		(read.passkeyRecovery?.attestedAaguid ?? null) !== null
+	);
+}
+
+//a reseal never ratifies a list or a verified attestation the seal does not confirm (S-INTEG-13)
+async function withTheConfirmedAllowlist(
+	runtime: SecurityStateRuntime,
+	tx: Driver,
+	read: SecurityStateRead,
+	confirmation: AllowlistConfirmation & { readonly confirmedBySeal: boolean },
+): Promise<SecurityStateRead> {
+	const actor = actorOfMaintenance(read.userId);
+	const mayHideAList =
+		confirmation.attestationConfigured ||
+		read.authenticatorAllowlist !== null ||
+		holdsAnyAttestation(read);
+	if (confirmation.named === undefined && !confirmation.confirmedBySeal && mayHideAList) {
+		throw new SecurityStateMaintenanceError(
+			"security_state_authenticator_allowlist_unconfirmed",
+			read.userId,
+		);
+	}
+	const allowlist =
+		confirmation.named === undefined ? read.authenticatorAllowlist : confirmation.named;
+	if (confirmation.named !== undefined) {
+		await createUserRepository({ driver: tx, schema: runtime.schema }).setAuthenticatorAllowlist({
+			actor,
+			aaguids: allowlist,
+		});
+	}
+	if (confirmation.confirmedBySeal) {
+		return { ...read, authenticatorAllowlist: allowlist };
+	}
+	//an attestation is verified once at registration and nothing can verify it again here (E-3851)
+	await createPasskeyRecoveryRepository({
+		driver: tx,
+		schema: runtime.schema,
+	}).forgetEveryAttestation({ actor });
+	return {
+		...read,
+		authenticatorAllowlist: allowlist,
+		passkeys: read.passkeys.map((passkey) => ({ ...passkey, attestedAaguid: null })),
+		passkeyRecovery:
+			read.passkeyRecovery === null ? null : { ...read.passkeyRecovery, attestedAaguid: null },
+	};
+}
+
 //a reseal checks nothing it seals and lands above both the stored version and every floor (S-INTEG-7)
 async function resealUnderAccountLock(
 	runtime: SecurityStateRuntime,
 	userId: string,
 	floor: number,
 	recoveryDisabled: boolean | undefined,
+	allowlist: AllowlistConfirmation,
 ): Promise<Resealed> {
 	const schema = assertSchemaName(runtime.schema);
 	return inOneTransaction(runtime.driver, async (tx) => {
@@ -518,13 +594,19 @@ async function resealUnderAccountLock(
 		if (base >= Number.MAX_SAFE_INTEGER) {
 			throw new SecurityStateMaintenanceError("security_state_version_exhausted", userId);
 		}
-		const read = await withTheConfirmedSwitch(
+		const confirmedBySeal = await sealConfirms(runtime, stored, floor);
+		const read = await withTheConfirmedAllowlist(
 			runtime,
 			tx,
-			stored.seal === null
-				? await rewriteEnvelopes(runtime, tx, actorOfMaintenance(userId), stored, "absent")
-				: stored,
-			{ named: recoveryDisabled, floor },
+			await withTheConfirmedSwitch(
+				runtime,
+				tx,
+				stored.seal === null
+					? await rewriteEnvelopes(runtime, tx, actorOfMaintenance(userId), stored, "absent")
+					: stored,
+				{ named: recoveryDisabled, floor },
+			),
+			{ ...allowlist, confirmedBySeal },
 		);
 		const version = base + 1;
 		const sessionEpoch = drawSessionEpochOtherThan(stored.seal?.sessionEpoch ?? 1);
@@ -559,10 +641,30 @@ async function resealUnderAccountLock(
 	});
 }
 
+function namedAllowlistOf(named: unknown, userId: string): readonly string[] | null | undefined {
+	if (named === undefined || named === null) {
+		return named;
+	}
+	const allowlist = normalisedAllowlistOf(named);
+	if (allowlist === null) {
+		throw new SecurityStateMaintenanceError(
+			"security_state_authenticator_allowlist_unconfirmed",
+			userId,
+		);
+	}
+	return allowlist;
+}
+
 async function resealAccount(
 	runtime: SecurityStateRuntime,
 	log: MaintenanceLog,
-	input: { readonly userId: string; readonly reason: string; readonly recoveryDisabled?: boolean },
+	input: {
+		readonly userId: string;
+		readonly reason: string;
+		readonly recoveryDisabled?: boolean;
+		readonly authenticatorAllowlist?: readonly string[] | null;
+	},
+	attestationConfigured: boolean,
 ): Promise<SealedSecurityState> {
 	const reason: unknown = input?.reason;
 	if (typeof reason !== "string" || reason.trim() === "") {
@@ -576,6 +678,7 @@ async function resealAccount(
 	if (recoveryDisabled !== undefined && typeof recoveryDisabled !== "boolean") {
 		throw new SecurityStateMaintenanceError("security_state_recovery_switch_unconfirmed", userId);
 	}
+	const named = namedAllowlistOf(input.authenticatorAllowlist, userId);
 	const reading = await consultAnchors(runtime.anchors, userId);
 	if (reading.kind === "unavailable") {
 		runtime.alarms.raise({ userId, occasion: "maintenance", reason: "anchor_unavailable" });
@@ -586,6 +689,7 @@ async function resealAccount(
 		userId,
 		highestFloorOf(reading),
 		recoveryDisabled,
+		{ named, attestationConfigured },
 	).catch((error: unknown) => {
 		if (!(error instanceof KeyError)) {
 			throw error;
@@ -615,20 +719,23 @@ async function resealAccount(
 /** the two operator calls of the security state, which no route reaches */
 export interface SecurityStateMaintenance {
 	sealSecurityState(): Promise<SecurityStateReport>;
-	/** recoveryDisabled names the no-recovery switch the reseal writes, and without it a switch the last seal does not confirm is refused */
+	/** recoveryDisabled and authenticatorAllowlist name what the reseal writes, and without them a state the last seal does not confirm may be refused */
 	resealSecurityState(input: {
 		userId: string;
 		reason: string;
 		recoveryDisabled?: boolean;
+		authenticatorAllowlist?: readonly string[] | null;
 	}): Promise<SealedSecurityState>;
 }
 
 export function createSecurityStateMaintenance(input: {
 	readonly runtime: SecurityStateRuntime;
 	readonly log: MaintenanceLog;
+	readonly attestationConfigured?: boolean;
 }): SecurityStateMaintenance {
 	return {
 		sealSecurityState: () => sealEveryAccount(input.runtime),
-		resealSecurityState: (call) => resealAccount(input.runtime, input.log, call),
+		resealSecurityState: (call) =>
+			resealAccount(input.runtime, input.log, call, input.attestationConfigured === true),
 	};
 }

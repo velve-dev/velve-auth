@@ -23,6 +23,7 @@ import {
 	ConcealedError,
 	registerDeclaredPluginErrorCodes,
 	VELVE_ERROR_CODES,
+	VelveError,
 	type VelveErrorCode,
 } from "../http/error-map.js";
 import { toLoggedFailure } from "../http/pipeline.js";
@@ -55,6 +56,10 @@ import { createProofOfWork, type ProofOfWork } from "../pow/gate.js";
 import { type ProofOfWorkSurface, proofOfWorkRoutes } from "../pow/routes.js";
 import type { PasskeyRecoverySurface } from "../recovery/routes.js";
 import type { SecurityStateAnchorPort } from "../security-state/anchor.js";
+import {
+	normalisedAllowlistOf,
+	setAuthenticatorAllowlist,
+} from "../security-state/authenticator-allowlist.js";
 import { DEFAULT_LIMITS, resolveLimits } from "../security-state/limits.js";
 import { setRecoveryDisabled } from "../security-state/recovery-switch.js";
 import {
@@ -135,6 +140,14 @@ interface UserNamespaceInEveryMode {
 	disableRecovery(input: { userId: string }): Promise<void>;
 	/** turns the mailed paths and recovery codes that disableRecovery turned off on again */
 	enableRecovery(input: { userId: string }): Promise<void>;
+	/** lets only a passkey whose attestation verified as one of these AAGUIDs register and sign in */
+	limitAuthenticators(input: {
+		userId: string;
+		aaguids: readonly string[];
+		allowNoUsableSignInMethod?: boolean;
+	}): Promise<void>;
+	/** lifts the list limitAuthenticators set, so every passkey of the account signs in again */
+	liftAuthenticatorLimit(input: { userId: string }): Promise<void>;
 	delete(input: { userId: string }): Promise<void>;
 }
 
@@ -383,6 +396,45 @@ async function switchRecoveryUnderTheSeal(
 			userId: input.userId,
 		});
 	} catch {}
+}
+
+//a limit must reach the operator's log only once it has committed (E-3849)
+async function limitAuthenticatorsUnderTheSeal(
+	securityState: SecurityStateRuntime,
+	operatorLog: HttpEnvironment["log"],
+	input: {
+		readonly userId: string;
+		readonly allowlist: readonly string[] | null;
+		readonly allowNoUsableSignInMethod: boolean;
+	},
+): Promise<void> {
+	await setAuthenticatorAllowlist(securityState, input);
+	try {
+		operatorLog(
+			"warn",
+			input.allowlist === null
+				? "account authenticator limit lifted"
+				: "account authenticators limited",
+			{ userId: input.userId, aaguids: input.allowlist },
+		);
+	} catch {}
+}
+
+//a list without roots to verify against could never be satisfied and is refused (E-3849)
+function allowlistToLimitTo(
+	attestationConfigured: boolean,
+	input: { readonly aaguids: unknown; readonly allowNoUsableSignInMethod?: unknown },
+): { readonly allowlist: readonly string[]; readonly allowNoUsableSignInMethod: boolean } {
+	const allowlist = normalisedAllowlistOf(input.aaguids);
+	const override: unknown = input.allowNoUsableSignInMethod;
+	if (
+		!attestationConfigured ||
+		allowlist === null ||
+		(override !== undefined && typeof override !== "boolean")
+	) {
+		throw new VelveError("invalid_input");
+	}
+	return { allowlist, allowNoUsableSignInMethod: override === true };
 }
 
 //a mailed link is routed before it is redeemed and only the instance may read it (E-3690)
@@ -638,7 +690,11 @@ export function assembleVelveAuth<M extends IdentityMode>(
 		maintenance: {
 			sweep: () => sweepExpiredRows({ driver, schema }),
 			//a reseal must reach the operator even without a configured sink (S-INTEG-7)
-			...createSecurityStateMaintenance({ runtime: securityState, log: operatorWarnings }),
+			...createSecurityStateMaintenance({
+				runtime: securityState,
+				log: operatorWarnings,
+				attestationConfigured: config.webauthn?.attestation !== undefined,
+			}),
 		},
 
 		async migrate(): Promise<MigrationReport> {
@@ -718,6 +774,17 @@ export function assembleVelveAuth<M extends IdentityMode>(
 				switchRecoveryUnderTheSeal(securityState, operatorWarnings, { userId, disabled: true }),
 			enableRecovery: ({ userId }) =>
 				switchRecoveryUnderTheSeal(securityState, operatorWarnings, { userId, disabled: false }),
+			limitAuthenticators: async (input) =>
+				limitAuthenticatorsUnderTheSeal(securityState, operatorWarnings, {
+					userId: input.userId,
+					...allowlistToLimitTo(config.webauthn?.attestation !== undefined, input),
+				}),
+			liftAuthenticatorLimit: ({ userId }) =>
+				limitAuthenticatorsUnderTheSeal(securityState, operatorWarnings, {
+					userId,
+					allowlist: null,
+					allowNoUsableSignInMethod: true,
+				}),
 			delete: ({ userId }) => users.deleteUser(userId),
 			...(identity.mode === "username"
 				? {}

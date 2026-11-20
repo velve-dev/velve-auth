@@ -61,6 +61,10 @@ export interface UserRepository {
 		readonly actor: Actor;
 		readonly disabled: boolean;
 	}): Promise<void>;
+	setAuthenticatorAllowlist(input: {
+		readonly actor: Actor;
+		readonly aaguids: readonly string[] | null;
+	}): Promise<void>;
 	deleteUser(userId: string): Promise<void>;
 }
 
@@ -122,15 +126,19 @@ function toUser(row: UserRowShape): User {
 	};
 }
 
-//only the application itself sets either switch of an account, after its own authorisation decision (S-OWNER-7)
+//only the application itself sets a switch or the allowlist of an account, after its own authorisation decision (S-OWNER-7)
+function applicationWrite(users: string, assignment: string): string {
+	return `UPDATE ${users} /* no owner predicate: S-OWNER-7, the caller is the application itself (B.3) */
+				SET ${assignment}, updated_at = now()
+				WHERE id = $1`;
+}
+
 function switchStatement(
 	users: string,
 	column: "disabled_at" | "recovery_disabled_at",
 	on: boolean,
 ): string {
-	return `UPDATE ${users} /* no owner predicate: S-OWNER-7, the caller is the application itself (B.3) */
-				SET ${column} = ${on ? "now()" : "NULL"}, updated_at = now()
-				WHERE id = $1`;
+	return applicationWrite(users, `${column} = ${on ? "now()" : "NULL"}`);
 }
 
 export function createUserRepository(options: {
@@ -212,6 +220,17 @@ export function createUserRepository(options: {
 
 		async setRecoveryDisabledAt({ actor, disabled }) {
 			await options.driver.query(switchStatement(users, "recovery_disabled_at", disabled), [actor]);
+		},
+
+		async setAuthenticatorAllowlist({ actor, aaguids }) {
+			await options.driver.query(
+				applicationWrite(
+					users,
+					`allowed_aaguids = CASE WHEN $2::jsonb IS NULL THEN NULL
+					ELSE ARRAY(SELECT jsonb_array_elements_text($2::jsonb))::uuid[] END`,
+				),
+				[actor, aaguids === null ? null : JSON.stringify(aaguids)],
+			);
 		},
 
 		async deleteUser(userId) {

@@ -169,6 +169,8 @@ describe("every state-changing method on the instance checks the origin (S-CSRF-
 				"user.findByEmail",
 				"user.findById",
 				"user.findByUsername",
+				"user.limitAuthenticators",
+				"user.liftAuthenticatorLimit",
 			].sort(),
 		);
 	});

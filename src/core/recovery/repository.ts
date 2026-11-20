@@ -22,6 +22,8 @@ export interface MovedPasskey {
 	readonly credentialId: Uint8Array<ArrayBuffer>;
 	readonly publicKey: Uint8Array<ArrayBuffer>;
 	readonly signCount: number;
+	/** the AAGUID the moved passkey's verified attestation names, or null where none verified */
+	readonly attestedAaguid: string | null;
 }
 
 interface PasskeyRecoveryRepository {
@@ -34,6 +36,7 @@ interface PasskeyRecoveryRepository {
 	withdrawHeldPasskey(input: { readonly actor: Actor }): Promise<number>;
 	heldPasskeyOf(input: { readonly actor: Actor }): Promise<HeldPasskey | null>;
 	moveHeldPasskeyIntoCredentials(input: { readonly actor: Actor }): Promise<MovedPasskey | null>;
+	forgetEveryAttestation(input: { readonly actor: Actor }): Promise<void>;
 	removeEverySignInMethod(input: { readonly actor: Actor }): Promise<void>;
 	//a sign-in presents a credential before anything proves whose it is (E-3768)
 	findDueRecoveryOfCredential(input: {
@@ -60,6 +63,7 @@ interface MovedRow {
 	readonly credential_id: unknown;
 	readonly public_key: unknown;
 	readonly sign_count: unknown;
+	readonly attested_aaguid: string | null;
 }
 
 function heldOf(row: HeldRow): HeldPasskey {
@@ -82,11 +86,12 @@ export function createPasskeyRecoveryRepository(options: {
 	//a credential id another account already signs in with is never held for this one (E-3767)
 	const holdStatement = `INSERT INTO ${table}
 	(user_id, credential_id, public_key, sign_count, transports, aaguid,
-	 backup_eligible, backup_state, user_verified_at_registration, label, activates_at)
+	 backup_eligible, backup_state, user_verified_at_registration, label, activates_at,
+	 attestation_verified)
 SELECT $1::uuid, $2::bytea, $3::bytea, $4::bigint,
 	ARRAY(SELECT jsonb_array_elements_text($5::jsonb)), $6::uuid,
 	$7::boolean, $8::boolean, $9::boolean, $10::text,
-	now() + make_interval(secs => $11::double precision)
+	now() + make_interval(secs => $11::double precision), $12::boolean
 WHERE NOT EXISTS (SELECT 1 FROM ${credentials} taken WHERE taken.credential_id = $2::bytea)
 RETURNING activates_at, ${MICROS_OF_ACTIVATION} AS activates_at_us`;
 
@@ -100,15 +105,22 @@ FROM ${table} WHERE user_id = $1 AND isfinite(activates_at)`;
 	const moveStatement = `WITH held AS (
 	DELETE FROM ${table} WHERE user_id = $1
 	RETURNING user_id, credential_id, public_key, sign_count, transports, aaguid,
-		backup_eligible, backup_state, user_verified_at_registration, label
+		backup_eligible, backup_state, user_verified_at_registration, label, attestation_verified
 )
 INSERT INTO ${credentials}
 	(user_id, credential_id, public_key, sign_count, transports, aaguid,
-	 backup_eligible, backup_state, user_verified_at_registration, label)
+	 backup_eligible, backup_state, user_verified_at_registration, label, attestation_verified)
 SELECT user_id, credential_id, public_key, sign_count, transports, aaguid,
-	backup_eligible, backup_state, user_verified_at_registration, label
+	backup_eligible, backup_state, user_verified_at_registration, label, attestation_verified
 FROM held
-RETURNING id::text AS id, credential_id, public_key, sign_count::text AS sign_count`;
+RETURNING id::text AS id, credential_id, public_key, sign_count::text AS sign_count,
+	CASE WHEN attestation_verified THEN aaguid::text END AS attested_aaguid`;
+
+	//an attestation nothing can verify again is dropped rather than carried into a seal unconfirmed (E-3851)
+	const forgetAttestationStatements = [
+		`UPDATE ${credentials} SET attestation_verified = false WHERE user_id = $1 AND attestation_verified`,
+		`UPDATE ${table} SET attestation_verified = false WHERE user_id = $1 AND attestation_verified`,
+	];
 
 	//every way in the account had leaves with the activation and each table is named where it is reached (E-3769)
 	const removalStatements = [
@@ -139,6 +151,7 @@ WHERE credential_id = $1 AND activates_at <= now()`;
 					credential.wasUserVerifiedAtRegistration,
 					label,
 					waitingPeriodInSeconds,
+					credential.attestationVerified,
 				])
 				.catch((cause: unknown) => {
 					if (isUniqueViolation(cause)) {
@@ -173,7 +186,14 @@ WHERE credential_id = $1 AND activates_at <= now()`;
 						credentialId: readBytes(row.credential_id),
 						publicKey: readBytes(row.public_key),
 						signCount: Number(row.sign_count),
+						attestedAaguid: row.attested_aaguid,
 					};
+		},
+
+		async forgetEveryAttestation({ actor }) {
+			for (const statement of forgetAttestationStatements) {
+				await options.driver.query(statement, [actor]);
+			}
 		},
 
 		async removeEverySignInMethod({ actor }) {

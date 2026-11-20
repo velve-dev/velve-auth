@@ -13,13 +13,14 @@ const WORDS: Readonly<Record<string, number>> = {
 	"twenty-nine": 29,
 	thirty: 30,
 	"thirty-one": 31,
+	"thirty-two": 32,
 };
 
 function countedCoreCodes(text: string): readonly string[] {
 	const flattened = text.replace(/\s+/g, " ");
 	const stated: string[] = [];
 	for (const match of flattened.matchAll(
-		/\b(?:one of |the )(\d+|twenty-eight|twenty-nine|thirty|thirty-one)( core| stable)? codes\b|\bunion of all (\d+|twenty-eight|twenty-nine|thirty|thirty-one)\b/g,
+		/\b(?:one of |the )(\d+|twenty-eight|twenty-nine|thirty-two|thirty-one|thirty)\b( core| stable)? codes\b|\bunion of all (\d+|twenty-eight|twenty-nine|thirty-two|thirty-one|thirty)\b/g,
 	)) {
 		const spelled = match[1] ?? match[3] ?? "";
 		const number = WORDS[spelled] ?? Number(spelled);
@@ -34,7 +35,7 @@ describe("the number of core codes DOCUMENTATION.md states (3.15 F)", () => {
 		const expected = VELVE_ERROR_CODES.length;
 		const stated = countedCoreCodes(documentation);
 
-		expect(expected).toBe(31);
+		expect(expected).toBe(32);
 		expect(stated.length).toBeGreaterThan(0);
 		expect(stated.filter((each) => !each.startsWith(`${expected} in`))).toStrictEqual([]);
 	});

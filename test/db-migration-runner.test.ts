@@ -32,7 +32,7 @@ describe("migration runner", () => {
 			migrations: coreMigrations("username_email"),
 		});
 
-		expect(report.appliedVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 9]);
+		expect(report.appliedVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
 		expect(report.currentVersion).toBe(9);
 		expect(await tableNames()).toHaveLength(19);
 	});
@@ -62,6 +62,7 @@ describe("migration runner", () => {
 			[5, "pending_password_reset"],
 			[6, "recovery_disabled"],
 			[7, "passkey_recovery"],
+			[8, "verified_attestation"],
 			[9, "proof_of_work"],
 		]);
 		for (const row of ledger) {
@@ -108,7 +109,7 @@ describe("migration runner", () => {
 			);
 
 			expect(reports.flatMap((report) => report.appliedVersions).sort()).toEqual([
-				1, 2, 3, 4, 5, 6, 7, 9,
+				1, 2, 3, 4, 5, 6, 7, 8, 9,
 			]);
 			for (const report of reports) {
 				expect(report.currentVersion).toBe(9);
