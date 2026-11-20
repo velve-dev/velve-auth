@@ -106,6 +106,8 @@ export interface RateLimitConfig {
 		readonly alertThresholdPerMinute: number;
 		readonly onAlert: (alert: RateAlert) => void;
 	};
+	/** asks the request routes and repeatedly failing sign-ins for a solved challenge, and is off while absent */
+	readonly proofOfWork?: ProofOfWorkConfig;
 }
 
 /** whether every account must carry a seal, or the estate is still being sealed, and who hears of a broken one */
@@ -134,8 +136,6 @@ export interface BaseConfig<M extends IdentityMode> {
 	readonly sessionMetadata?: SessionMetadataMode;
 	readonly trustedProxies?: readonly string[];
 	readonly rateLimit?: Partial<RateLimitConfig>;
-	/** asks the request routes and repeatedly failing sign-ins for a solved challenge, and is off while absent */
-	readonly proofOfWork?: ProofOfWorkConfig;
 	readonly email?: EmailConfig;
 	readonly oauth?: OAuthConfig;
 	/** the fetch used for outbound provider calls, `globalThis.fetch` when absent */

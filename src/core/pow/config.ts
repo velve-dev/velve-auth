@@ -34,7 +34,7 @@ export interface SignInFailureContext {
 
 /** turns the proof of work on, which is off while this is absent */
 export interface ProofOfWorkConfig {
-	/** leading zero bits a challenge for the route asks for, read on each request and clamped to 0 to 24 */
+	/** leading zero bits a challenge for the route asks for, read on each request and clamped to 0 to 20 */
 	readonly difficulty: (context: ProofOfWorkContext) => number;
 	/** failed sign-ins on one account or address after which a sign-in asks for a proof, read on each request and clamped to 1 to 100 */
 	readonly signInFailuresBeforeProof: (context: SignInFailureContext) => number;
@@ -44,7 +44,7 @@ export interface ProofOfWorkConfig {
 export const LOWEST_PROOF_OF_WORK_DIFFICULTY = 0;
 
 /** the most leading zero bits a challenge asks for */
-export const HIGHEST_PROOF_OF_WORK_DIFFICULTY = 24;
+export const HIGHEST_PROOF_OF_WORK_DIFFICULTY = 20;
 
 /** the fewest failed sign-ins after which a sign-in asks for a proof */
 export const FEWEST_SIGN_IN_FAILURES_BEFORE_PROOF = 1;

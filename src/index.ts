@@ -124,7 +124,7 @@ export { type KeyProvider, rootKeyProvider } from "./core/keys/index.js";
 export type * from "./core/oauth/index.js";
 export type * from "./core/plugin/index.js";
 export {
-	PROOF_OF_WORK_CHALLENGE_LIFETIME_IN_SECONDS,
+	PROOF_OF_WORK_LIFETIME_IN_SECONDS,
 	type ProofOfWorkChallenge,
 } from "./core/pow/challenge.js";
 export {

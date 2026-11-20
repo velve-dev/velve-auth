@@ -4,7 +4,7 @@ import { ConcealedError } from "../http/error-map.js";
 import type { FailureScope, ProofOfWorkGate } from "../http/proof-of-work.js";
 import type { KeyProvider } from "../keys/provider.js";
 import { accountFailureCounterKey, addressFailureCounterKey } from "../limit/bucket-key.js";
-import { createFailureCounters } from "../limit/failure-counter.js";
+import { type CounterKeys, createFailureCounters } from "../limit/failure-counter.js";
 import { createProofOfWorkChallenges, type ProofOfWorkChallenge } from "./challenge.js";
 import {
 	difficultyWithinBounds,
@@ -34,7 +34,7 @@ async function counterKeysOf(
 	keys: KeyProvider,
 	routeName: string,
 	scope: FailureScope,
-): Promise<readonly string[]> {
+): Promise<CounterKeys> {
 	const address = addressFailureCounterKey(routeName, scope.ipAddress);
 	return scope.accountIdentifier === null
 		? [address]
@@ -62,11 +62,11 @@ export function createProofOfWork(options: ProofOfWorkOptions): ProofOfWork {
 
 	return {
 		//the application's difficulty is asked on every issue and never once at construction (E-3662)
-		issue: (route) =>
+		issue: async (route) =>
 			challenges.issue({
 				route,
 				difficulty: difficultyWithinBounds(options.config.difficulty({ route })),
-				now: options.clock.now(),
+				expiresAt: await spent.deadline(),
 			}),
 
 		async spend(routeName, presented) {
@@ -92,7 +92,8 @@ export function createProofOfWork(options: ProofOfWorkOptions): ProofOfWork {
 				await counterKeysOf(options.keys, routeName, scope),
 				options.clock.now(),
 			);
-			return failures >= threshold;
+			//a counter decays continuously, so a failure counts in full until its hour has passed
+			return Math.ceil(failures) >= threshold;
 		},
 
 		async recordFailure(routeName, scope) {

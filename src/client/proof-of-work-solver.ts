@@ -22,7 +22,7 @@ export type ProofOfWorkSolver = (task: ProofOfWorkTask) => Promise<number>;
 
 const DIGESTS_PER_ROUND = 256;
 
-//a challenge of at most 24 bits is left unsolved by 2^32 nonces with a chance below e^-256
+//a challenge of at most 20 bits is left unsolved by 2^32 nonces with a chance below e^-4096
 const MOST_NONCES_TRIED = 2 ** 32;
 
 /** whether a value is a task this client can solve, which a worker reads from an untyped message */

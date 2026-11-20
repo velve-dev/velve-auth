@@ -17,7 +17,7 @@ export interface ProofOfWorkChallenge {
 }
 
 /** how long a challenge can be solved and spent after it was handed out */
-export const PROOF_OF_WORK_CHALLENGE_LIFETIME_IN_SECONDS = 600;
+export const PROOF_OF_WORK_LIFETIME_IN_SECONDS = 600;
 
 const VALUE_BYTES = 32;
 const MILLISECONDS_IN_A_SECOND = 1000;
@@ -115,7 +115,7 @@ interface ProofOfWorkChallenges {
 	issue(input: {
 		readonly route: string;
 		readonly difficulty: number;
-		readonly now: Date;
+		readonly expiresAt: Date;
 	}): Promise<ProofOfWorkChallenge>;
 	check(input: {
 		readonly route: string;
@@ -137,26 +137,19 @@ export function createProofOfWorkChallenges(keys: KeyProvider): ProofOfWorkChall
 	};
 
 	return {
-		async issue({ route, difficulty, now }) {
+		async issue({ route, difficulty, expiresAt }) {
 			const { version, key } = await keys.current("cookie-sig");
 			if (!isStorableKeyVersion(version)) {
 				throw new KeyError("key_version_out_of_range");
 			}
-			const expiresAtInSeconds =
-				Math.floor(now.getTime() / MILLISECONDS_IN_A_SECOND) +
-				PROOF_OF_WORK_CHALLENGE_LIFETIME_IN_SECONDS;
 			const unsigned = [
 				version,
 				difficulty,
-				expiresAtInSeconds,
+				Math.floor(expiresAt.getTime() / MILLISECONDS_IN_A_SECOND),
 				encodeBase64Url(randomBytes(VALUE_BYTES)),
 			].join(".");
 			const mac = await macOf(await challengeKeyOf(key), route, unsigned);
-			return {
-				challenge: `${unsigned}.${encodeBase64Url(mac)}`,
-				difficulty,
-				expiresAt: new Date(expiresAtInSeconds * MILLISECONDS_IN_A_SECOND),
-			};
+			return { challenge: `${unsigned}.${encodeBase64Url(mac)}`, difficulty, expiresAt };
 		},
 
 		async check({ route, presented }) {

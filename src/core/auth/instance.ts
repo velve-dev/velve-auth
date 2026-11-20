@@ -427,9 +427,10 @@ function proofOfWorkOf<M extends IdentityMode>(
 	config: VelveAuthConfig<M>,
 	resolved: { readonly driver: Driver; readonly schema: string; readonly clock: Clock },
 ): ProofOfWork | undefined {
-	return config.proofOfWork === undefined
+	const configured = config.rateLimit?.proofOfWork;
+	return configured === undefined
 		? undefined
-		: createProofOfWork({ ...resolved, config: config.proofOfWork, keys: config.keys });
+		: createProofOfWork({ ...resolved, config: configured, keys: config.keys });
 }
 
 //an unconfigured proof of work must reach the pipeline as an absent key (E-1258)

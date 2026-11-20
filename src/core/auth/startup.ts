@@ -102,7 +102,7 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 	passkey_recovery_unusable:
 		'webauthn.recovery must be an object carrying the function waitingPeriodInSeconds, and it needs the identity mode "email" or "username_email", since the recovery begins at an address',
 	proof_of_work_unusable:
-		"proofOfWork must be an object carrying the functions difficulty and signInFailuresBeforeProof, since both are asked on every request they decide",
+		"rateLimit.proofOfWork must be an object carrying the functions difficulty and signInFailuresBeforeProof, since both are asked on every request they decide",
 };
 
 /** the two contributors a route conflict names in its start error */
@@ -263,11 +263,15 @@ export function assertConfigurationIsStartable<M extends IdentityMode>(
 	assertSealingModeIsKnown(config.securityState);
 	assertLimitsAreUsable(config.limits);
 	assertPasskeyRecoveryIsUsable(config.identity.mode, config.webauthn);
-	assertProofOfWorkIsUsable(config.proofOfWork);
+	assertProofOfWorkIsUsable(config.rateLimit);
 }
 
 //a proof of work the requests cannot ask must refuse the start rather than fail every guarded call (E-3662)
-function assertProofOfWorkIsUsable(proofOfWork: unknown): void {
+function assertProofOfWorkIsUsable(rateLimit: unknown): void {
+	const proofOfWork =
+		typeof rateLimit === "object" && rateLimit !== null
+			? (rateLimit as { proofOfWork?: unknown }).proofOfWork
+			: undefined;
 	if (proofOfWork !== undefined && !isUsableProofOfWorkConfig(proofOfWork)) {
 		throw new VelveStartupError("proof_of_work_unusable");
 	}

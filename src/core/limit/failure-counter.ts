@@ -1,10 +1,13 @@
 import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
 
+/** the address counter of a sign-in and, where an identifier names an account, its account counter */
+export type CounterKeys = readonly [address: string, account?: string];
+
 /** counts failed sign-ins per key and forgets one failure every hour, so a counter never locks anyone out */
 interface FailureCounters {
-	highestOf(counterKeys: readonly string[], observedAt: Date): Promise<number>;
-	record(counterKeys: readonly string[], observedAt: Date): Promise<void>;
+	highestOf(counterKeys: CounterKeys, observedAt: Date): Promise<number>;
+	record(counterKeys: CounterKeys, observedAt: Date): Promise<void>;
 }
 
 const SECONDS_PER_FORGOTTEN_FAILURE = 3600;
@@ -28,8 +31,7 @@ export function createFailureCounters(options: FailureCounterOptions): FailureCo
 
 	const recordStatement = `INSERT INTO ${table} (bucket_key, tokens, updated_at, expires_at)
 /* no owner predicate: S-RATE-7, a failure counter is keyed by a digest and has no owner column */
-SELECT counter_key, 1, $2::timestamptz, $2::timestamptz + make_interval(secs => $3::double precision)
-FROM unnest($1::text[]) AS counter_key
+VALUES ($1, 1, $2::timestamptz, $2::timestamptz + make_interval(secs => $3::double precision))
 ON CONFLICT (bucket_key) DO UPDATE
 SET tokens = ${afterThisFailure},
     updated_at = $2::timestamptz,
@@ -37,14 +39,15 @@ SET tokens = ${afterThisFailure},
 
 	const highestStatement = `SELECT COALESCE(MAX(${decayed}), 0) AS failures
 FROM ${table}
-WHERE ${table}.bucket_key = ANY($1::text[])`;
+WHERE ${table}.bucket_key IN ($1, $4)`;
 
 	return {
-		async highestOf(counterKeys, observedAt) {
+		async highestOf([address, account], observedAt) {
 			const [row] = await options.driver.query<HighestRow>(highestStatement, [
-				counterKeys,
+				address,
 				observedAt.toISOString(),
 				SECONDS_PER_FORGOTTEN_FAILURE,
+				account ?? address,
 			]);
 			const failures = Number(row?.failures);
 			//a counter the driver did not return must read as reached and never as empty
@@ -52,12 +55,16 @@ WHERE ${table}.bucket_key = ANY($1::text[])`;
 		},
 
 		async record(counterKeys, observedAt) {
-			await options.driver.query(recordStatement, [
-				counterKeys,
-				observedAt.toISOString(),
-				SECONDS_PER_FORGOTTEN_FAILURE,
-				options.ceiling,
-			]);
+			for (const counterKey of counterKeys) {
+				if (counterKey !== undefined) {
+					await options.driver.query(recordStatement, [
+						counterKey,
+						observedAt.toISOString(),
+						SECONDS_PER_FORGOTTEN_FAILURE,
+						options.ceiling,
+					]);
+				}
+			}
 		},
 	};
 }

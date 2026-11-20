@@ -1,4 +1,5 @@
 import type { AnyRoute } from "../core/http/route.js";
+import type { ProofOfWorkRoute } from "../core/pow/config.js";
 import {
 	createProofOfWorkCalls,
 	createProofOfWorkSolver,
@@ -10,7 +11,6 @@ import type { ClientSurface } from "./surface.js";
 import { createRouteCall, type VelveClientOptions } from "./transport.js";
 
 export { VelveError, type VelveErrorCode } from "../core/http/error-map.js";
-export type { ProofOfWorkPreparation } from "./proof-of-work.js";
 export type { ProofOfWorkTask, ProofOfWorkWorker } from "./proof-of-work-solver.js";
 export {
 	unwrap,
@@ -44,10 +44,7 @@ function nestRouteCalls(
 	return root;
 }
 
-/** the client's surface, where `proofOfWork` also prepares a solution ahead of the call that needs it */
-export type VelveClient<Routes extends readonly AnyRoute[]> = ClientSurface<Routes> & {
-	readonly proofOfWork: ProofOfWorkPreparation;
-};
+const preparations = new WeakMap<object, ProofOfWorkPreparation>();
 
 function challengeRouteOf(routes: readonly ClientRoute[]): ClientRoute {
 	const challenge = routes.find((route) => route.name === "proofOfWork.challenge");
@@ -60,7 +57,7 @@ function challengeRouteOf(routes: readonly ClientRoute[]): ClientRoute {
 /** builds a client whose every call takes its method and path from its own route row */
 export function createVelveClient<
 	Auth extends { readonly routes: readonly AnyRoute[] } = { readonly routes: VelveRouteTable },
->(options: VelveClientOptions): VelveClient<RouteTableOf<Auth>> {
+>(options: VelveClientOptions): ClientSurface<RouteTableOf<Auth>> {
 	const solve = createProofOfWorkSolver(options.createProofOfWorkWorker);
 	const calls = createProofOfWorkCalls(
 		createRouteCall(options),
@@ -68,8 +65,19 @@ export function createVelveClient<
 		solve,
 	);
 	const nested = nestRouteCalls(VELVE_CLIENT_ROUTES, calls.call);
-	const proofOfWork = (nested.proofOfWork ?? {}) as Record<string, unknown>;
-	proofOfWork.prepare = calls.prepare;
-	nested.proofOfWork = proofOfWork;
-	return nested as VelveClient<RouteTableOf<Auth>>;
+	//the client stays the route table and nothing else, so preparing is reached beside it (E-3672)
+	preparations.set(nested, calls);
+	return nested as ClientSurface<RouteTableOf<Auth>>;
+}
+
+/** solves a challenge for one route of a client ahead of its call, so the work runs while the user types */
+export function prepareProofOfWork(
+	client: object,
+	input: { readonly route: ProofOfWorkRoute },
+): Promise<void> {
+	const preparation = preparations.get(client);
+	if (preparation === undefined) {
+		throw new TypeError("prepareProofOfWork takes a client createVelveClient built");
+	}
+	return preparation.prepare(input);
 }

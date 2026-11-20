@@ -1,6 +1,6 @@
 import type { Driver } from "../db/driver.js";
 import { qualifiedTableName } from "../db/identifier.js";
-import type { CheckedSolution } from "./challenge.js";
+import { type CheckedSolution, PROOF_OF_WORK_LIFETIME_IN_SECONDS } from "./challenge.js";
 
 const utf8 = new TextEncoder();
 
@@ -13,10 +13,16 @@ interface SpendRow {
 
 /** spends a checked challenge once, deciding its expiry by the clock the sweep deletes by */
 interface SpentChallenges {
+	/** the expiry of a challenge handed out now, in whole seconds by the database clock */
+	deadline(): Promise<Date>;
 	spend(solution: CheckedSolution): Promise<SpendOutcome>;
 }
 
-//the expiry is read against the database clock the sweep deletes by (E-3664)
+interface DeadlineRow {
+	readonly expires_at: unknown;
+}
+
+//the expiry is handed out and read by the database clock the sweep deletes by (E-3664)
 export function createSpentChallenges(options: {
 	readonly driver: Driver;
 	readonly schema: string;
@@ -34,7 +40,20 @@ export function createSpentChallenges(options: {
 )
 SELECT (SELECT live FROM deadline) AS live, EXISTS (SELECT 1 FROM spent) AS spent_now`;
 
+	const deadlineStatement =
+		"SELECT to_timestamp(floor(extract(epoch FROM now())) + $1::double precision) AS expires_at";
+
 	return {
+		async deadline() {
+			const [row] = await options.driver.query<DeadlineRow>(deadlineStatement, [
+				PROOF_OF_WORK_LIFETIME_IN_SECONDS,
+			]);
+			if (!(row?.expires_at instanceof Date)) {
+				throw new TypeError("the driver must decode timestamptz into a Date");
+			}
+			return row.expires_at;
+		},
+
 		async spend(solution) {
 			const challengeSha256 = new Uint8Array(
 				await crypto.subtle.digest("SHA-256", utf8.encode(solution.challenge)),
