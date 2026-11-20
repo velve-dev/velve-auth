@@ -75,7 +75,7 @@ export function assertUserWasVerified(authenticatorData: string): void {
 	}
 }
 
-//the client reports credProps unsigned so only an own rk of true counts and silence refuses (E-3812)
+//credProps is reported unsigned by the client and only an own rk of true counts (E-3812)
 function clientReportsADiscoverableCredential(response: RegistrationResponseJSON): boolean {
 	const results = ownField(
 		response as unknown as Record<string, unknown>,

@@ -314,7 +314,7 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 				residentKey: "required",
 				userVerification: input.userVerification,
 			},
-			//the check below reads this answer so the request does not rest on a dependency default (E-3815)
+			//the request names credProps itself and does not rest on a dependency default (E-3815)
 			extensions: { credProps: true },
 			...(input.userDisplayName === undefined ? {} : { userDisplayName: input.userDisplayName }),
 		});
