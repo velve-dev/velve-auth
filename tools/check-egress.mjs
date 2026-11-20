@@ -19,11 +19,11 @@ if (offenders.length > 0) {
 	console.error("The library reaches outside the operator's infrastructure here:");
 	for (const offender of offenders) console.error(`  ${offender}`);
 	console.error(
-		"Only src/core/oauth/outbound.ts may call out, through the injectable config.fetch, and only src/core/oauth/providers.ts may name a provider host (README.md, E-1844).",
+		"Only src/core/oauth/outbound.ts may call out, through the injectable config.fetch, and only src/core/oauth/providers.ts may name a provider host; no other module imports a network built-in, refers to fetch by name, takes the global fetch as a value or reads the global object by a computed member (README.md, E-1844, E-3892).",
 	);
 	process.exit(1);
 }
 
 console.log(
-	`egress: ${callsScanned} outbound calls, all inside the declared seam, over ${filesScanned} files; no other module reaches the network or names a host`,
+	`egress: ${callsScanned} outbound calls, all inside the declared seam, over ${filesScanned} files; no other module reaches the network, names a host, imports a network built-in or reaches fetch another way`,
 );

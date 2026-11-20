@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { withoutComments } from "./source-text.mjs";
+import { chunksOf, withoutComments } from "./source-text.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("..", import.meta.url));
 
@@ -47,6 +47,130 @@ const A_STANDARD_URI =
 
 const SOURCE = /^src\/.*\.ts$/;
 
+/**
+ * A request needs no `fetch(` beside it, and no literal URL either, so four further shapes are
+ * refused outside the seam (E-3892). Each one is a text rule over the code with comments, string
+ * bodies and regular expression literals blanked, so a word in a message or in a pattern is not
+ * read as a reference.
+ *
+ * The built-in modules that open a socket or resolve a name, imported, re-exported or required
+ * under either spelling: test/keys-static-scan.test.ts refuses the `node:` spelling under
+ * src/core only, and the bare one nowhere.
+ */
+const NETWORK_MODULE =
+	/\b(?:from|import|require)\s*\(?\s*(["'`])(?:node:)?(https?|http2|net|tls|dgram|dns(?:\/promises)?)\1/g;
+
+/** `fetch` written as a name rather than reached through an object: passed, aliased, destructured
+ * or called through `.call`, `.apply` or `.bind`, all of which `fetch(` does not see. */
+const FETCH_BY_NAME = /(?<![.\w$])fetch\b/g;
+
+/** A fetch reached through any object and then called indirectly. */
+const FETCH_CALLED_INDIRECTLY = /\.\s*fetch\s*\.\s*(?:call|apply|bind)\b/g;
+
+/** The global object's own fetch read as a value, which is an alias in all but name. */
+const GLOBAL_FETCH = /\b(?:globalThis|window|self|global)\s*(?:\?\.|\.)\s*fetch\b/g;
+
+/** A computed member of the global object, or the global object handed to a reflective read, which
+ * reaches fetch without writing its name. */
+const GLOBAL_COMPUTED =
+	/\b(?:globalThis|window|self|global)\s*(?:\?\.\s*)?\[|\b(?:Reflect\s*\.\s*(?:get|apply|getOwnPropertyDescriptor)|Object\s*\.\s*getOwnPropertyDescriptors?)\s*\(\s*(?:globalThis|window|self|global)\b/g;
+
+/**
+ * The one place the global fetch is read as a value: the provider service resolves the fetch it
+ * hands to outbound.ts, the injected one or the global one when none was injected. The exact
+ * expression is permitted in that file once, and any other reference there is a finding.
+ */
+const DEFAULT_FETCH = {
+	path: "src/core/oauth/service.ts",
+	expression: "services.fetch ?? globalThis.fetch",
+};
+
+const TYPE_OPERATOR_BEFORE = /\btypeof\s*$/;
+const KEY_POSITION_BEFORE = /(?:^|[{,;(]|\breadonly)\s*$/;
+const KEY_POSITION_AFTER = /^\s*\??\s*:/;
+const REGEX_MAY_START_AFTER = /(?:^|[(,=:[!&|?{};]|\breturn|\btypeof|\bcase)\s*$/;
+
+/** The end of a regular expression literal opening at `start`, or -1 when the slash is a division:
+ * a literal closes on its own line at a slash outside a character class. */
+function endOfRegexLiteral(code, start) {
+	let inClass = false;
+	for (let index = start + 1; index < code.length; index += 1) {
+		const character = code[index];
+		if (character === "\n") return -1;
+		if (character === "\\") {
+			index += 1;
+			continue;
+		}
+		if (character === "[") inClass = true;
+		if (character === "]") inClass = false;
+		if (character === "/" && !inClass) return index + 1;
+	}
+	return -1;
+}
+
+function withoutRegexLiterals(code) {
+	let kept = "";
+	let index = 0;
+	while (index < code.length) {
+		const end =
+			code[index] === "/" && REGEX_MAY_START_AFTER.test(kept.slice(-40))
+				? endOfRegexLiteral(code, index)
+				: -1;
+		if (end === -1) {
+			kept += code[index];
+			index += 1;
+			continue;
+		}
+		kept += "/r/";
+		index = end;
+	}
+	return kept;
+}
+
+/** The code alone: comments become a space, every string body becomes an empty string, and every
+ * regular expression literal becomes `/r/`, so only what the program names is left. */
+function codeOnly(source) {
+	let code = "";
+	for (const chunk of chunksOf(source)) {
+		if (chunk.kind === "code") code += withoutRegexLiterals(chunk.text);
+		else code += chunk.kind === "quoted" ? '""' : " ";
+	}
+	return code;
+}
+
+function isTypeOrKeyPosition(code, at, length) {
+	const before = code.slice(Math.max(0, at - 40), at);
+	if (TYPE_OPERATOR_BEFORE.test(before)) return true;
+	return KEY_POSITION_BEFORE.test(before) && KEY_POSITION_AFTER.test(code.slice(at + length));
+}
+
+function fetchReferencesIn(path, code) {
+	const found = [];
+	for (const match of code.matchAll(FETCH_BY_NAME)) {
+		if (code.slice(match.index + 5).match(/^\s*\(/)) continue;
+		if (isTypeOrKeyPosition(code, match.index, 5)) continue;
+		found.push(`${path}: refers to fetch by name, which is a request no fetch( shows`);
+	}
+	for (const match of code.matchAll(FETCH_CALLED_INDIRECTLY)) {
+		found.push(
+			`${path}: calls fetch indirectly with ${match[0].replace(/^[.\s]*fetch\s*\.\s*/, "")}`,
+		);
+	}
+	const permitted = path === DEFAULT_FETCH.path ? code.replace(DEFAULT_FETCH.expression, "") : code;
+	for (const match of permitted.matchAll(GLOBAL_FETCH)) {
+		if (TYPE_OPERATOR_BEFORE.test(permitted.slice(Math.max(0, match.index - 40), match.index))) {
+			continue;
+		}
+		found.push(`${path}: takes the global fetch as a value with ${match[0]}`);
+	}
+	for (const match of code.matchAll(GLOBAL_COMPUTED)) {
+		found.push(
+			`${path}: reads the global object by a computed or reflective member with ${match[0]}`,
+		);
+	}
+	return found;
+}
+
 function sourceFiles() {
 	const listed = execFileSync(
 		"git",
@@ -66,6 +190,10 @@ export function egressIn(path, source) {
 		for (const call of code.matchAll(CALLS_OUT)) {
 			found.push(`${path}: reaches the network with ${String(call[0]).replace(/\s*\($/, "")}`);
 		}
+		for (const module of code.matchAll(NETWORK_MODULE)) {
+			found.push(`${path}: imports the network module ${module[2]}`);
+		}
+		found.push(...fetchReferencesIn(path, codeOnly(source)));
 	}
 	if (path !== MAY_NAME_A_HOST) {
 		for (const url of code.matchAll(A_NETWORK_DESTINATION)) {
