@@ -20,18 +20,22 @@ export type OAuthStateCookieAccess = "hidden" | "readable";
 /** how a POST body arrives, where `form` serves only a provider's `form_post` callback */
 export type RequestBodyFormat = "json" | "form";
 
-export interface RequestContext {
+/** what a plugin route's handler is given, which carries no token and no way to write a cookie */
+export interface PluginRequestContext {
 	readonly session: Session | null;
+	readonly ipAddress: string | null;
+	readonly userAgent: string | null;
+	/** the frozen plugin context, which for a core route carries no tables of its own */
+	readonly plugin: FrozenContext;
+	enforceAccountRateLimit(normalisedIdentifier: string): Promise<void>;
+}
+
+export interface RequestContext extends PluginRequestContext {
 	readonly pending: ResolvedPendingAuthentication | null;
 	readonly sessionToken: string | null;
 	readonly pendingToken: string | null;
 	readonly oauthStateToken: string | null;
-	readonly ipAddress: string | null;
-	readonly userAgent: string | null;
 	readonly cookies: CookieWriter;
-	/** the frozen plugin context, which for a core route carries no tables of its own */
-	readonly plugin: FrozenContext;
-	enforceAccountRateLimit(normalisedIdentifier: string): Promise<void>;
 }
 
 export interface RouteDeclaration<
@@ -258,6 +262,41 @@ export function defineRoute<
 	});
 
 	return route;
+}
+
+/** a plugin's route declaration, whose handler is given the plugin's narrower context */
+export type ContributedRouteDeclaration = Omit<
+	RouteDeclaration<string, string, unknown, unknown, AnyErrorCode>,
+	"handler"
+> & {
+	readonly handler: (input: unknown, context: PluginRequestContext) => Promise<unknown>;
+};
+
+const contributedRoutes = new WeakSet<RouteMetadata>();
+
+function pluginRequestContextOf(context: RequestContext): PluginRequestContext {
+	return Object.freeze({
+		session: context.session,
+		ipAddress: context.ipAddress,
+		userAgent: context.userAgent,
+		plugin: context.plugin,
+		enforceAccountRateLimit: context.enforceAccountRateLimit,
+	});
+}
+
+//a plugin route must see no token and write no cookie as cookies are the core's alone (S-OWNER-12)
+export function defineContributedRoute(declaration: ContributedRouteDeclaration): AnyRoute {
+	const route = defineRoute({
+		...declaration,
+		handler: (input, context) => declaration.handler(input, pluginRequestContextOf(context)),
+	});
+	contributedRoutes.add(route);
+	return route;
+}
+
+//the one predicate that decides whether a route's output may become a cookie (S-OWNER-12)
+export function isContributedRoute(route: RouteMetadata): boolean {
+	return contributedRoutes.has(route);
 }
 
 export interface ServerCallFields {

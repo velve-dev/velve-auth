@@ -75,7 +75,10 @@ describe("every literal form PostgreSQL reads is read alike or refused (S-OWNER-
 
 	it("refuses the same forms when the statement would run under the plugin role", async () => {
 		expect(
-			await reaches("SELECT E'\\''; RESET ROLE; DELETE FROM velve.session; SELECT --'", "demo_role"),
+			await reaches(
+				"SELECT E'\\''; RESET ROLE; DELETE FROM velve.session; SELECT --'",
+				"demo_role",
+			),
 		).toBe(false);
 	});
 

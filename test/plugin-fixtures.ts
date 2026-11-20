@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import type { Driver } from "../src/core/db/driver.js";
-import type { RequestContext } from "../src/core/http/route.js";
+import type { PluginRequestContext } from "../src/core/http/route.js";
 import { object } from "../src/core/http/validators.js";
 import type { PluginRoute, VelvePlugin } from "../src/core/plugin/config.js";
 import {
@@ -19,7 +19,7 @@ export function asJavaScriptPlugin(value: Readonly<Record<string, unknown>>): Ve
 
 export interface ObservedCall {
 	readonly route: string;
-	readonly context: RequestContext;
+	readonly context: PluginRequestContext;
 }
 
 export interface ContextProbe {
@@ -42,7 +42,7 @@ export function createContextProbe(options: { readonly path?: string } = {}): Co
 		freshness: "not_required",
 		originCheck: "checked",
 		rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
-		handler: (_input: unknown, context: RequestContext) => {
+		handler: (_input: unknown, context: PluginRequestContext) => {
 			calls.push({ route: "demo.echo", context });
 			return Promise.resolve({ seen: true });
 		},

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { PENDING_CALLER_ROUTES } from "../src/core/factor/pending/index.js";
 import {
 	type AnyRoute,
-	type RequestContext,
+	type PluginRequestContext,
 	readsOAuthStateCookie,
 	readsPendingCookie,
 } from "../src/core/http/route.js";
@@ -50,7 +50,7 @@ function pluginRoute(
 		freshness: "not_required",
 		originCheck: "checked",
 		rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
-		handler: (_input: unknown, _context: RequestContext) => {
+		handler: (_input: unknown, _context: PluginRequestContext) => {
 			reached.push(overrides.name);
 			return Promise.resolve({ seen: true });
 		},

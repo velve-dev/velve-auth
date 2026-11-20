@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { type AnyRoute, defineRoute, type RequestContext } from "../src/core/http/route.js";
+import { type AnyRoute, defineRoute, type PluginRequestContext } from "../src/core/http/route.js";
 import { object } from "../src/core/http/validators.js";
 import type { PluginRoute, VelvePlugin } from "../src/core/plugin/config.js";
 import { toWebHandler } from "../src/http/index.js";
@@ -127,7 +127,7 @@ function recordingRoute<Id extends string>(id: Id, reached: string[]): PluginRou
 		freshness: "not_required",
 		originCheck: "checked",
 		rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
-		handler: (_input: unknown, _context: RequestContext) => {
+		handler: (_input: unknown, _context: PluginRequestContext) => {
 			reached.push(`${id}.read`);
 			return Promise.resolve({ seen: true });
 		},

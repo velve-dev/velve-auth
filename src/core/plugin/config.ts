@@ -4,7 +4,7 @@ import type { AuthenticationFactor, Session } from "../http/caller.js";
 import type { Clock } from "../http/environment.js";
 import type { VelveErrorCode } from "../http/error-map.js";
 import type { RateLimitRule } from "../http/rate-limit.js";
-import type { RouteDeclaration } from "../http/route.js";
+import type { PluginRequestContext, RouteDeclaration } from "../http/route.js";
 import type { SecurityStateFloor, SecurityStateSealedEvent } from "../security-state/anchor.js";
 
 export type RevokeReason =
@@ -121,7 +121,7 @@ export interface PluginMigration<Id extends string> {
 /** who may call a plugin route, which never sees the pending or the OAuth state cookie */
 export type PluginCallerRequirement = "anonymous" | "session" | "server_only";
 
-/** a route a plugin declares, with its own error codes and no exemption from the origin check */
+/** a route a plugin declares, with its own error codes, no exemption from the origin check and a handler that sees no token */
 export type PluginRoute<Id extends string> = Omit<
 	RouteDeclaration<
 		`${Id}.${string}`,
@@ -130,8 +130,12 @@ export type PluginRoute<Id extends string> = Omit<
 		unknown,
 		VelveErrorCode | `${Id}.${string}`
 	>,
-	"caller" | "originCheck" | "pendingCookie" | "oauthStateCookie" | "requestBody"
-> & { readonly caller: PluginCallerRequirement; readonly originCheck: "checked" };
+	"caller" | "originCheck" | "pendingCookie" | "oauthStateCookie" | "requestBody" | "handler"
+> & {
+	readonly caller: PluginCallerRequirement;
+	readonly originCheck: "checked";
+	readonly handler: (input: unknown, context: PluginRequestContext) => Promise<unknown>;
+};
 
 /** an anchor kept outside the reach of whoever can write the velve schema, which learns every new seal and sets a floor under its version */
 export interface SecurityStateAnchor {

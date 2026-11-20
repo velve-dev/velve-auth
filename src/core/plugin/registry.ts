@@ -8,8 +8,8 @@ import { type AnyErrorCode, type PluginErrorCode, VELVE_ERROR_CODES } from "../h
 import { type BucketRule, isUsableBucketRule, type RateLimitRule } from "../http/rate-limit.js";
 import {
 	type AnyRoute,
-	defineRoute,
-	type RouteDeclaration,
+	type ContributedRouteDeclaration,
+	defineContributedRoute,
 	type RouteMetadata,
 } from "../http/route.js";
 import type { SecurityStateAnchorPort } from "../security-state/anchor.js";
@@ -242,7 +242,7 @@ const COOKIE_FIELDS_A_PLUGIN_MAY_NOT_DECLARE: readonly string[] = [
 	"oauthStateCookie",
 ];
 
-type ContributedDeclaration = RouteDeclaration<string, string, unknown, unknown, AnyErrorCode>;
+type ContributedDeclaration = ContributedRouteDeclaration;
 
 //a plugin written in javascript must meet the core cookie check at run time (E-764)
 function assertNoRouteReadsACoreCookie(declaration: ContributedDeclaration, caller: unknown): void {
@@ -437,7 +437,7 @@ function ownedMigrationsOf(plugins: readonly VelvePlugin[]): readonly OwnedMigra
 function routesOf(plugin: VelvePlugin): readonly AnyRoute[] {
 	assertNoRouteExemptsItselfFromTheOriginCheck(plugin);
 	return (plugin.routes ?? []).map((declaration) =>
-		defineRoute(declaration as ContributedDeclaration),
+		defineContributedRoute(declaration as ContributedDeclaration),
 	);
 }
 

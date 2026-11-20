@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { RequestContext } from "../src/core/http/route.js";
+import type { PluginRequestContext } from "../src/core/http/route.js";
 import { object, string } from "../src/core/http/validators.js";
 import type {
 	FrozenContext,
@@ -36,7 +36,7 @@ const revokeRoute: PluginRoute<"revoker"> = {
 	freshness: "not_required",
 	originCheck: "checked",
 	rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
-	handler: async (input: unknown, context: RequestContext) => {
+	handler: async (input: unknown, context: PluginRequestContext) => {
 		await context.plugin.repositories.revokeSession({
 			sessionId: (input as { sessionId: string }).sessionId,
 			reason: "revoked_by_user",

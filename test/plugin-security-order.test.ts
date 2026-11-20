@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { RequestContext } from "../src/core/http/route.js";
+import type { PluginRequestContext } from "../src/core/http/route.js";
 import { object } from "../src/core/http/validators.js";
 import type { PluginRoute, VelvePlugin } from "../src/core/plugin/config.js";
 import { type MountedAuth, mountAuth, requestTo, TEST_ORIGIN } from "./auth-fixtures.js";
@@ -19,7 +19,7 @@ function probeRoute(name: string, path: string, capacity: number): PluginRoute<"
 		freshness: "not_required",
 		originCheck: "checked",
 		rateLimit: { perIpAddress: { capacity, refillPerSecond: 0 }, perAccount: "none" },
-		handler: (_input: unknown, context: RequestContext) => {
+		handler: (_input: unknown, context: PluginRequestContext) => {
 			reached.push(name);
 			frozenWhenReached = Object.isFrozen(context.plugin);
 			return Promise.resolve({ seen: true });

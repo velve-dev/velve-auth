@@ -33,7 +33,7 @@ function route(
 		originCheck: "checked",
 		rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
 		handler: (_input: unknown, context: RequestContext) => Promise.resolve(handler(context)),
-	} as PluginRoute<"probe">;
+	} as unknown as PluginRoute<"probe">;
 }
 
 const PROBE: VelvePlugin<"probe"> = {

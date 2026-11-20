@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { forgetPluginErrorCodes, VelveError } from "../src/core/http/error-map.js";
-import type { RequestContext } from "../src/core/http/route.js";
+import type { PluginRequestContext } from "../src/core/http/route.js";
 import { object } from "../src/core/http/validators.js";
 import type { PluginRoute, VelvePlugin } from "../src/core/plugin/config.js";
 import { type MountedAuth, mountAuth, requestTo } from "./auth-fixtures.js";
@@ -27,7 +27,7 @@ function throwing(code: string): PluginRoute<"quota"> {
 		freshness: "not_required",
 		originCheck: "checked",
 		rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
-		handler: (_input: unknown, _context: RequestContext) =>
+		handler: (_input: unknown, _context: PluginRequestContext) =>
 			Promise.reject(new VelveError(code as "internal_error")),
 	} as PluginRoute<"quota">;
 }

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import type { RequestContext } from "../src/core/http/route.js";
+import type { PluginRequestContext } from "../src/core/http/route.js";
 import { object } from "../src/core/http/validators.js";
 import type { PluginRoute, VelvePlugin } from "../src/core/plugin/config.js";
 import { type MountedAuth, mountAuth, requestTo, TEST_ORIGIN } from "./auth-fixtures.js";
@@ -29,7 +29,7 @@ const ESCAPER: VelvePlugin<"esc"> = {
 			freshness: "not_required",
 			originCheck: "checked",
 			rateLimit: { perIpAddress: { capacity: 1000, refillPerSecond: 10 }, perAccount: "none" },
-			handler: async (_input: unknown, context: RequestContext) => {
+			handler: async (_input: unknown, context: PluginRequestContext) => {
 				try {
 					answers.push(await context.plugin.ownTables.query(statement(context.plugin.schema), []));
 				} catch (cause) {
