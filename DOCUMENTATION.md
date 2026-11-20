@@ -11568,30 +11568,39 @@ throws `InvalidWebAuthnConfigError` with one of these codes:
 | `attestation_root_names_a_revocation_list` | a root names a CRL distribution point. The verifier fetches every revocation list a certificate names, and this library reaches no host it was not told to (E-3844). |
 | `attestation_request_for_every_account_not_a_boolean` | `requestForEveryAccount` is present and neither `true` nor `false`. |
 
-### What every registration refuses before it is verified
+### What every registration does before it is verified
 
 `@simplewebauthn/server`, while it checks the certificate chain of an
 attestation, fetches the revocation list any of those certificates names — a
 URL the client chose — before it has refused anything. Since the client sends
-the chain, every registration refuses such an attestation itself, before the
-verifier sees it (E-3854). This holds **with and without**
-`webauthn.attestation`, in a session and at the end of a recovery. Refused
-before verification, as an ordinary rejection with no row written:
+the chain, every registration reads the attestation object itself first, with
+and without `webauthn.attestation`, in a session and at the end of a recovery.
 
-- an attestation object larger than 32 KiB, or one that does not decode;
-- one carrying more than eight certificates;
-- one with a certificate that names a CRL distribution point, whether in `x5c`
-  (`packed`, `fido-u2f`, `android-key`, `apple`, `tpm`) or in the chain of the
-  JWS header of `android-safetynet`.
+**Refused**, as an ordinary rejection with no row written (E-3854): an object
+larger than 32 KiB; one carrying more than eight certificates; one the library
+cannot read strictly anywhere — the CBOR map with `fmt`, `attStmt` and
+`authData`, an `x5c` that is not a list of certificates, the JWS of
+`android-safetynet` whose header or payload is not strict base64url or whose
+header chain is not strict base64, and any certificate that does not parse. In a
+session the answer is `webauthn_credential_rejected` (401), in a recovery
+`passkey_recovery_failed` (400); the log names `attestation_unreadable`.
 
-In a session the answer is `webauthn_credential_rejected` (401), in a recovery
-`passkey_recovery_failed` (400); the log names `attestation_unreadable` or
-`attestation_names_a_revocation_list`. Attestations of every format without
-such a URL reach their verifier as before. Of the formats, the dependency
-reaches the fetch by default for `apple`, `android-key` and
-`android-safetynet`, whose roots it presets; for `packed`, `fido-u2f` and `tpm`
-it does so only where an application has set the dependency's global roots
-itself. Versions before 3.0.0 did not refuse these attestations: upgrade.
+**Read as no attestation** (E-3855): an object whose chain — in `x5c` (`packed`,
+`fido-u2f`, `android-key`, `apple`, `tpm`) or in the JWS header of
+`android-safetynet` — holds a certificate naming a CRL distribution point. The
+verifier is given, instead, an object of format `none` with an empty
+statement and byte for byte the same authenticator data, so the authenticator
+data, the credential key, the flags, the challenge, the origin and the relying
+party are checked exactly as always, and nothing is fetched. The credential
+registers with `attestationVerified: false`; where a list applies it is refused
+as any unverified authenticator is, with `authenticator_not_allowed`.
+
+Attestations of every format without such a URL reach their verifier
+unchanged. Of the formats, the dependency reaches the fetch by default for
+`apple`, `android-key` and `android-safetynet`, whose roots it presets; for
+`packed`, `fido-u2f` and `tpm` it does so only where an application has set the
+dependency's global roots itself. Versions before 3.0.0 hand every chain to the
+verifier: upgrade.
 
 ### What a registration asks for
 
@@ -11617,8 +11626,11 @@ as **verified** when all of these hold (E-3842):
 - the format is `packed` with an `x5c` chain, a *full* attestation whose leaf
   certificate signed the authenticator data and the client data;
 - the authenticator names an AAGUID that is not all zeros;
-- no certificate of the chain names a CRL distribution point;
 - the chain leads to one of `trustedRoots`.
+
+A chain that names a CRL distribution point never gets this far: the
+registration verifies it as an attestation of format `none` (see above), so it
+never counts as verified.
 
 `none`, a self attestation (`packed` without `x5c`) and every other format —
 `tpm`, `android-key`, `apple`, `fido-u2f`, `android-safetynet` — never count.
