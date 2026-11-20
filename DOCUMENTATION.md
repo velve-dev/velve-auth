@@ -8066,7 +8066,7 @@ if (!answer.ok) {
 
 The `switch` is exhaustive and the compiler checks it, because `answer.error.code`
 is narrowed to the codes **that route** declares and not to the union of all
-twenty-nine.
+thirty.
 
 A call returns a result rather than throwing, and the asymmetry with the server
 is on purpose: on the server a call sits in a request handler with a central
@@ -8185,7 +8185,7 @@ try {
 ```
 
 `VelveError` rebuilds its message from its own copy of the error table rather
-than from the wire. For the twenty-nine core codes the two are the same table and
+than from the wire. For the thirty core codes the two are the same table and
 the strings are identical; for a code this build of the package does not know,
 `unwrap` throws with `internal_error`'s message and the response's status is
 lost. The un-unwrapped path always keeps what the server said, in
