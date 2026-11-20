@@ -1,0 +1,1856 @@
+[
+	{
+		"id": "W-EVERY-ROUTE",
+		"title": "What every route passes",
+		"guards": [
+			{
+				"guard": "The `Origin` must equal an entry of `origins` before anything else runs",
+				"requirement": "S-CSRF-1",
+				"enforcedIn": "src/core/http/pipeline.ts:runRoute",
+				"legitimateTest": "test/http-origin.test.ts",
+				"attackTest": "test/csrf-every-route-both-paths.test.ts"
+			},
+			{
+				"guard": "The comparison is equality on `new URL(x).origin`, with no prefix or pattern",
+				"requirement": "S-CSRF-2",
+				"enforcedIn": "src/core/http/origin.ts:isOriginAllowed",
+				"legitimateTest": "test/http-origin.test.ts",
+				"attackTest": "test/http-origin.test.ts"
+			},
+			{
+				"guard": "The bucket per IP prefix and route is drawn before the handler",
+				"requirement": "S-RATE-1",
+				"enforcedIn": "src/core/http/pipeline.ts:enforceIpAddressRateLimit",
+				"legitimateTest": "test/limit-address-key.test.ts",
+				"attackTest": "test/limit-pipeline.test.ts"
+			},
+			{
+				"guard": "`X-Forwarded-For` counts only with configured `trustedProxies`",
+				"requirement": "S-RATE-3",
+				"enforcedIn": "src/core/limit/client-address.ts:resolveClientAddress",
+				"legitimateTest": "test/http-trusted-proxies.test.ts",
+				"attackTest": "test/http-trusted-proxies.test.ts"
+			},
+			{
+				"guard": "The account bucket is keyed on the normalised identifier, formed before the account is resolved",
+				"requirement": "S-RATE-7",
+				"enforcedIn": "src/core/http/pipeline.ts:createAccountBucket",
+				"legitimateTest": "test/limit-account.test.ts",
+				"attackTest": "test/limit-account.test.ts"
+			},
+			{
+				"guard": "Where configured, the proof of work is spent before the account bucket, every KDF and every mail",
+				"requirement": "S-RATE-11",
+				"enforcedIn": "src/core/http/pipeline.ts:spendProofOfWorkBeforeTheHandler",
+				"legitimateTest": "test/proof-of-work-requests.test.ts",
+				"attackTest": "test/proof-of-work-review-attacks.test.ts"
+			},
+			{
+				"guard": "A session caller comes from the cookie alone and is resolved by a database query",
+				"requirement": "S-CACHE-1",
+				"enforcedIn": "src/core/http/pipeline.ts:resolveSession",
+				"legitimateTest": "test/session-resolution.test.ts",
+				"attackTest": "test/session-resolution.test.ts"
+			},
+			{
+				"guard": "A route with `freshness: \"required\"` demands a session younger than `freshnessWindow`",
+				"requirement": "O-1",
+				"enforcedIn": "src/core/http/pipeline.ts:assertSessionIsFresh",
+				"legitimateTest": "test/auth-password-routes.test.ts",
+				"attackTest": "test/session-lifecycle.test.ts"
+			},
+			{
+				"guard": "Only the declared routes see the pending cookie",
+				"requirement": "S-CACHE-4",
+				"enforcedIn": "src/core/http/pipeline.ts:createRequestContext",
+				"legitimateTest": "test/http-pending-visibility.test.ts",
+				"attackTest": "test/cache-pending-ignored-proof.test.ts"
+			},
+			{
+				"guard": "Two cookies of the same name are refused instead of one being chosen",
+				"requirement": "S-COOKIE-5",
+				"enforcedIn": "src/core/http/cookies.ts:readCookies",
+				"legitimateTest": "test/http-cookie-policy.test.ts",
+				"attackTest": "test/http-cookie-policy.test.ts"
+			},
+			{
+				"guard": "What a caller learns about a failure is decided by the error map alone",
+				"requirement": "S-ENUM-6",
+				"enforcedIn": "src/core/http/error-map.ts:toVisibleFailure",
+				"legitimateTest": "test/http-error-map.test.ts",
+				"attackTest": "test/http-error-map.test.ts"
+			},
+			{
+				"guard": "Plugin code runs only after the origin check and the rate limit",
+				"requirement": "S-CSRF-6",
+				"enforcedIn": "src/core/http/pipeline.ts:runRoute",
+				"legitimateTest": "test/plugin-security-order.test.ts",
+				"attackTest": "test/plugin-security-order.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-SESSION-USE",
+		"title": "Presenting an existing session",
+		"guards": [
+			{
+				"guard": "The lookup is by `sha256(token)` only, never by the plaintext",
+				"requirement": "S-TIM-4",
+				"enforcedIn": "src/core/session/service.ts:verifiedSession",
+				"legitimateTest": "test/session-token.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "The idle and the absolute deadline stand in the one query",
+				"requirement": "S-CACHE-2",
+				"enforcedIn": "src/core/db/repositories/session.ts:findSessionByTokenHash",
+				"legitimateTest": "test/session-resolution.test.ts",
+				"attackTest": "test/session-resolution.test.ts"
+			},
+			{
+				"guard": "A row whose MAC does not hold is no session",
+				"requirement": "S-INTEG-9",
+				"enforcedIn": "src/core/session/binding.ts:librarySessionBinding",
+				"legitimateTest": "test/integ-token-binding.test.ts",
+				"attackTest": "test/integ-token-tampered-columns.test.ts"
+			},
+			{
+				"guard": "The seal is checked from the same statement before the session is used",
+				"requirement": "S-INTEG-4",
+				"enforcedIn": "src/core/security-state/runtime.ts:sessionStateCheckOf",
+				"legitimateTest": "test/security-state-checking.test.ts",
+				"attackTest": "test/security-state-checking.test.ts"
+			},
+			{
+				"guard": "A row from an epoch before the last mass revocation does not resolve",
+				"requirement": "S-INTEG-3",
+				"enforcedIn": "src/core/session/service.ts:verifiedSession",
+				"legitimateTest": "test/security-state-session-epoch.test.ts",
+				"attackTest": "test/security-state-session-epoch.test.ts"
+			},
+			{
+				"guard": "A disabled account ends at the next request with `account_disabled`",
+				"requirement": "S-CACHE-3",
+				"enforcedIn": "src/core/session/service.ts:resolveAndExtend",
+				"legitimateTest": "test/session-resolution.test.ts",
+				"attackTest": "test/session-resolution.test.ts"
+			},
+			{
+				"guard": "The session token is 32 random bytes in base64url",
+				"requirement": "S-RAND-2",
+				"enforcedIn": "src/core/session/token.ts:createSessionToken",
+				"legitimateTest": "test/session-token.test.ts",
+				"attackTest": "test/rand-session-token-proof.test.ts"
+			},
+			{
+				"guard": "The cookie carries `__Host-`, `HttpOnly`, `Secure`, `SameSite=Lax` and no `Domain`",
+				"requirement": "S-COOKIE-1",
+				"enforcedIn": "src/core/http/cookies.ts:serializeCookie",
+				"legitimateTest": "test/http-cookie-policy.test.ts",
+				"attackTest": "test/cookie-option-surface-proof.test.ts"
+			},
+			{
+				"guard": "The cookie holds the token alone and no check result",
+				"requirement": "S-COOKIE-4",
+				"enforcedIn": "src/core/http/web-handler.ts:moveTokensIntoCookies",
+				"legitimateTest": "test/http-cookie-policy.test.ts",
+				"attackTest": "test/cookie-session-value-proof.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-SESSION-REFRESH",
+		"title": "Extending a session",
+		"guards": [
+			{
+				"guard": "The extension moves only the idle deadline, never the absolute one",
+				"requirement": null,
+				"enforcedIn": "src/core/session/service.ts:resolveAndExtend",
+				"legitimateTest": "test/session-resolution.test.ts",
+				"attackTest": "test/session-review-deadlines.test.ts"
+			},
+			{
+				"guard": "An extension issues no new token",
+				"requirement": null,
+				"enforcedIn": "src/core/session/service.ts:createSessionService",
+				"legitimateTest": "test/session-resolution.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "An expired session stays dead, also for the extension",
+				"requirement": "S-CACHE-2",
+				"enforcedIn": "src/core/db/repositories/session.ts:extendIdleDeadline",
+				"legitimateTest": "test/session-review-deadlines.test.ts",
+				"attackTest": "test/session-review-deadlines.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-SESSION-END",
+		"title": "Ending sessions",
+		"guards": [
+			{
+				"guard": "`revoke` acts only on rows of the calling session's account",
+				"requirement": "S-OWNER-4",
+				"enforcedIn": "src/core/db/repositories/session.ts:deleteSessionOwnedBy",
+				"legitimateTest": "test/owner-revoke-proof.test.ts",
+				"attackTest": "test/owner-revoke-proof.test.ts"
+			},
+			{
+				"guard": "A foreign and an invented session id answer alike",
+				"requirement": "S-OWNER-8",
+				"enforcedIn": "src/core/session/service.ts:createSessionService",
+				"legitimateTest": "test/owner-foreign-id-proof.test.ts",
+				"attackTest": "test/owner-foreign-id-proof.test.ts"
+			},
+			{
+				"guard": "Listing and revoking demand a fresh session",
+				"requirement": "O-1",
+				"enforcedIn": "src/core/session/service.ts:actorOfFreshSession",
+				"legitimateTest": "test/session-lifecycle.test.ts",
+				"attackTest": "test/session-lifecycle.test.ts"
+			},
+			{
+				"guard": "`revokeAllOther` draws a new epoch under which only the kept session is rebound",
+				"requirement": "S-INTEG-3",
+				"enforcedIn": "src/core/auth/routes.ts:revokedUnderANewEpoch",
+				"legitimateTest": "test/security-state-kept-session.test.ts",
+				"attackTest": "test/integ-session-epoch-race.test.ts"
+			},
+			{
+				"guard": "Signing out deletes exactly the presented session",
+				"requirement": null,
+				"enforcedIn": "src/core/session/service.ts:createSessionService",
+				"legitimateTest": "test/session-lifecycle.test.ts",
+				"attackTest": null
+			}
+		]
+	},
+	{
+		"id": "W-PASSWORD-SIGNIN",
+		"title": "Signing in with a password",
+		"guards": [
+			{
+				"guard": "The account bucket is drawn before anything else",
+				"requirement": "S-RATE-7",
+				"enforcedIn": "src/core/password/routes.ts:passwordRoutes",
+				"legitimateTest": "test/limit-account.test.ts",
+				"attackTest": "test/limit-account.test.ts"
+			},
+			{
+				"guard": "The length is checked before the account lookup, without a KDF call",
+				"requirement": "S-DOS-2",
+				"enforcedIn": "src/core/password/policy.ts:acceptSubmittedPassword",
+				"legitimateTest": "test/auth-password-routes.test.ts",
+				"attackTest": "test/dos-oversized-password-proof.test.ts"
+			},
+			{
+				"guard": "An unknown identifier verifies against a dummy PHC of the same parameters",
+				"requirement": "S-TIM-2",
+				"enforcedIn": "src/core/password/verify.ts:checkPassword",
+				"legitimateTest": "test/tim-dummy-verifier-proof.test.ts",
+				"attackTest": "test/tim-dummy-verifier-proof.test.ts"
+			},
+			{
+				"guard": "The KDF result is compared in constant time",
+				"requirement": "S-TIM-3",
+				"enforcedIn": "src/core/keys/constant-time.ts:equalsInConstantTime",
+				"legitimateTest": "test/keys-constant-time.test.ts",
+				"attackTest": "test/tim-secret-comparison-proof.test.ts"
+			},
+			{
+				"guard": "A broken seal answers like a wrong password",
+				"requirement": "S-INTEG-5",
+				"enforcedIn": "src/core/password/routes.ts:checkedCredential",
+				"legitimateTest": "test/security-state-checking.test.ts",
+				"attackTest": "test/security-state-checking.test.ts"
+			},
+			{
+				"guard": "A disabled account answers the right password like a wrong one",
+				"requirement": "S-ENUM-2",
+				"enforcedIn": "src/core/password/routes.ts:passwordRoutes",
+				"legitimateTest": "test/enum-sign-in-states-proof.test.ts",
+				"attackTest": "test/enum-sign-in-states-proof.test.ts"
+			},
+			{
+				"guard": "With a second factor a pending state comes into being instead of a session",
+				"requirement": "S-FIX-4",
+				"enforcedIn": "src/core/password/routes.ts:signedIn",
+				"legitimateTest": "test/auth-factor-routes.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "The new session replaces the presented one in one transaction",
+				"requirement": "S-FIX-1",
+				"enforcedIn": "src/core/session/service.ts:createSessionService",
+				"legitimateTest": "test/signin-replaces-session.test.ts",
+				"attackTest": "test/signin-replaces-session.test.ts"
+			},
+			{
+				"guard": "The rehash runs after the answer and writes by compare-and-swap under the account lock",
+				"requirement": "S-RACE-6",
+				"enforcedIn": "src/core/password/routes.ts:rehashUnderTheLock",
+				"legitimateTest": "test/password-rehash-after-response.test.ts",
+				"attackTest": "test/race-rehash-compare-and-swap-proof.test.ts"
+			},
+			{
+				"guard": "After failures the route asks for a proof of work, alike for known and unknown accounts",
+				"requirement": "S-RATE-11",
+				"enforcedIn": "src/core/password/routes.ts:passwordRoutes",
+				"legitimateTest": "test/proof-of-work-sign-in.test.ts",
+				"attackTest": "test/proof-of-work-sign-in.test.ts"
+			},
+			{
+				"guard": "Simultaneous KDF calls are bounded by a semaphore",
+				"requirement": "S-DOS-3",
+				"enforcedIn": "src/core/password/semaphore.ts:createKdfSemaphore",
+				"legitimateTest": "test/password-kdf-semaphore.test.ts",
+				"attackTest": "test/dos-limit-before-kdf-proof.test.ts"
+			},
+			{
+				"guard": "A veto of `beforeSignIn` or `beforeSessionCreate` prevents the session",
+				"requirement": "S-OWNER-12",
+				"enforcedIn": "src/core/plugin/sign-in.ts:createSessionUnderHooks",
+				"legitimateTest": "test/plugin-sign-in-hooks.test.ts",
+				"attackTest": "test/plugin-sign-in-hooks.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-PASSKEY-SIGNIN",
+		"title": "Signing in with a passkey",
+		"guards": [
+			{
+				"guard": "The challenge holds five minutes, once, and only for its ceremony",
+				"requirement": "S-REPLAY-5",
+				"enforcedIn": "src/core/factor/webauthn/challenge.ts:createWebAuthnChallenges",
+				"legitimateTest": "test/webauthn-challenge.test.ts",
+				"attackTest": "test/webauthn-challenge.test.ts"
+			},
+			{
+				"guard": "The origin in `clientDataJSON` must be configured",
+				"requirement": "O-8",
+				"enforcedIn": "src/core/factor/webauthn/verification.ts:assertOriginIsExpected",
+				"legitimateTest": "test/webauthn-authentication.test.ts",
+				"attackTest": "test/webauthn-authentication.test.ts"
+			},
+			{
+				"guard": "The RP ID hash must match",
+				"requirement": "O-8",
+				"enforcedIn": "src/core/factor/webauthn/verification.ts:assertRelyingPartyIsExpected",
+				"legitimateTest": "test/webauthn-authentication.test.ts",
+				"attackTest": "test/webauthn-authentication.test.ts"
+			},
+			{
+				"guard": "User verification is always required",
+				"requirement": "O-8",
+				"enforcedIn": "src/core/factor/webauthn/verification.ts:assertUserWasVerified",
+				"legitimateTest": "test/webauthn-authentication.test.ts",
+				"attackTest": "test/webauthn-authentication.test.ts"
+			},
+			{
+				"guard": "The seal is checked first and the signature verified against the passkey of that read",
+				"requirement": "S-INTEG-4",
+				"enforcedIn": "src/core/factor/webauthn/service.ts:verifyCheckedAssertion",
+				"legitimateTest": "test/security-state-checking.test.ts",
+				"attackTest": "test/security-state-checking.test.ts"
+			},
+			{
+				"guard": "Under a list only an authenticator with verified attestation signs in",
+				"requirement": "S-INTEG-13",
+				"enforcedIn": "src/core/factor/webauthn/service.ts:verifyCheckedAssertion",
+				"legitimateTest": "test/verified-attestation-flow.test.ts",
+				"attackTest": "test/verified-attestation-review-flows.test.ts"
+			},
+			{
+				"guard": "A regressing counter is reported and the highest one kept",
+				"requirement": "L-9",
+				"enforcedIn": "src/core/factor/webauthn/service.ts:countHasRegressed",
+				"legitimateTest": "test/webauthn-counter-race.test.ts",
+				"attackTest": "test/webauthn-counter-race.test.ts"
+			},
+			{
+				"guard": "A disabled account answers like an invalid assertion",
+				"requirement": "L-4",
+				"enforcedIn": "src/core/factor/routes.ts:passkeyRoutes",
+				"legitimateTest": null,
+				"attackTest": null
+			},
+			{
+				"guard": "The new session replaces the presented one",
+				"requirement": "S-FIX-1",
+				"enforcedIn": "src/core/session/service.ts:createSessionService",
+				"legitimateTest": "test/auth-webauthn-routes.test.ts",
+				"attackTest": "test/signin-replaces-session.test.ts"
+			},
+			{
+				"guard": "After failures per address the route asks for a proof of work",
+				"requirement": "S-RATE-11",
+				"enforcedIn": "src/core/factor/routes.ts:passkeyRoutes",
+				"legitimateTest": "test/proof-of-work-sign-in.test.ts",
+				"attackTest": "test/proof-of-work-sign-in.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-PENDING",
+		"title": "The pending state between first and second factor",
+		"guards": [
+			{
+				"guard": "The pending state is a row in `pending_authentication`, not a session",
+				"requirement": "S-FIX-4",
+				"enforcedIn": "src/core/factor/pending/service.ts:createPendingAuthenticationService",
+				"legitimateTest": "test/factor-pending-state.test.ts",
+				"attackTest": "test/factor-pending-surface.test.ts"
+			},
+			{
+				"guard": "It is resolved as a session nowhere",
+				"requirement": "S-CACHE-4",
+				"enforcedIn": "src/core/http/pipeline.ts:createRequestContext",
+				"legitimateTest": "test/http-pending-visibility.test.ts",
+				"attackTest": "test/cache-pending-ignored-proof.test.ts"
+			},
+			{
+				"guard": "Cookie and row live five minutes",
+				"requirement": "S-COOKIE-3",
+				"enforcedIn": "src/core/http/cookies.ts:createCookieCollector",
+				"legitimateTest": "test/factor-pending-state.test.ts",
+				"attackTest": "test/cookie-pending-expiry-proof.test.ts"
+			},
+			{
+				"guard": "A row whose MAC does not hold is no pending state",
+				"requirement": "S-INTEG-9",
+				"enforcedIn": "src/core/factor/pending/service.ts:createPendingAuthenticationService",
+				"legitimateTest": "test/integ-token-binding.test.ts",
+				"attackTest": "test/integ-token-tampered-columns.test.ts"
+			},
+			{
+				"guard": "A mass revocation makes the pending state invalid",
+				"requirement": "S-INTEG-3",
+				"enforcedIn": "src/core/factor/pending/service.ts:createPendingAuthenticationService",
+				"legitimateTest": "test/integ-pending-epoch.test.ts",
+				"attackTest": "test/integ-pending-epoch.test.ts"
+			},
+			{
+				"guard": "The factors on offer are those of the verified read, and a factor removed since refuses",
+				"requirement": "S-INTEG-4",
+				"enforcedIn": "src/core/factor/pending/service.ts:refuseAFactorGoneSinceTheCheck",
+				"legitimateTest": "test/spine-available-factors.test.ts",
+				"attackTest": "test/security-state-offered-factors.test.ts"
+			},
+			{
+				"guard": "Five attempts per pending state across every factor, counted before the check",
+				"requirement": "L-8",
+				"enforcedIn": "src/core/factor/pending/attempt-limit.ts:verifyUnderPendingAttemptLimit",
+				"legitimateTest": "test/totp-pending-attempts.test.ts",
+				"attackTest": "test/security-state-attempt-budget.test.ts"
+			},
+			{
+				"guard": "A disabled account answers like an unknown pending state",
+				"requirement": "L-4",
+				"enforcedIn": "src/core/factor/pending/service.ts:createPendingAuthenticationService",
+				"legitimateTest": null,
+				"attackTest": null
+			},
+			{
+				"guard": "Cancelling deletes the row and the cookie",
+				"requirement": null,
+				"enforcedIn": "src/core/auth/routes.ts:pendingRoutes",
+				"legitimateTest": "test/auth-pending-routes.test.ts",
+				"attackTest": null
+			}
+		]
+	},
+	{
+		"id": "W-TOTP-SECOND-FACTOR",
+		"title": "TOTP as second factor",
+		"guards": [
+			{
+				"guard": "The account bucket of the pending state's account is drawn before the check",
+				"requirement": "S-RATE-7",
+				"enforcedIn": "src/core/factor/routes.ts:spendAccountToken",
+				"legitimateTest": "test/auth-factor-routes.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "The secret comes from the read the seal check verified",
+				"requirement": "S-INTEG-4",
+				"enforcedIn": "src/core/factor/totp/service.ts:createTotpService",
+				"legitimateTest": "test/security-state-checking.test.ts",
+				"attackTest": "test/security-state-checking.test.ts"
+			},
+			{
+				"guard": "A code holds at most once per account and time step",
+				"requirement": "S-REPLAY-4",
+				"enforcedIn": "src/core/factor/totp/repository.ts:createTotpRepository",
+				"legitimateTest": "test/totp-replay.test.ts",
+				"attackTest": "test/totp-replay.test.ts"
+			},
+			{
+				"guard": "Of 50 simultaneous submissions of one code exactly one wins",
+				"requirement": "S-RACE-3",
+				"enforcedIn": "src/core/factor/totp/repository.ts:createTotpRepository",
+				"legitimateTest": "test/totp-race.test.ts",
+				"attackTest": "test/totp-race.test.ts"
+			},
+			{
+				"guard": "A missing, unconfirmed or wrong factor answers alike",
+				"requirement": "S-ENUM-2",
+				"enforcedIn": "src/core/factor/totp/service.ts:createTotpService",
+				"legitimateTest": "test/totp-concealment.test.ts",
+				"attackTest": "test/totp-concealment.test.ts"
+			},
+			{
+				"guard": "The pending row is deleted in the transaction that inserts the session",
+				"requirement": "S-FIX-1",
+				"enforcedIn": "src/core/factor/pending/complete.ts:createSecondFactorCompletion",
+				"legitimateTest": "test/factor-pending-race.test.ts",
+				"attackTest": "test/factor-pending-race.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-RECOVERY-SECOND-FACTOR",
+		"title": "Recovery code as second factor",
+		"guards": [
+			{
+				"guard": "Only `HMAC-SHA256(pepper, code)` is stored",
+				"requirement": "S-REST-3",
+				"enforcedIn": "src/core/factor/recovery/pepper.ts:pepperRecoveryCode",
+				"legitimateTest": "test/recovery-codes.test.ts",
+				"attackTest": "test/rest-hash-proof.test.ts"
+			},
+			{
+				"guard": "The code is spent under the account lock by `DELETE … RETURNING` and must stand in the seal",
+				"requirement": "S-RACE-4",
+				"enforcedIn": "src/core/factor/recovery/repository.ts:createRecoveryCodeRepository",
+				"legitimateTest": "test/auth-factor-routes.test.ts",
+				"attackTest": "test/recovery-race.test.ts"
+			},
+			{
+				"guard": "With recovery switched off every code answers like a wrong one",
+				"requirement": "S-ENUM-9",
+				"enforcedIn": "src/core/factor/recovery/service.ts:createRecoveryCodeService",
+				"legitimateTest": "test/no-recovery-switch-seal.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "A spent and an invented code answer alike",
+				"requirement": null,
+				"enforcedIn": "src/core/factor/recovery/service.ts:createRecoveryCodeService",
+				"legitimateTest": "test/auth-factor-routes.test.ts",
+				"attackTest": "test/auth-factor-routes.test.ts"
+			},
+			{
+				"guard": "The pending row is deleted in the transaction that inserts the session",
+				"requirement": "S-FIX-1",
+				"enforcedIn": "src/core/factor/pending/complete.ts:createSecondFactorCompletion",
+				"legitimateTest": "test/factor-pending-race.test.ts",
+				"attackTest": "test/factor-pending-race.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-PASSKEY-SECOND-FACTOR",
+		"title": "Passkey as second factor",
+		"guards": [
+			{
+				"guard": "The challenge is bound to account and ceremony",
+				"requirement": "S-REPLAY-5",
+				"enforcedIn": "src/core/factor/webauthn/challenge.ts:createWebAuthnChallenges",
+				"legitimateTest": "test/auth-webauthn-routes.test.ts",
+				"attackTest": "test/webauthn-challenge.test.ts"
+			},
+			{
+				"guard": "The passkey must belong to the pending state's account",
+				"requirement": "S-OWNER-2",
+				"enforcedIn": "src/core/factor/webauthn/credential-repository.ts:createWebAuthnCredentialRepository",
+				"legitimateTest": "test/auth-webauthn-routes.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "Origin, RP ID, user verification and seal as for the passkey sign-in",
+				"requirement": "S-INTEG-4",
+				"enforcedIn": "src/core/factor/webauthn/service.ts:verifyCheckedAssertion",
+				"legitimateTest": "test/auth-webauthn-routes.test.ts",
+				"attackTest": "test/security-state-checking.test.ts"
+			},
+			{
+				"guard": "A passkey outside the list answers like an unknown one and never falls back to one factor",
+				"requirement": "S-INTEG-13",
+				"enforcedIn": "src/core/factor/webauthn/service.ts:verifyCheckedAssertion",
+				"legitimateTest": "test/verified-attestation-flow.test.ts",
+				"attackTest": "test/verified-attestation-review-flows.test.ts"
+			},
+			{
+				"guard": "The attempt counts against the pending state's shared budget",
+				"requirement": "L-8",
+				"enforcedIn": "src/core/factor/pending/attempt-limit.ts:verifyUnderPendingAttemptLimit",
+				"legitimateTest": "test/totp-pending-attempts.test.ts",
+				"attackTest": "test/reset-second-factor-review-attacks.test.ts"
+			},
+			{
+				"guard": "The pending row is deleted in the transaction that inserts the session",
+				"requirement": "S-FIX-1",
+				"enforcedIn": "src/core/factor/pending/complete.ts:createSecondFactorCompletion",
+				"legitimateTest": "test/factor-pending-race.test.ts",
+				"attackTest": "test/factor-pending-race.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-MAGIC-LINK",
+		"title": "The magic link",
+		"guards": [
+			{
+				"guard": "A known and an unknown address run the same statements and send exactly once",
+				"requirement": "S-TIM-6",
+				"enforcedIn": "src/core/flows/magic-link.ts:requestMagicLink",
+				"legitimateTest": "test/flows-review-enumeration.test.ts",
+				"attackTest": "test/flows-review-request-oracle-race.test.ts"
+			},
+			{
+				"guard": "A switched-off account takes the branch of an unknown address",
+				"requirement": "S-ENUM-9",
+				"enforcedIn": "src/core/flows/artefact.ts:ownerAMailedLinkMayReach",
+				"legitimateTest": "test/no-recovery-switch-mailed-paths.test.ts",
+				"attackTest": "test/no-recovery-switch-mailed-paths.test.ts"
+			},
+			{
+				"guard": "The token carries 256 bits from the one random module",
+				"requirement": "S-RAND-4",
+				"enforcedIn": "src/core/token/secret-token.ts:createSecretToken",
+				"legitimateTest": "test/token-random.test.ts",
+				"attackTest": "test/token-review-randomness.test.ts"
+			},
+			{
+				"guard": "A new token of the same purpose deletes every earlier one",
+				"requirement": "S-TOKEN-3",
+				"enforcedIn": "src/core/db/repositories/token.ts:createOneTimeTokenRepository",
+				"legitimateTest": "test/token-repository.test.ts",
+				"attackTest": "test/token-review-purpose-and-ownership.test.ts"
+			},
+			{
+				"guard": "The redemption is a `DELETE … RETURNING` with purpose and deadline in the predicate",
+				"requirement": "S-REPLAY-2",
+				"enforcedIn": "src/core/token/one-time-token.ts:createOneTimeTokens",
+				"legitimateTest": "test/token-one-time-token.test.ts",
+				"attackTest": "test/replay-redeem-answers-proof.test.ts"
+			},
+			{
+				"guard": "Of 50 simultaneous redemptions exactly one wins",
+				"requirement": "S-RACE-1",
+				"enforcedIn": "src/core/db/repositories/token.ts:createOneTimeTokenRepository",
+				"legitimateTest": "test/token-race.test.ts",
+				"attackTest": "test/token-race.test.ts"
+			},
+			{
+				"guard": "A token of another purpose answers like an invented one",
+				"requirement": "S-TOKEN-2",
+				"enforcedIn": "src/core/token/one-time-token.ts:createOneTimeTokens",
+				"legitimateTest": "test/token-review-purpose-and-ownership.test.ts",
+				"attackTest": "test/token-review-purpose-and-ownership.test.ts"
+			},
+			{
+				"guard": "The row's MAC and the address it was mailed to must still hold",
+				"requirement": "S-INTEG-9",
+				"enforcedIn": "src/core/flows/artefact.ts:refuseUnlessTheAddressIsStillTheAccounts",
+				"legitimateTest": "test/integ-token-address-binding.test.ts",
+				"attackTest": "test/integ-token-address-binding.test.ts"
+			},
+			{
+				"guard": "The account comes from the removed row alone",
+				"requirement": "S-TOKEN-4",
+				"enforcedIn": "src/core/flows/environment.ts:accountOrDisabledOfRedemption",
+				"legitimateTest": "test/token-target-account-proof.test.ts",
+				"attackTest": "test/token-target-account-proof.test.ts"
+			},
+			{
+				"guard": "A switched-off account refuses the link and spends nothing",
+				"requirement": "S-ENUM-9",
+				"enforcedIn": "src/core/flows/environment.ts:refuseALinkWhileRecoveryIsDisabled",
+				"legitimateTest": "test/no-recovery-switch-mailed-paths.test.ts",
+				"attackTest": "test/no-recovery-switch-mailed-paths.test.ts"
+			},
+			{
+				"guard": "A disabled account spends the link and answers like an invented token",
+				"requirement": "S-REPLAY-3",
+				"enforcedIn": "src/core/flows/environment.ts:accountOrDisabledOfRedemption",
+				"legitimateTest": "test/redeem-disabled-account.test.ts",
+				"attackTest": "test/redeem-disabled-account.test.ts"
+			},
+			{
+				"guard": "With a second factor a pending state comes into being instead of a session",
+				"requirement": "O-9",
+				"enforcedIn": "src/core/flows/magic-link.ts:redeemMagicLink",
+				"legitimateTest": "test/flows-email-behaviour.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "The first confirmation deletes a password set in another session and every session",
+				"requirement": "S-LINK-4",
+				"enforcedIn": "src/core/flows/confirmation.ts:confirmAddress",
+				"legitimateTest": "test/flows-review-first-confirmation.test.ts",
+				"attackTest": "test/flows-review-first-confirmation.test.ts"
+			},
+			{
+				"guard": "The new session replaces the presented one",
+				"requirement": "S-FIX-1",
+				"enforcedIn": "src/core/session/service.ts:createSessionService",
+				"legitimateTest": "test/signin-replaces-session.test.ts",
+				"attackTest": "test/signin-replaces-session.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-PASSWORD-RESET-MAIL",
+		"title": "Password reset by mail",
+		"guards": [
+			{
+				"guard": "A known and an unknown address answer byte for byte alike",
+				"requirement": "S-ENUM-5",
+				"enforcedIn": "src/core/flows/reset.ts:requestReset",
+				"legitimateTest": "test/flows-review-enumeration.test.ts",
+				"attackTest": "test/flows-review-enumeration.test.ts"
+			},
+			{
+				"guard": "A switched-off account takes the branch of an unknown address",
+				"requirement": "S-ENUM-9",
+				"enforcedIn": "src/core/flows/artefact.ts:ownerAMailedLinkMayReach",
+				"legitimateTest": "test/no-recovery-switch-mailed-paths.test.ts",
+				"attackTest": "test/no-recovery-switch-mailed-paths.test.ts"
+			},
+			{
+				"guard": "The redemption is a `DELETE … RETURNING` with purpose and deadline",
+				"requirement": "S-REPLAY-2",
+				"enforcedIn": "src/core/flows/artefact.ts:redeemOrRefuse",
+				"legitimateTest": "test/token-one-time-token.test.ts",
+				"attackTest": "test/replay-redeem-answers-proof.test.ts"
+			},
+			{
+				"guard": "Policy and KDF run before the token is spent",
+				"requirement": "S-DOS-2",
+				"enforcedIn": "src/core/flows/reset.ts:redeemReset",
+				"legitimateTest": "test/reset-second-factor-flow.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "Address, token generation and switch are checked under the account lock",
+				"requirement": "S-INTEG-9",
+				"enforcedIn": "src/core/flows/reset.ts:redeemReset",
+				"legitimateTest": "test/integ-token-address-binding.test.ts",
+				"attackTest": "test/integ-token-address-binding.test.ts"
+			},
+			{
+				"guard": "With a second factor only the token is spent and nothing written",
+				"requirement": "S-FIX-7",
+				"enforcedIn": "src/core/flows/reset.ts:replacePassword",
+				"legitimateTest": "test/reset-second-factor-flow.test.ts",
+				"attackTest": "test/reset-second-factor-review-attacks.test.ts"
+			},
+			{
+				"guard": "Password, revocation and session come into being only at the second factor, the new password only as a bound envelope",
+				"requirement": "S-FIX-8",
+				"enforcedIn": "src/core/flows/reset.ts:completeResetBySecondFactor",
+				"legitimateTest": "test/reset-second-factor-flow.test.ts",
+				"attackTest": "test/reset-second-factor-integrity.test.ts"
+			},
+			{
+				"guard": "A change of the account since the factor check refuses the completion",
+				"requirement": "S-INTEG-5",
+				"enforcedIn": "src/core/flows/reset.ts:isTheStateTheFactorChecked",
+				"legitimateTest": "test/reset-second-factor-integrity.test.ts",
+				"attackTest": "test/reset-second-factor-integrity.test.ts"
+			},
+			{
+				"guard": "The reset revokes every session, with no switch",
+				"requirement": "S-FIX-6",
+				"enforcedIn": "src/core/flows/reset.ts:replacePassword",
+				"legitimateTest": "test/flows-email-behaviour.test.ts",
+				"attackTest": "test/default-revocation-switch-proof.test.ts"
+			},
+			{
+				"guard": "A disabled account spends the token and answers like an invented one",
+				"requirement": "S-REPLAY-3",
+				"enforcedIn": "src/core/flows/reset.ts:redeemReset",
+				"legitimateTest": "test/reset-token-disabled.test.ts",
+				"attackTest": "test/reset-token-disabled.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-PASSWORD-RESET-RECOVERY-CODE",
+		"title": "Password reset with a recovery code",
+		"guards": [
+			{
+				"guard": "The account bucket is drawn before any derivation",
+				"requirement": "S-RATE-7",
+				"enforcedIn": "src/core/flows/reset.ts:redeemResetWithRecoveryCode",
+				"legitimateTest": "test/recovery-reset-rate.test.ts",
+				"attackTest": "test/recovery-reset-rate.test.ts"
+			},
+			{
+				"guard": "An unknown account locks and consumes as a known one does",
+				"requirement": "S-TIM-6",
+				"enforcedIn": "src/core/flows/reset.ts:redeemResetWithRecoveryCode",
+				"legitimateTest": "test/recovery-reset-disabled.test.ts",
+				"attackTest": "test/recovery-reset-disabled.test.ts"
+			},
+			{
+				"guard": "The code is spent under the account lock and must stand in the seal",
+				"requirement": "S-RACE-4",
+				"enforcedIn": "src/core/factor/recovery/repository.ts:createRecoveryCodeRepository",
+				"legitimateTest": "test/auth-factor-routes.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "With recovery switched off every code answers like a wrong one",
+				"requirement": "S-ENUM-9",
+				"enforcedIn": "src/core/flows/reset.ts:redeemResetWithRecoveryCode",
+				"legitimateTest": "test/no-recovery-switch-seal.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "The reset revokes every session",
+				"requirement": "S-FIX-6",
+				"enforcedIn": "src/core/flows/reset.ts:replacePassword",
+				"legitimateTest": null,
+				"attackTest": null
+			},
+			{
+				"guard": "A disabled account spends the code and answers like a wrong one",
+				"requirement": "S-OWNER-8",
+				"enforcedIn": "src/core/flows/reset.ts:redeemResetWithRecoveryCode",
+				"legitimateTest": "test/recovery-reset-disabled.test.ts",
+				"attackTest": "test/recovery-reset-disabled.test.ts"
+			},
+			{
+				"guard": "No further second factor of the account is asked for",
+				"requirement": "O-2",
+				"enforcedIn": "src/core/flows/reset.ts:redeemResetWithRecoveryCode",
+				"legitimateTest": "test/reset-second-factor-review-attacks.test.ts",
+				"attackTest": null
+			}
+		]
+	},
+	{
+		"id": "W-PASSKEY-RECOVERY",
+		"title": "Recovery to a new passkey",
+		"guards": [
+			{
+				"guard": "An unknown address, a switched-off account and an account with a passkey run one path",
+				"requirement": "S-ENUM-10",
+				"enforcedIn": "src/core/recovery/flow.ts:requestPasskeyRecovery",
+				"legitimateTest": "test/passkey-recovery-uniform.test.ts",
+				"attackTest": "test/passkey-recovery-uniform.test.ts"
+			},
+			{
+				"guard": "Link and one recovery code are spent together or neither is",
+				"requirement": "S-RACE-7",
+				"enforcedIn": "src/core/recovery/flow.ts:startPasskeyRecovery",
+				"legitimateTest": "test/passkey-recovery-flow.test.ts",
+				"attackTest": "test/passkey-recovery-review-attacks.test.ts"
+			},
+			{
+				"guard": "Disabled, switched off or already recovering answers like a wrong code",
+				"requirement": "S-ENUM-10",
+				"enforcedIn": "src/core/recovery/flow.ts:refuseUnlessTheAccountMayBeRecovered",
+				"legitimateTest": "test/passkey-recovery-uniform.test.ts",
+				"attackTest": "test/passkey-recovery-uniform.test.ts"
+			},
+			{
+				"guard": "The challenge names its account, holds only for the recovery and requires user verification",
+				"requirement": "S-REPLAY-5",
+				"enforcedIn": "src/core/factor/webauthn/service.ts:createWebAuthnService",
+				"legitimateTest": "test/passkey-recovery-flow.test.ts",
+				"attackTest": "test/passkey-recovery-review-attacks.test.ts"
+			},
+			{
+				"guard": "The new passkey is held back, sealed, until the waiting period ends",
+				"requirement": "S-INTEG-12",
+				"enforcedIn": "src/core/recovery/flow.ts:registerUnderTheSeal",
+				"legitimateTest": "test/passkey-recovery-flow.test.ts",
+				"attackTest": "test/passkey-recovery-integrity.test.ts"
+			},
+			{
+				"guard": "Every session of the account sees the recovery and cancels it",
+				"requirement": "S-LINK-9",
+				"enforcedIn": "src/core/recovery/flow.ts:cancelPasskeyRecovery",
+				"legitimateTest": "test/passkey-recovery-flow.test.ts",
+				"attackTest": "test/passkey-recovery-review-lifecycle.test.ts"
+			},
+			{
+				"guard": "The address is told after the commit",
+				"requirement": "S-LINK-9",
+				"enforcedIn": "src/core/recovery/flow.ts:tellOfThePendingRecovery",
+				"legitimateTest": "test/passkey-recovery-flow.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "The activation replaces every way in and revokes every session and link",
+				"requirement": "S-INTEG-12",
+				"enforcedIn": "src/core/recovery/activation.ts:activateDueRecovery",
+				"legitimateTest": "test/passkey-recovery-review-lifecycle.test.ts",
+				"attackTest": "test/passkey-recovery-review-lifecycle.test.ts"
+			},
+			{
+				"guard": "An authenticator outside the list never becomes a way in",
+				"requirement": "S-INTEG-13",
+				"enforcedIn": "src/core/factor/webauthn/service.ts:refuseAnAuthenticatorOutsideTheList",
+				"legitimateTest": "test/verified-attestation-review-flows.test.ts",
+				"attackTest": "test/verified-attestation-review-flows.test.ts"
+			},
+			{
+				"guard": "With `requireDiscoverableCredential` only a discoverable passkey is registered",
+				"requirement": "S-DEFAULT-8",
+				"enforcedIn": "src/core/factor/webauthn/verification.ts:assertClientReportsADiscoverableCredential",
+				"legitimateTest": "test/discoverable-registration-flow.test.ts",
+				"attackTest": "test/discoverable-registration-review-paths.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-OAUTH-SIGNIN",
+		"title": "Signing in through OAuth and OIDC",
+		"guards": [
+			{
+				"guard": "The `state` lies server-side, the cookie holds only the pointer, and both must match",
+				"requirement": "S-CSRF-5",
+				"enforcedIn": "src/core/oauth/flow-secrets.ts:pointerBelongsToState",
+				"legitimateTest": "test/oauth-flow.test.ts",
+				"attackTest": "test/oauth-state-race.test.ts"
+			},
+			{
+				"guard": "The flow row is consumed once and before its deadline",
+				"requirement": "S-REPLAY-6",
+				"enforcedIn": "src/core/oauth/flow-repository.ts:createOAuthFlowRepository",
+				"legitimateTest": "test/oauth-flow-row.test.ts",
+				"attackTest": "test/oauth-flow-row.test.ts"
+			},
+			{
+				"guard": "PKCE `S256` is mandatory, the verifier encrypted bound to the flow row",
+				"requirement": "S-REPLAY-6",
+				"enforcedIn": "src/core/oauth/flow-secrets.ts:pkceChallengeOf",
+				"legitimateTest": "test/oauth-flow.test.ts",
+				"attackTest": "test/oauth-flow-row.test.ts"
+			},
+			{
+				"guard": "The `iss` is checked per RFC 9207",
+				"requirement": "S-REPLAY-6",
+				"enforcedIn": "src/core/oauth/service.ts:assertIssuerMatches",
+				"legitimateTest": "test/oauth-flow.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "The ID token's `nonce` must be the stored one",
+				"requirement": "S-REPLAY-6",
+				"enforcedIn": "src/core/oauth/id-token.ts:claimsOfIdToken",
+				"legitimateTest": "test/oauth-flow.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "The ID token is verified against the JWKS with listed asymmetric algorithms only",
+				"requirement": "S-KEY-7",
+				"enforcedIn": "src/core/oauth/id-token.ts:claimsOfIdToken",
+				"legitimateTest": "test/oauth-flow.test.ts",
+				"attackTest": "test/oauth-id-token-allow-list.test.ts"
+			},
+			{
+				"guard": "Linking is by `(provider, subject)` alone, the subject is never an address",
+				"requirement": "S-LINK-3",
+				"enforcedIn": "src/core/oauth/claims.ts:providerAccountOf",
+				"legitimateTest": "test/oauth-linking-matrix.test.ts",
+				"attackTest": "test/oauth-linking-matrix.test.ts"
+			},
+			{
+				"guard": "The identity must stand in the sealed read",
+				"requirement": "S-INTEG-4",
+				"enforcedIn": "src/core/oauth/service.ts:checkedIdentityOf",
+				"legitimateTest": "test/security-state-checking.test.ts",
+				"attackTest": "test/security-state-checking.test.ts"
+			},
+			{
+				"guard": "With a second factor a pending state comes into being instead of a session",
+				"requirement": "O-9",
+				"enforcedIn": "src/core/oauth/service.ts:signInOrAskForTheSecondFactor",
+				"legitimateTest": "test/oauth-flow.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "A disabled account ends the flow",
+				"requirement": "L-4",
+				"enforcedIn": "src/core/oauth/service.ts:assertTheAccountIsEnabled",
+				"legitimateTest": null,
+				"attackTest": null
+			},
+			{
+				"guard": "The redirect target is a path, never a URL",
+				"requirement": "S-REDIR-2",
+				"enforcedIn": "src/core/oauth/redirect-path.ts:acceptedRedirectPath",
+				"legitimateTest": "test/oauth-redirect-corpus.test.ts",
+				"attackTest": "test/oauth-redirect-corpus.test.ts"
+			},
+			{
+				"guard": "The provider's endpoints come from the configuration alone",
+				"requirement": "S-REDIR-6",
+				"enforcedIn": "src/core/oauth/providers.ts:resolveProviderTable",
+				"legitimateTest": "test/oauth-config-seam.test.ts",
+				"attackTest": "test/oauth-redirect-corpus.test.ts"
+			},
+			{
+				"guard": "The new session replaces the presented one",
+				"requirement": "S-FIX-1",
+				"enforcedIn": "src/core/session/service.ts:createSessionService",
+				"legitimateTest": "test/signin-replaces-session.test.ts",
+				"attackTest": "test/signin-replaces-session.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-OAUTH-SIGNUP",
+		"title": "Creating an account through a provider",
+		"guards": [
+			{
+				"guard": "No address and no username is invented",
+				"requirement": "S-LINK-5",
+				"enforcedIn": "src/core/oauth/service.ts:createAccountFor",
+				"legitimateTest": "test/oauth-signup-username-email.test.ts",
+				"attackTest": "test/identity-invented-email.test.ts"
+			},
+			{
+				"guard": "An address of another account ends the flow before the insert",
+				"requirement": "S-LINK-1",
+				"enforcedIn": "src/core/oauth/service.ts:createAccountFor",
+				"legitimateTest": "test/oauth-linking-matrix.test.ts",
+				"attackTest": "test/oauth-signup-unique-race.test.ts"
+			},
+			{
+				"guard": "A provider claim confirms the address only for a trusted provider",
+				"requirement": "S-LINK-6",
+				"enforcedIn": "src/core/oauth/service.ts:createAccountFor",
+				"legitimateTest": "test/oauth-linking-matrix.test.ts",
+				"attackTest": "test/oauth-linking-matrix.test.ts"
+			},
+			{
+				"guard": "The account is sealed with its identity in the same transaction",
+				"requirement": "S-INTEG-3",
+				"enforcedIn": "src/core/oauth/service.ts:accountForSignIn",
+				"legitimateTest": "test/security-state-sealing.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "`beforeUserCreate` can refuse the creation",
+				"requirement": "S-OWNER-12",
+				"enforcedIn": "src/core/oauth/service.ts:createAccountFor",
+				"legitimateTest": "test/plugin-oauth-sign-up-hooks-pool.test.ts",
+				"attackTest": null
+			}
+		]
+	},
+	{
+		"id": "W-OAUTH-AUTO-LINK",
+		"title": "Automatic link with an existing account",
+		"guards": [
+			{
+				"guard": "Provider reports verified, local account confirmed, provider trusted — all three",
+				"requirement": "S-LINK-2",
+				"enforcedIn": "src/core/oauth/linking.ts:automaticLinkIsAllowed",
+				"legitimateTest": "test/oauth-linking-matrix.test.ts",
+				"attackTest": "test/oauth-linking-matrix.test.ts"
+			},
+			{
+				"guard": "The address is looked up only once the other two conditions hold",
+				"requirement": "S-LINK-1",
+				"enforcedIn": "src/core/oauth/linking.ts:accountAnAutomaticLinkMayJoin",
+				"legitimateTest": "test/oauth-linking-matrix.test.ts",
+				"attackTest": "test/oauth-linking-matrix.test.ts"
+			},
+			{
+				"guard": "The conditions are checked again under the account lock",
+				"requirement": "S-LINK-2",
+				"enforcedIn": "src/core/oauth/service.ts:theJoinableAccountUnderItsLock",
+				"legitimateTest": "test/oauth-anchor-before-lock.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "At most `limits.identitiesPerAccount` identities",
+				"requirement": "S-INTEG-10",
+				"enforcedIn": "src/core/security-state/limits.ts:assertBelowCredentialLimit",
+				"legitimateTest": "test/security-state-limits-cap.test.ts",
+				"attackTest": "test/security-state-limits-cap.test.ts"
+			},
+			{
+				"guard": "A second factor of the account is asked for afterwards",
+				"requirement": "O-9",
+				"enforcedIn": "src/core/oauth/service.ts:signInOrAskForTheSecondFactor",
+				"legitimateTest": null,
+				"attackTest": null
+			},
+			{
+				"guard": "The link is written before the second factor has been passed",
+				"requirement": "O-5",
+				"enforcedIn": "src/core/oauth/service.ts:accountForSignIn",
+				"legitimateTest": null,
+				"attackTest": null
+			}
+		]
+	},
+	{
+		"id": "W-IDENTITY-LINK",
+		"title": "Linking an identity from a session",
+		"guards": [
+			{
+				"guard": "The start demands a fresh session",
+				"requirement": "O-1",
+				"enforcedIn": "src/core/oauth/routes.ts:linkStartOf",
+				"legitimateTest": "test/oauth-flow.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "The flow row carries the target account and the starting session, the callback reads no session cookie",
+				"requirement": "S-TOKEN-4",
+				"enforcedIn": "src/core/oauth/flow-repository.ts:createOAuthFlowRepository",
+				"legitimateTest": "test/token-target-account-proof.test.ts",
+				"attackTest": "test/token-target-account-proof.test.ts"
+			},
+			{
+				"guard": "The verifier is bound to the target account",
+				"requirement": "S-INTEG-1",
+				"enforcedIn": "src/core/oauth/service.ts:pkceBindingOf",
+				"legitimateTest": "test/oauth-flow.test.ts",
+				"attackTest": "test/integ-envelope-attacks.test.ts"
+			},
+			{
+				"guard": "A pair already linked is refused",
+				"requirement": "S-LINK-1",
+				"enforcedIn": "src/core/oauth/service.ts:refuseIfAlreadyLinked",
+				"legitimateTest": "test/oauth-flow.test.ts",
+				"attackTest": "test/oauth-linking-matrix.test.ts"
+			},
+			{
+				"guard": "The link replaces the starting session with a new one",
+				"requirement": "S-LINK-7",
+				"enforcedIn": "src/core/oauth/service.ts:linkInOneTransaction",
+				"legitimateTest": "test/oauth-flow.test.ts",
+				"attackTest": "test/signin-replaces-session.test.ts"
+			},
+			{
+				"guard": "A disabled account and the identity bound refuse",
+				"requirement": "S-INTEG-10",
+				"enforcedIn": "src/core/oauth/service.ts:linkInOneTransaction",
+				"legitimateTest": "test/security-state-limits-cap.test.ts",
+				"attackTest": "test/security-state-limits-cap.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-IDENTITY-UNLINK",
+		"title": "Unlinking an identity",
+		"guards": [
+			{
+				"guard": "Only a row of the calling account is unlinked",
+				"requirement": "S-OWNER-5",
+				"enforcedIn": "src/core/identity/sign-in-methods.ts:removeSignInMethod",
+				"legitimateTest": "test/identity-unlink-ownership.test.ts",
+				"attackTest": "test/identity-unlink-ownership.test.ts"
+			},
+			{
+				"guard": "A foreign and an invented identity answer alike",
+				"requirement": "S-OWNER-8",
+				"enforcedIn": "src/core/oauth/routes.ts:oauthRoutes",
+				"legitimateTest": "test/identity-unlink-ownership.test.ts",
+				"attackTest": "test/identity-unlink-ownership.test.ts"
+			},
+			{
+				"guard": "The last way in is not removed, also not under two simultaneous calls",
+				"requirement": "L-13",
+				"enforcedIn": "src/core/identity/sign-in-methods.ts:removeSignInMethod",
+				"legitimateTest": "test/identity-sign-in-methods.test.ts",
+				"attackTest": "test/identity-last-method-race.test.ts"
+			},
+			{
+				"guard": "Under a list only a passkey that satisfies it counts",
+				"requirement": "S-INTEG-13",
+				"enforcedIn": "src/core/identity/sign-in-methods.ts:countSignInMethods",
+				"legitimateTest": "test/verified-attestation-unlink.test.ts",
+				"attackTest": "test/verified-attestation-unlink.test.ts"
+			},
+			{
+				"guard": "Unlinking demands a fresh session",
+				"requirement": "O-1",
+				"enforcedIn": "src/core/http/pipeline.ts:assertSessionIsFresh",
+				"legitimateTest": null,
+				"attackTest": null
+			},
+			{
+				"guard": "Unlinking revokes no session and issues no new one",
+				"requirement": "O-3",
+				"enforcedIn": "src/core/oauth/service.ts:createOAuthService",
+				"legitimateTest": null,
+				"attackTest": null
+			}
+		]
+	},
+	{
+		"id": "W-SIGN-UP",
+		"title": "Sign-up with and without a password",
+		"guards": [
+			{
+				"guard": "A taken address answers byte for byte like a free one, through a rolled-back registration",
+				"requirement": "S-ENUM-3",
+				"enforcedIn": "src/core/flows/sign-up.ts:registerOrCover",
+				"legitimateTest": "test/flows-review-enumeration.test.ts",
+				"attackTest": "test/flows-review-signup-race.test.ts"
+			},
+			{
+				"guard": "The taken address receives exactly one message",
+				"requirement": "S-ENUM-4",
+				"enforcedIn": "src/core/flows/sign-up.ts:announce",
+				"legitimateTest": "test/flows-email-behaviour.test.ts",
+				"attackTest": "test/flows-review-enumeration.test.ts"
+			},
+			{
+				"guard": "The KDF runs before any lookup",
+				"requirement": "S-TIM-6",
+				"enforcedIn": "src/core/flows/sign-up.ts:signUp",
+				"legitimateTest": "test/flows-review-signup-timing.test.ts",
+				"attackTest": "test/flows-review-signup-timing.test.ts"
+			},
+			{
+				"guard": "A new account is sealed in the transaction that creates it",
+				"requirement": "S-INTEG-3",
+				"enforcedIn": "src/core/flows/sign-up.ts:register",
+				"legitimateTest": "test/security-state-sealing.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "The new session replaces the presented one",
+				"requirement": "S-FIX-1",
+				"enforcedIn": "src/core/session/service.ts:createSessionService",
+				"legitimateTest": "test/signin-replaces-session.test.ts",
+				"attackTest": "test/signin-replaces-session.test.ts"
+			},
+			{
+				"guard": "A hook veto runs before the address lookup",
+				"requirement": "S-ENUM-3",
+				"enforcedIn": "src/core/flows/sign-up.ts:signUp",
+				"legitimateTest": "test/plugin-sign-in-hooks.test.ts",
+				"attackTest": null
+			}
+		]
+	},
+	{
+		"id": "W-EMAIL-VERIFY",
+		"title": "Confirming the address",
+		"guards": [
+			{
+				"guard": "The request takes no address, only the account's",
+				"requirement": "S-ENUM-7",
+				"enforcedIn": "src/core/flows/address.ts:requestVerification",
+				"legitimateTest": null,
+				"attackTest": null
+			},
+			{
+				"guard": "The redemption is a `DELETE … RETURNING` with its purpose",
+				"requirement": "S-REPLAY-2",
+				"enforcedIn": "src/core/flows/artefact.ts:redeemOrRefuse",
+				"legitimateTest": "test/token-one-time-token.test.ts",
+				"attackTest": "test/replay-redeem-answers-proof.test.ts"
+			},
+			{
+				"guard": "The account comes from the removed row alone",
+				"requirement": "S-TOKEN-4",
+				"enforcedIn": "src/core/flows/environment.ts:accountOrDisabledOfRedemption",
+				"legitimateTest": "test/token-target-account-proof.test.ts",
+				"attackTest": "test/token-target-account-proof.test.ts"
+			},
+			{
+				"guard": "The first confirmation deletes a password set in another session and every session",
+				"requirement": "S-LINK-4",
+				"enforcedIn": "src/core/flows/confirmation.ts:confirmUnderTheLock",
+				"legitimateTest": "test/flows-review-first-confirmation.test.ts",
+				"attackTest": "test/flows-review-first-confirmation.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-EMAIL-CHANGE",
+		"title": "Changing the address",
+		"guards": [
+			{
+				"guard": "The request demands a fresh session",
+				"requirement": "O-1",
+				"enforcedIn": "src/core/http/pipeline.ts:assertSessionIsFresh",
+				"legitimateTest": null,
+				"attackTest": null
+			},
+			{
+				"guard": "The request answers alike whether the new address is taken or not",
+				"requirement": "S-ENUM-5",
+				"enforcedIn": "src/core/flows/address.ts:requestChange",
+				"legitimateTest": "test/flows-email-behaviour.test.ts",
+				"attackTest": "test/flows-review-enumeration.test.ts"
+			},
+			{
+				"guard": "Uniqueness is checked again at redemption, a race answers like a taken address",
+				"requirement": "S-ENUM-5",
+				"enforcedIn": "src/core/flows/confirmation.ts:refuseAnAddressTakenMeanwhile",
+				"legitimateTest": "test/email-change-unique-race.test.ts",
+				"attackTest": "test/email-change-unique-race.test.ts"
+			},
+			{
+				"guard": "The old address's links are withdrawn",
+				"requirement": "S-INTEG-9",
+				"enforcedIn": "src/core/flows/address.ts:redeemChange",
+				"legitimateTest": "test/flows-address-change-withdraws.test.ts",
+				"attackTest": "test/integ-token-address-binding.test.ts"
+			},
+			{
+				"guard": "The previous address receives exactly one message after the commit",
+				"requirement": "S-LINK-8",
+				"enforcedIn": "src/core/flows/address.ts:noticeThePreviousAddress",
+				"legitimateTest": "test/address-change-notice-flow.test.ts",
+				"attackTest": "test/address-change-notice-review-flow.test.ts"
+			},
+			{
+				"guard": "The change revokes no other session and issues no new one",
+				"requirement": "O-3",
+				"enforcedIn": "src/core/flows/address.ts:redeemChange",
+				"legitimateTest": null,
+				"attackTest": null
+			}
+		]
+	},
+	{
+		"id": "W-USERNAME-CHANGE",
+		"title": "Changing the username",
+		"guards": [
+			{
+				"guard": "The change demands a fresh session",
+				"requirement": "O-1",
+				"enforcedIn": "src/core/http/pipeline.ts:assertSessionIsFresh",
+				"legitimateTest": "test/auth-username-change.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "The account bucket is drawn",
+				"requirement": "S-RATE-7",
+				"enforcedIn": "src/core/auth/routes.ts:usernameRoutes",
+				"legitimateTest": "test/auth-username-change.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "Only the account of the resolved session is changed",
+				"requirement": "S-OWNER-7",
+				"enforcedIn": "src/core/auth/routes.ts:usernameRoutes",
+				"legitimateTest": "test/auth-username-change.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "The unique index decides, a race answers `username_taken`",
+				"requirement": null,
+				"enforcedIn": "src/core/auth/routes.ts:usernameRoutes",
+				"legitimateTest": "test/auth-username-change.test.ts",
+				"attackTest": "test/auth-username-change.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-PASSWORD-SET",
+		"title": "Adding a password to an account without one",
+		"guards": [
+			{
+				"guard": "Demands a fresh session",
+				"requirement": "O-1",
+				"enforcedIn": "src/core/http/pipeline.ts:assertSessionIsFresh",
+				"legitimateTest": "test/auth-password-routes.test.ts",
+				"attackTest": "test/auth-password-routes.test.ts"
+			},
+			{
+				"guard": "An existing password is never replaced without the current one",
+				"requirement": null,
+				"enforcedIn": "src/core/password/set-credential.ts:refuseUnlessTheReadHoldsTheCheckedPassword",
+				"legitimateTest": "test/auth-password-routes.test.ts",
+				"attackTest": "test/password-set-race.test.ts"
+			},
+			{
+				"guard": "Every other session is revoked and a new one issued",
+				"requirement": "S-FIX-6",
+				"enforcedIn": "src/core/password/set-credential.ts:replacePasswordOfSession",
+				"legitimateTest": "test/auth-password-routes.test.ts",
+				"attackTest": "test/password-change-concurrent-writers.test.ts"
+			},
+			{
+				"guard": "A session a concurrent change revoked is not reissued",
+				"requirement": "S-RACE-5",
+				"enforcedIn": "src/core/password/set-credential.ts:refuseUnlessCallingSessionIsAmong",
+				"legitimateTest": "test/password-change-concurrent-writers.test.ts",
+				"attackTest": "test/password-change-concurrent-writers.test.ts"
+			},
+			{
+				"guard": "Policy and length before the KDF",
+				"requirement": "S-DOS-1",
+				"enforcedIn": "src/core/password/policy.ts:acceptNewPassword",
+				"legitimateTest": "test/password-policy.test.ts",
+				"attackTest": "test/dos-oversized-password-proof.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-PASSWORD-CHANGE",
+		"title": "Changing the password",
+		"guards": [
+			{
+				"guard": "Demands a fresh session",
+				"requirement": "O-1",
+				"enforcedIn": "src/core/http/pipeline.ts:assertSessionIsFresh",
+				"legitimateTest": "test/auth-password-routes.test.ts",
+				"attackTest": "test/auth-password-routes.test.ts"
+			},
+			{
+				"guard": "The current password runs through the same check sequence as the sign-in",
+				"requirement": "S-TIM-1",
+				"enforcedIn": "src/core/password/routes.ts:passwordRoutes",
+				"legitimateTest": "test/auth-password-routes.test.ts",
+				"attackTest": "test/auth-password-routes.test.ts"
+			},
+			{
+				"guard": "The checked password must still be the stored one under the lock",
+				"requirement": "S-INTEG-4",
+				"enforcedIn": "src/core/password/set-credential.ts:refuseUnlessTheReadHoldsTheCheckedPassword",
+				"legitimateTest": "test/password-change-concurrent-writers.test.ts",
+				"attackTest": "test/password-set-race.test.ts"
+			},
+			{
+				"guard": "Every other session is revoked, with no switch",
+				"requirement": "S-FIX-6",
+				"enforcedIn": "src/core/password/set-credential.ts:replacePasswordOfSession",
+				"legitimateTest": "test/auth-password-routes.test.ts",
+				"attackTest": "test/default-revocation-switch-proof.test.ts"
+			},
+			{
+				"guard": "A new session replaces the calling one in the same transaction",
+				"requirement": "S-RACE-5",
+				"enforcedIn": "src/core/password/set-credential.ts:replacePasswordOfSession",
+				"legitimateTest": "test/auth-password-routes.test.ts",
+				"attackTest": "test/race-credential-change-rollback-proof.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-TOTP-ENROL",
+		"title": "Enrolling TOTP",
+		"guards": [
+			{
+				"guard": "Demands a fresh session",
+				"requirement": "O-1",
+				"enforcedIn": "src/core/http/pipeline.ts:assertSessionIsFresh",
+				"legitimateTest": "test/totp-enrolment.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "An unconfirmed secret counts as no factor",
+				"requirement": null,
+				"enforcedIn": "src/core/factor/totp/service.ts:createTotpService",
+				"legitimateTest": "test/spine-available-factors.test.ts",
+				"attackTest": "test/totp-enrolment.test.ts"
+			},
+			{
+				"guard": "The secret lies AES-256-GCM encrypted and bound to the account",
+				"requirement": "S-REST-4",
+				"enforcedIn": "src/core/factor/totp/service.ts:createTotpService",
+				"legitimateTest": "test/totp-enrolment.test.ts",
+				"attackTest": "test/integ-envelope-binding.test.ts"
+			},
+			{
+				"guard": "The confirmation demands a valid code and spends its time step",
+				"requirement": "S-REPLAY-4",
+				"enforcedIn": "src/core/factor/totp/service.ts:createTotpService",
+				"legitimateTest": "test/totp-enrolment.test.ts",
+				"attackTest": "test/totp-enrolment.test.ts"
+			},
+			{
+				"guard": "Enrolling issues no new session and revokes none",
+				"requirement": "O-3",
+				"enforcedIn": "src/core/factor/totp/service.ts:createTotpService",
+				"legitimateTest": null,
+				"attackTest": null
+			}
+		]
+	},
+	{
+		"id": "W-TOTP-REMOVE",
+		"title": "Removing TOTP",
+		"guards": [
+			{
+				"guard": "Demands a fresh session",
+				"requirement": "O-1",
+				"enforcedIn": "src/core/http/pipeline.ts:assertSessionIsFresh",
+				"legitimateTest": null,
+				"attackTest": null
+			},
+			{
+				"guard": "Removing demands a valid code of the factor",
+				"requirement": "S-REPLAY-4",
+				"enforcedIn": "src/core/factor/totp/service.ts:createTotpService",
+				"legitimateTest": "test/totp-enrolment.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "The account bucket is drawn before the check",
+				"requirement": "S-RATE-7",
+				"enforcedIn": "src/core/factor/routes.ts:spendAccountToken",
+				"legitimateTest": null,
+				"attackTest": null
+			},
+			{
+				"guard": "Removing revokes no other session",
+				"requirement": "O-3",
+				"enforcedIn": "src/core/factor/totp/service.ts:createTotpService",
+				"legitimateTest": null,
+				"attackTest": null
+			}
+		]
+	},
+	{
+		"id": "W-PASSKEY-REGISTER",
+		"title": "Registering a passkey in a session",
+		"guards": [
+			{
+				"guard": "Demands a fresh session",
+				"requirement": "O-1",
+				"enforcedIn": "src/core/http/pipeline.ts:assertSessionIsFresh",
+				"legitimateTest": "test/auth-webauthn-routes.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "The challenge is bound to account and registration",
+				"requirement": "S-REPLAY-5",
+				"enforcedIn": "src/core/factor/webauthn/challenge.ts:createWebAuthnChallenges",
+				"legitimateTest": "test/webauthn-registration.test.ts",
+				"attackTest": "test/webauthn-challenge.test.ts"
+			},
+			{
+				"guard": "Origin, RP ID and user presence are checked",
+				"requirement": "O-8",
+				"enforcedIn": "src/core/factor/webauthn/service.ts:createWebAuthnService",
+				"legitimateTest": "test/webauthn-registration.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "With `requireDiscoverableCredential` only a discoverable passkey is registered",
+				"requirement": "S-DEFAULT-8",
+				"enforcedIn": "src/core/factor/webauthn/verification.ts:assertClientReportsADiscoverableCredential",
+				"legitimateTest": "test/discoverable-registration-flow.test.ts",
+				"attackTest": "test/discoverable-registration-flow.test.ts"
+			},
+			{
+				"guard": "Under a list only an authenticator with verified attestation",
+				"requirement": "S-INTEG-13",
+				"enforcedIn": "src/core/factor/webauthn/service.ts:refuseAnAuthenticatorOutsideTheList",
+				"legitimateTest": "test/verified-attestation-flow.test.ts",
+				"attackTest": "test/verified-attestation-flow.test.ts"
+			},
+			{
+				"guard": "At most `limits.passkeysPerAccount` passkeys",
+				"requirement": "S-INTEG-10",
+				"enforcedIn": "src/core/security-state/limits.ts:assertBelowCredentialLimit",
+				"legitimateTest": "test/security-state-limits-cap.test.ts",
+				"attackTest": "test/security-state-limits-cap.test.ts"
+			},
+			{
+				"guard": "Registering issues no new session and revokes none",
+				"requirement": "O-3",
+				"enforcedIn": "src/core/factor/webauthn/service.ts:createWebAuthnService",
+				"legitimateTest": null,
+				"attackTest": null
+			}
+		]
+	},
+	{
+		"id": "W-PASSKEY-REMOVE",
+		"title": "Removing or renaming a passkey",
+		"guards": [
+			{
+				"guard": "Only a passkey of the calling account is removed, a foreign one answers like an invented one",
+				"requirement": "S-OWNER-3",
+				"enforcedIn": "src/core/identity/sign-in-methods.ts:removeSignInMethod",
+				"legitimateTest": "test/webauthn-ownership.test.ts",
+				"attackTest": "test/webauthn-ownership.test.ts"
+			},
+			{
+				"guard": "The last way in is not removed",
+				"requirement": "L-13",
+				"enforcedIn": "src/core/factor/webauthn/service.ts:refuseRemovingTheLastUsablePasskey",
+				"legitimateTest": "test/webauthn-ownership.test.ts",
+				"attackTest": "test/identity-last-method-race.test.ts"
+			},
+			{
+				"guard": "Renaming acts on own rows alone",
+				"requirement": "S-OWNER-8",
+				"enforcedIn": "src/core/factor/webauthn/credential-repository.ts:createWebAuthnCredentialRepository",
+				"legitimateTest": "test/webauthn-ownership.test.ts",
+				"attackTest": "test/webauthn-ownership.test.ts"
+			},
+			{
+				"guard": "Removing demands a fresh session",
+				"requirement": "O-1",
+				"enforcedIn": "src/core/http/pipeline.ts:assertSessionIsFresh",
+				"legitimateTest": null,
+				"attackTest": null
+			},
+			{
+				"guard": "Removing revokes no other session",
+				"requirement": "O-3",
+				"enforcedIn": "src/core/factor/webauthn/service.ts:createWebAuthnService",
+				"legitimateTest": null,
+				"attackTest": null
+			}
+		]
+	},
+	{
+		"id": "W-RECOVERY-CODES-GENERATE",
+		"title": "Generating recovery codes",
+		"guards": [
+			{
+				"guard": "Demands a fresh session",
+				"requirement": "O-1",
+				"enforcedIn": "src/core/http/pipeline.ts:assertSessionIsFresh",
+				"legitimateTest": null,
+				"attackTest": null
+			},
+			{
+				"guard": "Ten codes of 160 bits, pairwise distinct",
+				"requirement": "S-RAND-3",
+				"enforcedIn": "src/core/factor/recovery/code.ts:createRecoveryCodeSet",
+				"legitimateTest": "test/recovery-codes.test.ts",
+				"attackTest": "test/recovery-codes.test.ts"
+			},
+			{
+				"guard": "A new set replaces the old one in the same transaction",
+				"requirement": "S-REST-3",
+				"enforcedIn": "src/core/factor/recovery/service.ts:createRecoveryCodeService",
+				"legitimateTest": "test/recovery-codes.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "With recovery switched off no code is generated",
+				"requirement": "S-INTEG-11",
+				"enforcedIn": "src/core/factor/recovery/service.ts:createRecoveryCodeService",
+				"legitimateTest": "test/no-recovery-switch-mailed-paths.test.ts",
+				"attackTest": "test/no-recovery-switch-mailed-paths.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-ADMIN-DISABLE",
+		"title": "Disabling and enabling an account",
+		"guards": [
+			{
+				"guard": "In the application's process alone, without a route",
+				"requirement": null,
+				"enforcedIn": "src/core/auth/instance.ts:setDisabledUnderTheSeal",
+				"legitimateTest": "test/session-resolution.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "The change is a sealed change under the account lock",
+				"requirement": "S-INTEG-3",
+				"enforcedIn": "src/core/auth/instance.ts:setDisabledUnderTheSeal",
+				"legitimateTest": "test/security-state-sealing.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "Every session ends at its next request",
+				"requirement": "S-CACHE-3",
+				"enforcedIn": "src/core/session/service.ts:resolveAndExtend",
+				"legitimateTest": "test/session-resolution.test.ts",
+				"attackTest": "test/session-resolution.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-ADMIN-RECOVERY-SWITCH",
+		"title": "Setting the no-recovery switch",
+		"guards": [
+			{
+				"guard": "The switch is a sealed change without a route",
+				"requirement": "S-INTEG-11",
+				"enforcedIn": "src/core/security-state/recovery-switch.ts:setRecoveryDisabled",
+				"legitimateTest": "test/no-recovery-switch-seal.test.ts",
+				"attackTest": "test/no-recovery-switch-review-writer.test.ts"
+			},
+			{
+				"guard": "Switching on deletes the codes and withdraws every mailed link",
+				"requirement": "S-INTEG-11",
+				"enforcedIn": "src/core/security-state/recovery-switch.ts:setRecoveryDisabled",
+				"legitimateTest": "test/no-recovery-switch-seal.test.ts",
+				"attackTest": "test/no-recovery-switch-mailed-paths.test.ts"
+			},
+			{
+				"guard": "A waiting recovery is cancelled with it",
+				"requirement": "S-INTEG-12",
+				"enforcedIn": "src/core/security-state/recovery-switch.ts:setRecoveryDisabled",
+				"legitimateTest": "test/passkey-recovery-integrity.test.ts",
+				"attackTest": null
+			}
+		]
+	},
+	{
+		"id": "W-ADMIN-AUTHENTICATOR-LIMIT",
+		"title": "Setting and lifting the authenticator allowlist",
+		"guards": [
+			{
+				"guard": "A list without configured roots is refused",
+				"requirement": "S-INTEG-13",
+				"enforcedIn": "src/core/auth/instance.ts:allowlistToLimitTo",
+				"legitimateTest": "test/verified-attestation-flow.test.ts",
+				"attackTest": "test/verified-attestation-flow.test.ts"
+			},
+			{
+				"guard": "An account without a usable way in is left only on explicit request",
+				"requirement": "S-INTEG-13",
+				"enforcedIn": "src/core/security-state/authenticator-allowlist.ts:setAuthenticatorAllowlist",
+				"legitimateTest": "test/verified-attestation-flow.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "The list is a sealed change, a writer cannot widen it",
+				"requirement": "S-INTEG-13",
+				"enforcedIn": "src/core/security-state/authenticator-allowlist.ts:setAuthenticatorAllowlist",
+				"legitimateTest": "test/verified-attestation-flow.test.ts",
+				"attackTest": "test/verified-attestation-review-flows.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-ADMIN-RESEAL",
+		"title": "Sealing and resealing by the operator",
+		"guards": [
+			{
+				"guard": "Only the reseal with a non-empty reason seals a broken state",
+				"requirement": "S-INTEG-7",
+				"enforcedIn": "src/core/auth/security-state-maintenance.ts:resealAccount",
+				"legitimateTest": "test/security-state-reseal.test.ts",
+				"attackTest": "test/security-state-reseal.test.ts"
+			},
+			{
+				"guard": "The reseal signs every session out",
+				"requirement": "S-INTEG-7",
+				"enforcedIn": "src/core/auth/security-state-maintenance.ts:resealUnderAccountLock",
+				"legitimateTest": "test/security-state-reseal.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "A switch a writer cleared is not ratified",
+				"requirement": "S-INTEG-11",
+				"enforcedIn": "src/core/auth/security-state-maintenance.ts:withTheConfirmedSwitch",
+				"legitimateTest": "test/no-recovery-switch-reseal.test.ts",
+				"attackTest": "test/no-recovery-switch-reseal.test.ts"
+			},
+			{
+				"guard": "A list or attestation the seal does not confirm is not ratified",
+				"requirement": "S-INTEG-13",
+				"enforcedIn": "src/core/auth/security-state-maintenance.ts:withTheConfirmedAllowlist",
+				"legitimateTest": "test/verified-attestation-review-flows.test.ts",
+				"attackTest": "test/verified-attestation-review-flows.test.ts"
+			},
+			{
+				"guard": "The first sealing is idempotent and resumable",
+				"requirement": "S-INTEG-8",
+				"enforcedIn": "src/core/auth/security-state-maintenance.ts:sealOneAccount",
+				"legitimateTest": "test/security-state-maintenance.test.ts",
+				"attackTest": "test/security-state-maintenance-tamper.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-TOKEN-RESOLVE",
+		"title": "Resolving a mailed link without spending it",
+		"guards": [
+			{
+				"guard": "In the application's process alone, without a route",
+				"requirement": "S-TOKEN-7",
+				"enforcedIn": "src/core/auth/instance.ts:oneTimeTokenSurfaceIn",
+				"legitimateTest": "test/token-resolution-surface.test.ts",
+				"attackTest": null
+			},
+			{
+				"guard": "Answers only where the redemption would take effect, `null` otherwise",
+				"requirement": "S-TOKEN-7",
+				"enforcedIn": "src/core/token/resolution.ts:createOneTimeTokenResolution",
+				"legitimateTest": "test/token-resolution-resolve.test.ts",
+				"attackTest": "test/token-resolution-review-oracle.test.ts"
+			},
+			{
+				"guard": "A forged row answers like a missing one",
+				"requirement": "S-INTEG-9",
+				"enforcedIn": "src/core/token/resolution.ts:createOneTimeTokenResolution",
+				"legitimateTest": "test/token-resolution-resolve.test.ts",
+				"attackTest": "test/token-resolution-review-oracle.test.ts"
+			}
+		]
+	},
+	{
+		"id": "W-PLUGIN",
+		"title": "What a plugin reaches of sessions and factors",
+		"guards": [
+			{
+				"guard": "A hook can refuse or observe, never replace the answer",
+				"requirement": "S-OWNER-12",
+				"enforcedIn": "src/core/plugin/sign-in.ts:createSessionUnderHooks",
+				"legitimateTest": "test/plugin-sign-in-hooks.test.ts",
+				"attackTest": "test/plugin-boundary.test.ts"
+			},
+			{
+				"guard": "The frozen context has no writing method on account, password or factor",
+				"requirement": "S-OWNER-10",
+				"enforcedIn": "src/core/plugin/context.ts:createFrozenRepositories",
+				"legitimateTest": "test/plugin-frozen-context.test.ts",
+				"attackTest": "test/plugin-frozen-context.test.ts"
+			},
+			{
+				"guard": "Plugin SQL runs under a role without rights on the core tables",
+				"requirement": "S-OWNER-10",
+				"enforcedIn": "src/core/plugin/own-tables.ts:createOwnTables",
+				"legitimateTest": "test/plugin-sql-role.test.ts",
+				"attackTest": "test/plugin-sql-role.test.ts"
+			},
+			{
+				"guard": "A plugin route cannot override a core route",
+				"requirement": "S-OWNER-11",
+				"enforcedIn": "src/core/plugin/registry.ts:assertNoCoreRouteIsOverwritten",
+				"legitimateTest": "test/plugin-route-conflict-contributors.test.ts",
+				"attackTest": "test/plugin-route-conflict-contributors.test.ts"
+			},
+			{
+				"guard": "A plugin route cannot exempt itself from the origin check",
+				"requirement": "S-CSRF-6",
+				"enforcedIn": "src/core/plugin/registry.ts:assertNoRouteExemptsItselfFromTheOriginCheck",
+				"legitimateTest": "test/plugin-security-order.test.ts",
+				"attackTest": "test/plugin-security-order.test.ts"
+			},
+			{
+				"guard": "No plugin brings a session resolver or a cache",
+				"requirement": "S-CACHE-5",
+				"enforcedIn": "src/core/plugin/registry.ts:assertNoFieldOutsideTheInterface",
+				"legitimateTest": "test/plugin-boundary.test.ts",
+				"attackTest": "test/plugin-boundary.test.ts"
+			},
+			{
+				"guard": "An anchor sets a floor and refuses a rolled-back state",
+				"requirement": "S-INTEG-6",
+				"enforcedIn": "src/core/security-state/anchor.ts:consultAnchors",
+				"legitimateTest": "test/security-state-anchor-port.test.ts",
+				"attackTest": "test/security-state-anchor-rollback.test.ts"
+			},
+			{
+				"guard": "A plugin handler receives the plaintext session token and a cookie writer",
+				"requirement": "O-4",
+				"enforcedIn": "src/core/http/pipeline.ts:createRequestContext",
+				"legitimateTest": null,
+				"attackTest": null
+			}
+		]
+	}
+]
