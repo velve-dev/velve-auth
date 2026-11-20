@@ -4,7 +4,13 @@ import type { RequestContext } from "../http/route.js";
 import { normaliseEmail } from "../identity/normalise.js";
 import { askBeforeSignIn, createSessionUnderHooks, tellAfterSignIn } from "../plugin/sign-in.js";
 import { recordSealLater } from "../security-state/runtime.js";
-import { mintArtefact, redeemOrRefuse, sendOrUndo, subjectOfAddress } from "./artefact.js";
+import {
+	mintArtefact,
+	ownerAMailedLinkMayReach,
+	redeemOrRefuse,
+	sendOrUndo,
+	subjectOfAddress,
+} from "./artefact.js";
 import { confirmAddress } from "./confirmation.js";
 import {
 	accountOrDisabledOfRedemption,
@@ -14,6 +20,7 @@ import {
 	observedIn,
 	readUserOrRefuse,
 	refuseADisabledAccount,
+	refuseALinkWhileRecoveryIsDisabled,
 	sessionOfCaller,
 } from "./environment.js";
 
@@ -29,7 +36,7 @@ export async function requestMagicLink(
 	const address = normalised.accepted ? normalised.value : "";
 	await context.enforceAccountRateLimit(address);
 
-	const owner = await environment.services.users.findUserByEmail(address);
+	const owner = ownerAMailedLinkMayReach(await environment.services.users.findUserByEmail(address));
 	const { driver } = environment.services;
 	const minted = await driver.transaction((transaction) =>
 		mintArtefact(transaction, environment.services, {
@@ -76,6 +83,7 @@ export async function redeemMagicLink(
 		if (resolved instanceof DisabledRedemption) {
 			return resolved;
 		}
+		refuseALinkWhileRecoveryIsDisabled(resolved.check.read);
 		const confirmed = await confirmAddress({
 			transaction,
 			schema,

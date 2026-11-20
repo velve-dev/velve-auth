@@ -33,7 +33,7 @@ import { CREATED_SCHEME } from "../password/scheme.js";
 import { hooksOnTheTransaction } from "../plugin/registry.js";
 import { announceEachRevocation } from "../plugin/revocation.js";
 import { tellAfterSessionCreate } from "../plugin/sign-in.js";
-import type { SecurityStateRead } from "../security-state/read.js";
+import { recoveryIsDisabledFor, type SecurityStateRead } from "../security-state/read.js";
 import {
 	type ChangedAccount,
 	recordSealLater,
@@ -53,6 +53,7 @@ import { randomUuid } from "../token/random.js";
 import {
 	mintArtefact,
 	movesOfSpentToken,
+	ownerAMailedLinkMayReach,
 	redeemOrRefuse,
 	refuseATokenWrittenBack,
 	refuseUnlessTheAddressIsStillTheAccounts,
@@ -65,6 +66,7 @@ import {
 	mailerOf,
 	observedIn,
 	refuseADisabledAccount,
+	refuseALinkWhileRecoveryIsDisabled,
 } from "./environment.js";
 import type { RedeemResetResult, SetPasswordResult } from "./results.js";
 
@@ -81,7 +83,7 @@ export async function requestReset(
 	const address = normalised.accepted ? normalised.value : "";
 	await context.enforceAccountRateLimit(address);
 
-	const owner = await environment.services.users.findUserByEmail(address);
+	const owner = ownerAMailedLinkMayReach(await environment.services.users.findUserByEmail(address));
 	const { driver } = environment.services;
 	//the unknown branch must mint a row too and call send exactly once (E-597)
 	const minted = await driver.transaction((transaction) =>
@@ -319,6 +321,7 @@ export async function redeemReset(
 			claim: async (_tx, read) => {
 				refuseUnlessTheAddressIsStillTheAccounts(environment.services, redeemed, read.email);
 				refuseATokenWrittenBack(environment.services, redeemed.userId, redeemed.spent, read);
+				refuseALinkWhileRecoveryIsDisabled(read);
 				//a token presented for a disabled account stays spent once it is enabled again (E-2879)
 				return {
 					actor: actorOfRedeemedOneTimeToken(redeemed),
@@ -458,6 +461,10 @@ export async function completeResetBySecondFactor(
 				if (!isTheStateTheFactorChecked(read, checked.authorisedBy)) {
 					throw new ConcealedError(MISSED_COMPLETION_OF_FACTOR[checked.factor]);
 				}
+				//a reset held back before recovery was turned off never writes its password (S-ENUM-9)
+				if (recoveryIsDisabledFor(read)) {
+					throw new ConcealedError("recovery_disabled_on_pending_reset");
+				}
 				return { actor, spentCode: null, disabled: read.disabled };
 			},
 		});
@@ -550,6 +557,10 @@ export async function redeemResetWithRecoveryCode(
 			issue: ISSUE_OF_A_RESET,
 			//the code is consumed under the account lock and must be one of the codes the seal covers (E-1601)
 			claim: async (tx, read) => {
+				//a code presented while recovery is off answers as a wrong code (S-ENUM-9)
+				if (recoveryIsDisabledFor(read)) {
+					throw new ConcealedError("recovery_code_not_found");
+				}
 				const consumed = await createRecoveryCodeRepository({ driver: tx, schema }).consumeCode({
 					userId: found.id,
 					candidateHmacs: candidates,
