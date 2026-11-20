@@ -19287,3 +19287,13 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Editing that file, which is outside the set of files this feature may touch (`CLAUDE.md` §5).
 **Reason.** The rule is enforced where this feature owns the code — setting a list and `factor.webauthn.remove` — and the gap is stated in 3.18 *The limits* and in the documentation, and handed off.
 **Price.** Until the counting in `sign-in-methods.ts` asks the list, an account can be left with only passkeys that do not sign in by unlinking its last identity.
+
+<a id="e-3853"></a>
+
+### Every L-13 count asks the list, unlinking an identity included
+`E-3853` · verified-attestation · L-13, settled
+
+**Context.** E-3852 handed off that `countSignInMethods` in `src/core/identity/sign-in-methods.ts` counts every WebAuthn credential, so unlinking the last identity of an account whose passkeys all lie outside its list left it without a usable way in. The orchestrator extended this feature's files by that module and asked for the fix and a test.
+**Rejected.** (a) A second check in the identity flow beside the count, which would leave `removeSignInMethod`'s own count wrong for every other caller. (b) Reading the sealed state there, which the module does not have; it counts under the account lock it takes itself.
+**Reason.** The count's passkey subquery leaves out a passkey whose account holds `allowed_aaguids` unless the passkey's `attestation_verified` is set and its `aaguid` is on the list, read from the locked account row in the same statement. Every removal L-13 guards asks that count, so unlinking an identity, removing a passkey and removing a password all see the same usable ways in. A writer who removes the list in the rows makes the count larger, and breaks the seal of the account at the same time. `test/verified-attestation-unlink.test.ts` refuses the unlink with only unverified or unlisted passkeys and allows it with a listed one or without a list, and fails with the predicate removed.
+**Price.** On an account left with only passkeys outside its list on purpose (E-3850), removing one of them is refused as removing the last way in, so those passkeys go only once the list is lifted.
