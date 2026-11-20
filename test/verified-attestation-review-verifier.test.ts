@@ -231,17 +231,41 @@ describe("no registration reaches the network (E-3844, E-1844)", () => {
 		["with roots configured", () => bench],
 		["without webauthn.attestation", () => unconfigured],
 	] as const) {
-		it(`fetches nothing when a chain naming a revocation list is claimed as apple, ${where}`, async () => {
+		it(`fetches nothing and registers unverified when a chain naming a revocation list is claimed as apple, ${where}`, async () => {
 			const fetched = vi
 				.spyOn(globalThis, "fetch")
 				.mockImplementation(() => Promise.reject(new Error("no network in a test")));
 			try {
 				const actor = await createAccount(on());
 				const leaf = await authority.issue({ aaguid: ALLOWED, revocationListUrl: REVOCATION_LIST });
-				const outcome = await outcomeOf(
-					register(on(), actor, await authenticatorWith(ALLOWED, packedFrom(leaf)), claimedAsApple),
-				);
-				expect(outcome).toBe("webauthn_credential_rejected");
+				const authenticator = await authenticatorWith(ALLOWED, packedFrom(leaf));
+				const { credential } = await register(on(), actor, authenticator, claimedAsApple);
+				expect(credential.attestationVerified).toBe(false);
+				expect(credential.aaguid).toBe(ALLOWED);
+				const started = await on().service.passkey.start();
+				const signedIn = await on().service.passkey.finish({
+					challengeToken: started.challengeToken,
+					response: await authenticator.assert({ challenge: started.challengeToken }),
+				});
+				expect(signedIn.userId).toBe(actor);
+
+				const listed = await createAccount(on());
+				await limit(on(), listed, [ALLOWED], true);
+				const again = await authority.issue({
+					aaguid: ALLOWED,
+					revocationListUrl: REVOCATION_LIST,
+				});
+				expect(
+					await outcomeOf(
+						register(
+							on(),
+							listed,
+							await authenticatorWith(ALLOWED, packedFrom(again)),
+							claimedAsApple,
+						),
+					),
+				).toBe("authenticator_not_allowed");
+				expect(await rowsOf(on(), listed)).toBe(0);
 				expect(fetched.mock.calls.map(([url]) => String(url))).toStrictEqual([]);
 			} finally {
 				fetched.mockRestore();
