@@ -14,7 +14,8 @@ const manifest = JSON.parse(readFileSync(`${repositoryRoot}/package.json`, "utf8
 /** §9 is the command reference, so it names commands the gate does not run. Two are run by a
  * person and by no workflow — the formatter and the release tier check, which asks GitHub about a
  * commit (E-2763). Two are run by publish.yml: the gate itself, over the commit it publishes, and
- * the registry check after its publish (E-3540, E-3542). Four are run by release.yml: the two tiers
+ * the registry check after its publish, which the job that publishes runs with node because it
+ * installs no pnpm (E-3540, E-3542, E-3887). Four are run by release.yml: the two tiers
  * section 6 puts on a schedule rather than on a commit (E-526, E-535), the tag check §9 documents
  * and §5's checklist deliberately does not, because it refuses a branch carrying no tag (E-1461),
  * and the derivation that decides which dist-tag a release is published under (E-1777). §5 leaves
@@ -91,6 +92,18 @@ function jobRegion(source: string, name: string): string {
  * `run: pnpm test:release`, and both of those remove the step from CI while staying green. */
 const WORKFLOW_STEP = /^[ \t]*(?:- )?run: pnpm (?:run )?([\w:-]+)/gm;
 
+/** The job that publishes installs no pnpm, so it runs a script's own command with node (E-3887).
+ * A step counts as running a script only when its command is exactly the body the script has. */
+const NODE_STEP = /^[ \t]*(?:- )?run: (node tools\/[\w.-]+\.mjs)\b/gm;
+
+function scriptsRunByNode(source: string): string[] {
+	return [...source.matchAll(NODE_STEP)].flatMap((match) =>
+		Object.entries(manifest.scripts)
+			.filter(([, body]) => body === match[1])
+			.map(([name]) => name),
+	);
+}
+
 function section(heading: string): string {
 	const start = rules.indexOf(heading);
 	expect(start, `CLAUDE.md has no ${heading}`).toBeGreaterThan(-1);
@@ -160,7 +173,10 @@ describe("the gate's command lists", () => {
 	});
 
 	it("runs in publish.yml every command exempted on the grounds that the publish runs it", () => {
-		const invoked = [...publish.matchAll(WORKFLOW_STEP)].map((match) => String(match[1]));
+		const invoked = [
+			...[...publish.matchAll(WORKFLOW_STEP)].map((match) => String(match[1])),
+			...scriptsRunByNode(publish),
+		];
 
 		expect(RUN_BY_THE_PUBLISH_WORKFLOW.filter((name) => !invoked.includes(name))).toEqual([]);
 	});
