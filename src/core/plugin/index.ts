@@ -7,6 +7,7 @@ export type {
 	EmailChangedEvent,
 	FrozenContext,
 	FrozenRepositories,
+	PasskeyRecoveryStartedEvent,
 	PluginActor,
 	PluginHooks,
 	PluginMigration,
