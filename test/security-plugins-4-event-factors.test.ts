@@ -85,7 +85,7 @@ describe("a hook cannot change the factors a session records (3.11, 3.15 G)", ()
 	it("issues a sign-up session with the password alone when a beforeSessionCreate listener pushes a factor", async () => {
 		pushInto = true;
 		let answered: readonly AuthenticationFactor[] = [];
-		let stored: string[] = [];
+		let stored = "";
 		try {
 			const signedUp = await mounted.auth.signUp.withPassword({
 				email: "elevated@example.com",
@@ -93,17 +93,18 @@ describe("a hook cannot change the factors a session records (3.11, 3.15 G)", ()
 				origin: TEST_ORIGIN,
 			});
 			answered = signedUp.session.factors;
-			const [row] = await mounted.connection.query<{ factors: string[] }>(
+			const [row] = await mounted.connection.query<{ factors: string }>(
 				`SELECT factors FROM ${mounted.schema}.session WHERE id = $1`,
 				[signedUp.session.id],
 			);
-			stored = row?.factors ?? [];
+			stored = row?.factors ?? "";
 		} finally {
 			pushInto = false;
 		}
 
 		expect(answered, "the session the sign-up answered with").toStrictEqual(["password"]);
-		expect(stored, "the session row the sign-up wrote").toStrictEqual(["password"]);
+		//the test connection reads a text array in its literal form
+		expect(stored, "the session row the sign-up wrote").toBe("{password}");
 	});
 
 	it("issues a reset session on another instance, with no plugin, with the password alone after a plugin pushed into a reset's factors", async () => {

@@ -136,7 +136,11 @@ interface ReplacementIssue {
 	readonly factors: readonly AuthenticationFactor[];
 }
 
-const ISSUE_OF_A_RESET: ReplacementIssue = { completes: "password_reset", factors: ["password"] };
+//a constant every instance in the process shares must be frozen to its last array (S-OWNER-12)
+const ISSUE_OF_A_RESET: ReplacementIssue = Object.freeze({
+	completes: "password_reset",
+	factors: Object.freeze(["password"] as const),
+});
 
 function withoutTheSpentCode(read: SecurityStateRead, spent: Uint8Array<ArrayBuffer> | null) {
 	if (spent === null) {

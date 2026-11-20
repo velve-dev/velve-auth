@@ -506,19 +506,35 @@ interface Dispatchers {
 	onTheTransaction(transaction: Driver): PluginHookDispatcher;
 }
 
+function frozenCopyOf<Value>(value: Value): Value {
+	if (Array.isArray(value)) {
+		return Object.freeze(value.map(frozenCopyOf)) as Value;
+	}
+	if (typeof value !== "object" || value === null) {
+		return value;
+	}
+	const copy: Record<string, unknown> = {};
+	for (const [field, held] of Object.entries(value)) {
+		copy[field] = frozenCopyOf(held);
+	}
+	return Object.freeze(copy) as Value;
+}
+
 function dispatcher(
 	registered: readonly RegisteredPlugin[],
 	services: FrozenContextServices,
 ): Dispatchers {
+	//a listener must get a copy it cannot change and never the object the flow goes on to write (S-OWNER-12)
 	async function run<Event>(
 		hook: HookPoint<Event>,
 		event: Event,
 		contextOf: (entry: RegisteredPlugin) => FrozenContext = (entry) => entry.context,
 	): Promise<void> {
+		const handed = frozenCopyOf(event);
 		for (const entry of registered) {
 			const listener = hook(entry.hooks);
 			if (listener !== undefined) {
-				await listener(event, contextOf(entry));
+				await listener(handed, contextOf(entry));
 			}
 		}
 	}
