@@ -8,6 +8,11 @@ on:
     - cron: "17 3 * * *"
   workflow_dispatch:
 
+# The token every job starts from reads the repository and nothing more; a job that needs a
+# write states it on itself (E-3888).
+permissions:
+  contents: read
+
 jobs:
   nightly:
     runs-on: ubuntu-latest

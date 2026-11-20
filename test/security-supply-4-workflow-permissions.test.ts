@@ -23,4 +23,14 @@ describe("every workflow states the token it runs with", () => {
 
 		expect(undeclared).toStrictEqual([]);
 	});
+
+	/** The top-level block is the floor every job inherits, so it grants reading the repository and
+	 * nothing else; a write is stated on the one job that needs it (E-3888). */
+	it.each(readdirSync(workflowDirectory))("grants only contents: read at the top of %s", (name) => {
+		const source = readFileSync(`${workflowDirectory}/${name}`, "utf8");
+		const block = /^permissions:\n((?: {2}.+\n)*)/m.exec(source);
+
+		expect(block?.[1]).toBe("  contents: read\n");
+		expect(source.match(/^permissions:/gm)).toHaveLength(1);
+	});
 });

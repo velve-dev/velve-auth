@@ -16,6 +16,11 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# The token every job starts from reads the repository and nothing more; a job that needs a
+# write states it on itself (E-3888).
+permissions:
+  contents: read
+
 jobs:
   gate:
     runs-on: ubuntu-latest
