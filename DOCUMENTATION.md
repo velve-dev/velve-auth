@@ -67,6 +67,7 @@ The package is ESM only and exposes the following subpaths.
 | `@velve/auth` | `createVelveAuth()` and every core operation |
 | `@velve/auth/http` | `toWebHandler()` — `(Request) => Promise<Response>` |
 | `@velve/auth/client` | the typed client, derived from the same route declaration |
+| `@velve/auth/client/proof-of-work-worker` | the worker module the client solves a [proof of work](#solving-in-the-browser) in; it exports nothing |
 | `@velve/auth/pg` | driver for `node-postgres` |
 | `@velve/auth/schema` | the generated SQL and the migration runner |
 | `@velve/auth/testing` | test helpers — clock control only |
@@ -1037,7 +1038,7 @@ derivation context per purpose (section 3.8).
 
 | Purpose | Key type | Used for |
 |---|---|---|
-| `cookie-sig` | HMAC-SHA256 | signing the library's cookies |
+| `cookie-sig` | HMAC-SHA256 | signing the library's cookies; the [proof of work](#the-challenge-route)'s challenge key is expanded from it (E-3661) |
 | `token-pepper` | HMAC-SHA256 | recovery codes and the identifier-keyed counter |
 | `totp-enc` | AES-256-GCM | `totp_credential.secret_enc` |
 | `oauth-token-enc` | AES-256-GCM | `identity.access_token_enc` and its siblings |
@@ -10710,7 +10711,7 @@ removed by the sweep. A failure counts in full until its hour has passed. A
 successful sign-in does not reset a counter. A counter that cannot be written is
 logged as `a failed sign-in was not counted` and costs the caller nothing.
 
-### The challenge
+### The challenge route
 
 `GET /proof-of-work/challenge?route=<name>` hands out one challenge, and
 `auth.proofOfWork.challenge({ route })` does the same for a server-rendered
