@@ -51,6 +51,7 @@ import { createPluginConnection } from "../plugin/login-connection.js";
 import { pluginMigrations } from "../plugin/migrations.js";
 import { assertNoCoreRouteIsOverwritten, createPluginRuntime } from "../plugin/registry.js";
 import { type PluginSurface, pluginRoutes } from "../plugin/routes.js";
+import type { PasskeyRecoverySurface } from "../recovery/routes.js";
 import type { SecurityStateAnchorPort } from "../security-state/anchor.js";
 import { DEFAULT_LIMITS, resolveLimits } from "../security-state/limits.js";
 import { setRecoveryDisabled } from "../security-state/recovery-switch.js";
@@ -183,7 +184,8 @@ type SeamSurface<M extends IdentityMode> = OAuthSurface<M> &
 	EmailFlowSurface<M> &
 	PasswordSurface<M> &
 	PluginSurface<M> &
-	FactorSurface;
+	FactorSurface &
+	PasskeyRecoverySurface<M>;
 
 export type VelveAuth<M extends IdentityMode> = AuthInternals &
 	SeamSurface<M> & {
@@ -238,6 +240,7 @@ export const SURFACE_NAMESPACES: readonly string[] = [
 	"email",
 	"username",
 	"oneTimeToken",
+	"passkeyRecovery",
 	"routes",
 	"identityMode",
 	"errorCodes",

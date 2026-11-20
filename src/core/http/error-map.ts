@@ -26,6 +26,7 @@ export type VelveErrorCode =
 	| "passkey_limit_reached"
 	| "identity_limit_reached"
 	| "recovery_disabled"
+	| "passkey_recovery_failed"
 	| "internal_error";
 
 const HTTP_STATUS_BY_ERROR_CODE: Readonly<Record<VelveErrorCode, number>> = {
@@ -56,6 +57,7 @@ const HTTP_STATUS_BY_ERROR_CODE: Readonly<Record<VelveErrorCode, number>> = {
 	passkey_limit_reached: 409,
 	identity_limit_reached: 409,
 	recovery_disabled: 409,
+	passkey_recovery_failed: 400,
 	internal_error: 500,
 };
 
@@ -87,6 +89,7 @@ const MESSAGE_BY_ERROR_CODE: Readonly<Record<VelveErrorCode, string>> = {
 	passkey_limit_reached: "The account already holds as many passkeys as it may.",
 	identity_limit_reached: "The account already holds as many linked identities as it may.",
 	recovery_disabled: "Recovery is turned off for this account.",
+	passkey_recovery_failed: "The recovery could not be continued.",
 	internal_error: "The request could not be completed.",
 };
 
@@ -264,7 +267,13 @@ export type ConcealedReason =
 	| "broken_state_on_passkey_second_factor"
 	| "broken_state_on_recovery_second_factor"
 	| "broken_state_on_session_resolve"
-	| "broken_state_on_change";
+	| "broken_state_on_change"
+	| "passkey_recovery_link_refused"
+	| "passkey_recovery_code_refused"
+	| "passkey_recovery_refused_for_account"
+	| "passkey_recovery_registration_refused"
+	| "passkey_recovery_refused"
+	| "broken_state_on_passkey_recovery";
 
 const VISIBLE_CODE_BY_CONCEALED_REASON: Readonly<Record<ConcealedReason, VelveErrorCode>> = {
 	user_not_found: "invalid_credentials",
@@ -332,6 +341,13 @@ const VISIBLE_CODE_BY_CONCEALED_REASON: Readonly<Record<ConcealedReason, VelveEr
 	broken_state_on_recovery_second_factor: "invalid_recovery_code",
 	broken_state_on_session_resolve: "session_required",
 	broken_state_on_change: "session_required",
+	//every failing step after the request answers alike so none tells which factor was wrong (S-ENUM-10)
+	passkey_recovery_link_refused: "passkey_recovery_failed",
+	passkey_recovery_code_refused: "passkey_recovery_failed",
+	passkey_recovery_refused_for_account: "passkey_recovery_failed",
+	passkey_recovery_registration_refused: "passkey_recovery_failed",
+	passkey_recovery_refused: "passkey_recovery_failed",
+	broken_state_on_passkey_recovery: "passkey_recovery_failed",
 };
 
 export class ConcealedError extends Error {
@@ -342,6 +358,55 @@ export class ConcealedError extends Error {
 		this.name = "ConcealedError";
 		this.reason = reason;
 	}
+}
+
+const LINK_REFUSALS: ReadonlySet<ConcealedReason> = new Set([
+	"token_not_found",
+	"token_expired",
+	"token_consumed",
+	"token_purpose_mismatch",
+]);
+
+const REGISTRATION_REFUSALS: ReadonlySet<ConcealedReason> = new Set([
+	"challenge_not_found",
+	"challenge_expired",
+	"challenge_purpose_mismatch",
+	"credential_unknown",
+	"signature_invalid",
+	"rp_id_mismatch",
+	"origin_mismatch",
+	"user_not_verified",
+]);
+
+const RECOVERY_REFUSALS: ReadonlySet<ConcealedReason> = new Set([
+	"passkey_recovery_link_refused",
+	"passkey_recovery_code_refused",
+	"passkey_recovery_refused_for_account",
+	"passkey_recovery_registration_refused",
+	"passkey_recovery_refused",
+	"broken_state_on_passkey_recovery",
+]);
+
+function recoveryRefusalOf(reason: ConcealedReason): ConcealedReason {
+	if (RECOVERY_REFUSALS.has(reason)) {
+		return reason;
+	}
+	if (LINK_REFUSALS.has(reason)) {
+		return "passkey_recovery_link_refused";
+	}
+	if (REGISTRATION_REFUSALS.has(reason)) {
+		return "passkey_recovery_registration_refused";
+	}
+	return reason === "recovery_code_not_found"
+		? "passkey_recovery_code_refused"
+		: "passkey_recovery_refused";
+}
+
+/** a step of a recovery after its request fails as one, and only the logged reason still says which factor failed */
+export function asAFailedRecoveryStep(cause: unknown): unknown {
+	return cause instanceof ConcealedError
+		? new ConcealedError(recoveryRefusalOf(cause.reason))
+		: cause;
 }
 
 interface VisibleFailure {

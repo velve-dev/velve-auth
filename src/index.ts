@@ -122,6 +122,16 @@ export type { UsernameRules } from "./core/identity/configuration.js";
 export { type KeyProvider, rootKeyProvider } from "./core/keys/index.js";
 export type * from "./core/oauth/index.js";
 export type * from "./core/plugin/index.js";
+export type {
+	PasskeyRecoveryConfig,
+	PasskeyRecoveryContext,
+} from "./core/recovery/config.js";
+export { LONGEST_PASSKEY_RECOVERY_WAIT_IN_SECONDS } from "./core/recovery/config.js";
+export type {
+	FinishPasskeyRecoveryResult,
+	PendingPasskeyRecovery,
+} from "./core/recovery/flow.js";
+export type { PasskeyRecoveryNamespace } from "./core/recovery/routes.js";
 export type { SecurityStateAlarm } from "./core/security-state/alarm.js";
 export type { LimitsConfig } from "./core/security-state/limits.js";
 export type { SessionToken } from "./core/session/token.js";

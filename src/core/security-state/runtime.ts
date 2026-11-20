@@ -461,6 +461,7 @@ export async function checkAccountOrStandIn(
 			passkeys: [],
 			identities: [],
 			recoveryCodes: [],
+			passkeyRecovery: null,
 		},
 		{ keyVersion: version, digest: STAND_IN_DIGEST },
 	);

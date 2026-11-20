@@ -1,4 +1,4 @@
-import { ONE_TIME_TOKEN_PURPOSES, type OneTimeTokenPurpose } from "../token/purpose.js";
+import type { OneTimeTokenPurpose } from "../token/purpose.js";
 
 /** the password credential as the seal covers it */
 interface SealedPassword {
@@ -32,6 +32,14 @@ interface SealedRecoveryCode {
 	readonly codeHmac: Uint8Array;
 }
 
+/** the new passkey a recovery holds back until its activation time, as the seal covers it */
+interface SealedPasskeyRecovery {
+	/** `activates_at` in whole microseconds since the Unix epoch */
+	readonly activatesAtMicros: number;
+	readonly credentialId: Uint8Array;
+	readonly publicKey: Uint8Array;
+}
+
 /** every way into an account the seal covers, without the seal row's own version and epoch */
 export interface SealedComponents {
 	readonly email: string | null;
@@ -45,6 +53,8 @@ export interface SealedComponents {
 	readonly passkeys: readonly SealedPasskey[];
 	readonly identities: readonly SealedIdentity[];
 	readonly recoveryCodes: readonly SealedRecoveryCode[];
+	/** the recovery to a new passkey that waits for its activation time, or null while none does */
+	readonly passkeyRecovery: SealedPasskeyRecovery | null;
 }
 
 /** the token generation of each one-time token purpose, so a redemption leaves the links of the other purposes alone */
@@ -72,7 +82,13 @@ export const FIRST_GENERATIONS: SealedGenerations = {
 	sessionGeneration: 1,
 	attemptGeneration: 1,
 	attemptLast: null,
-	tokenGenerations: { email_verify: 1, password_reset: 1, email_change: 1, magic_link: 1 },
+	tokenGenerations: {
+		email_verify: 1,
+		password_reset: 1,
+		email_change: 1,
+		magic_link: 1,
+		passkey_recovery: 1,
+	},
 	tokenLast: null,
 };
 
@@ -213,6 +229,33 @@ function recoveryDisabledField(recoveryDisabled: boolean): readonly Uint8Array[]
 	return recoveryDisabled ? [booleanField(true)] : [];
 }
 
+//the purposes of 2.0.0 keep their place so a seal taken before migration 7 still verifies (E-3763)
+const PURPOSES_SEALED_IN_PLACE: readonly OneTimeTokenPurpose[] = [
+	"email_verify",
+	"password_reset",
+	"email_change",
+	"magic_link",
+];
+
+//a generation still at its first value is left out so an account no recovery link reached keeps its seal (E-3763)
+function passkeyRecoveryGenerationField(generation: number): readonly Uint8Array[] {
+	return generation === FIRST_GENERATIONS.tokenGenerations.passkey_recovery
+		? []
+		: [integerField(generation)];
+}
+
+function passkeyRecoveryField(recovery: SealedPasskeyRecovery | null): readonly Uint8Array[] {
+	return recovery === null
+		? []
+		: [
+				recordField([
+					integerField(recovery.activatesAtMicros),
+					bytesField(recovery.credentialId),
+					bytesField(recovery.publicKey),
+				]),
+			];
+}
+
 //no two different states may share an encoding (S-INTEG-2)
 export function encodeSecurityState(state: SecurityState): Uint8Array<ArrayBuffer> {
 	return concatenated([
@@ -224,7 +267,7 @@ export function encodeSecurityState(state: SecurityState): Uint8Array<ArrayBuffe
 		integerField(state.sessionGeneration),
 		integerField(state.attemptGeneration),
 		state.attemptLast === null ? ABSENT_FIELD : digestField(state.attemptLast),
-		...ONE_TIME_TOKEN_PURPOSES.map((purpose) => integerField(state.tokenGenerations[purpose])),
+		...PURPOSES_SEALED_IN_PLACE.map((purpose) => integerField(state.tokenGenerations[purpose])),
 		state.tokenLast === null ? ABSENT_FIELD : digestField(state.tokenLast),
 		state.email === null ? ABSENT_FIELD : textField(state.email),
 		booleanField(state.emailVerified),
@@ -248,5 +291,7 @@ export function encodeSecurityState(state: SecurityState): Uint8Array<ArrayBuffe
 			),
 		),
 		...recoveryDisabledField(state.recoveryDisabled),
+		...passkeyRecoveryGenerationField(state.tokenGenerations.passkey_recovery),
+		...passkeyRecoveryField(state.passkeyRecovery),
 	]);
 }

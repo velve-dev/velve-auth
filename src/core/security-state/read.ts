@@ -58,6 +58,14 @@ interface ReadTotp {
 	readonly confirmed: boolean;
 }
 
+/** a recovery to a new passkey as the one read returned it, with whether the database clock has reached its activation time */
+export interface ReadPasskeyRecovery {
+	readonly activatesAtMicros: number;
+	readonly credentialId: Uint8Array<ArrayBuffer>;
+	readonly publicKey: Uint8Array<ArrayBuffer>;
+	readonly due: boolean;
+}
+
 /** the seal row and every component of one account, all from a single statement */
 export interface SecurityStateRead {
 	readonly userId: string;
@@ -72,6 +80,7 @@ export interface SecurityStateRead {
 	readonly passkeys: readonly ReadPasskey[];
 	readonly identities: readonly ReadIdentity[];
 	readonly recoveryCodes: readonly ReadRecoveryCode[];
+	readonly passkeyRecovery: ReadPasskeyRecovery | null;
 }
 
 /** what checking one read found, each failure named as the alarm names it */
@@ -105,6 +114,7 @@ export function securityStateDocumentOf(schema: string, accountIdSql: string): s
     'password_reset_generation', seal.password_reset_generation::text,
     'email_change_generation', seal.email_change_generation::text,
     'magic_link_generation', seal.magic_link_generation::text,
+    'passkey_recovery_generation', seal.passkey_recovery_generation::text,
     'token_last', encode(seal.token_last, 'hex')) END,
   'password', CASE WHEN credential.user_id IS NULL THEN NULL ELSE jsonb_build_object(
     'phc', encode(credential.phc, 'hex'),
@@ -135,12 +145,19 @@ export function securityStateDocumentOf(schema: string, accountIdSql: string): s
   'recovery_codes', (SELECT coalesce(jsonb_agg(jsonb_build_object(
       'key_version', code.key_version::text,
       'code_hmac', encode(code.code_hmac, 'hex'))), '[]'::jsonb)
-    FROM ${table("recovery_code")} code WHERE code.user_id = account.id)
+    FROM ${table("recovery_code")} code WHERE code.user_id = account.id),
+  'passkey_recovery', CASE WHEN recovery.user_id IS NULL THEN NULL ELSE jsonb_build_object(
+    'activates_at_us', CASE WHEN isfinite(recovery.activates_at)
+      THEN trunc(extract(epoch FROM recovery.activates_at) * 1000000)::text END,
+    'credential_id', encode(recovery.credential_id, 'hex'),
+    'public_key', encode(recovery.public_key, 'hex'),
+    'due', recovery.activates_at <= now()) END
 )::text
 FROM ${table("user")} account
 LEFT JOIN ${table("security_state")} seal ON seal.user_id = account.id
 LEFT JOIN ${table("password_credential")} credential ON credential.user_id = account.id
 LEFT JOIN ${table("totp_credential")} secret ON secret.user_id = account.id
+LEFT JOIN ${table("passkey_recovery")} recovery ON recovery.user_id = account.id
 WHERE account.id = ${accountIdSql})`;
 }
 
@@ -236,6 +253,7 @@ function sealOf(value: unknown): StoredSeal | null {
 			password_reset: exactInteger(seal.password_reset_generation, "token generation"),
 			email_change: exactInteger(seal.email_change_generation, "token generation"),
 			magic_link: exactInteger(seal.magic_link_generation, "token generation"),
+			passkey_recovery: exactInteger(seal.passkey_recovery_generation, "token generation"),
 		},
 		tokenLast: bytesOrNull(seal.token_last, "token last"),
 	};
@@ -273,6 +291,19 @@ function signCountOf(value: unknown): number {
 		throw new UnreadableStateError("sign count");
 	}
 	return Math.min(Number(spelled), Number.MAX_SAFE_INTEGER);
+}
+
+function passkeyRecoveryOf(value: unknown): ReadPasskeyRecovery | null {
+	if (value === null) {
+		return null;
+	}
+	const recovery = record(value, "passkey recovery");
+	return {
+		activatesAtMicros: exactInteger(recovery.activates_at_us, "recovery activation time"),
+		credentialId: bytes(recovery.credential_id, "recovery credential id"),
+		publicKey: bytes(recovery.public_key, "recovery public key"),
+		due: flag(recovery.due, "recovery due"),
+	};
 }
 
 function stateOf(spelled: string): SecurityStateRead {
@@ -318,6 +349,7 @@ function stateOf(spelled: string): SecurityStateRead {
 				codeHmac: bytes(code.code_hmac, "recovery code"),
 			};
 		}),
+		passkeyRecovery: passkeyRecoveryOf(state.passkey_recovery),
 	};
 }
 
@@ -367,6 +399,14 @@ export function sealedComponentsOf(read: SecurityStateRead): SealedComponents {
 		passkeys: read.passkeys.map(({ credentialId, publicKey }) => ({ credentialId, publicKey })),
 		identities: read.identities.map(({ provider, subject }) => ({ provider, subject })),
 		recoveryCodes: read.recoveryCodes.map(({ keyVersion, codeHmac }) => ({ keyVersion, codeHmac })),
+		passkeyRecovery:
+			read.passkeyRecovery === null
+				? null
+				: {
+						activatesAtMicros: read.passkeyRecovery.activatesAtMicros,
+						credentialId: read.passkeyRecovery.credentialId,
+						publicKey: read.passkeyRecovery.publicKey,
+					},
 	};
 }
 
@@ -379,6 +419,7 @@ export function recoveryIsDisabledFor(read: SecurityStateRead): boolean {
 export const LINKS_INTO_THE_ACCOUNT: readonly OneTimeTokenPurpose[] = [
 	"password_reset",
 	"magic_link",
+	"passkey_recovery",
 ];
 
 /** whether a verified read refuses a link of this purpose because the account turned recovery off */

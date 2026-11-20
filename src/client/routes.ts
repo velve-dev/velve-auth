@@ -11,6 +11,7 @@ import type { ChangedUser, RedeemResetResult, SetPasswordResult } from "../core/
 import type { PendingAuthentication, Session } from "../core/http/caller.js";
 import type { AnyRoute, HttpMethod, Route } from "../core/http/route.js";
 import type { OAuthRouteTable } from "../core/oauth/routes.js";
+import type { FinishPasskeyRecoveryResult, PendingPasskeyRecovery } from "../core/recovery/flow.js";
 
 //the table names its routes and never the services that build them, which stay off the declarations (E-3488)
 /** every route the library declares, whatever one instance's mode or configuration serves */
@@ -510,6 +511,54 @@ export type VelveRouteTable = readonly [
 		| "webauthn_challenge_invalid"
 		| "webauthn_credential_rejected"
 	>,
+	Route<
+		"passkeyRecovery.request",
+		"/passkey-recovery/request",
+		{
+			email: string;
+		} & {},
+		void,
+		"invalid_input" | "rate_limited" | "origin_not_allowed"
+	>,
+	Route<
+		"passkeyRecovery.start",
+		"/passkey-recovery/start",
+		{
+			token: string;
+			recoveryCode: string;
+		} & {},
+		WebAuthnRegistrationChallenge,
+		"invalid_input" | "rate_limited" | "origin_not_allowed" | "passkey_recovery_failed"
+	>,
+	Route<
+		"passkeyRecovery.finish",
+		"/passkey-recovery/finish",
+		{
+			challengeToken: string;
+			response: Record<string, unknown>;
+			label: string;
+		} & {},
+		FinishPasskeyRecoveryResult,
+		"invalid_input" | "rate_limited" | "origin_not_allowed" | "passkey_recovery_failed"
+	>,
+	Route<
+		"passkeyRecovery.pending",
+		"/passkey-recovery",
+		{} & {},
+		PendingPasskeyRecovery | null,
+		"rate_limited" | "origin_not_allowed" | "account_disabled" | "session_required"
+	>,
+	Route<
+		"passkeyRecovery.cancel",
+		"/passkey-recovery/cancel",
+		{} & {},
+		void,
+		| "rate_limited"
+		| "origin_not_allowed"
+		| "account_disabled"
+		| "session_required"
+		| "freshness_required"
+	>,
 ];
 
 /** what a call needs from its own route row, with no handler reachable from it */
@@ -603,4 +652,9 @@ export const VELVE_CLIENT_ROUTES = [
 	{ name: "factor.webauthn.remove", method: "POST", path: "/factor/webauthn/remove" },
 	{ name: "signIn.passkey.start", method: "POST", path: "/sign-in/passkey/start" },
 	{ name: "signIn.passkey.finish", method: "POST", path: "/sign-in/passkey/finish" },
+	{ name: "passkeyRecovery.request", method: "POST", path: "/passkey-recovery/request" },
+	{ name: "passkeyRecovery.start", method: "POST", path: "/passkey-recovery/start" },
+	{ name: "passkeyRecovery.finish", method: "POST", path: "/passkey-recovery/finish" },
+	{ name: "passkeyRecovery.pending", method: "GET", path: "/passkey-recovery" },
+	{ name: "passkeyRecovery.cancel", method: "POST", path: "/passkey-recovery/cancel" },
 ] as const satisfies ClientRoutesOf<VelveRouteTable>;

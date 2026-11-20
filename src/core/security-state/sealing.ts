@@ -254,6 +254,7 @@ async function writeSealRow(
 		seal.tokenGenerations.email_change,
 		seal.tokenGenerations.magic_link,
 		seal.tokenLast,
+		seal.tokenGenerations.passkey_recovery,
 	];
 	if (read.seal === null) {
 		await tx
@@ -261,8 +262,8 @@ async function writeSealRow(
 				`INSERT INTO ${table} (user_id, version, digest, key_version, session_epoch,
   components_version, session_generation, attempt_generation, attempt_last,
   email_verify_generation, password_reset_generation, email_change_generation,
-  magic_link_generation, token_last)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+  magic_link_generation, token_last, passkey_recovery_generation)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 				[
 					read.userId,
 					seal.version,
@@ -283,7 +284,8 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
 SET version = $2, digest = $3, key_version = $4, session_epoch = $5, sealed_at = now(),
   components_version = $10, session_generation = $11, attempt_generation = $12,
   attempt_last = $13, email_verify_generation = $14, password_reset_generation = $15,
-  email_change_generation = $16, magic_link_generation = $17, token_last = $18
+  email_change_generation = $16, magic_link_generation = $17, token_last = $18,
+  passkey_recovery_generation = $19
 WHERE user_id = $1 AND version = $6 AND digest = $7 AND key_version = $8 AND session_epoch = $9
 RETURNING 1 AS updated`,
 		[

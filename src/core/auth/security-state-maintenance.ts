@@ -8,6 +8,7 @@ import type { LogLevel } from "../http/environment.js";
 import { ConcealedError } from "../http/error-map.js";
 import { encodeBase64Url } from "../keys/base64url.js";
 import { KeyError } from "../keys/errors.js";
+import { createPasskeyRecoveryRepository } from "../recovery/repository.js";
 import {
 	type AnchorReading,
 	consultAnchors,
@@ -82,6 +83,11 @@ export interface SealedSecurityState {
 	readonly passkeyCredentialIds: readonly string[];
 	readonly identities: readonly { readonly provider: string; readonly subject: string }[];
 	readonly recoveryCodeCount: number;
+	/** the passkey a recovery to a new passkey holds back, by its credential id in base64url, and when it activates */
+	readonly passkeyRecovery: {
+		readonly credentialId: string;
+		readonly activatesAt: Date;
+	} | null;
 }
 
 type SecurityStateMaintenanceErrorCode =
@@ -303,7 +309,11 @@ function highestFloorOf(reading: Extract<AnchorReading, { kind: "answered" }>): 
 
 function ratifiedStateOf(
 	read: SecurityStateRead,
-	seal: { readonly version: number; readonly sessionEpoch: number },
+	seal: {
+		readonly version: number;
+		readonly sessionEpoch: number;
+		readonly heldPasskeyActivatesAt: Date | null;
+	},
 ): SealedSecurityState {
 	return {
 		version: seal.version,
@@ -319,6 +329,13 @@ function ratifiedStateOf(
 		passkeyCredentialIds: read.passkeys.map((passkey) => encodeBase64Url(passkey.credentialId)),
 		identities: read.identities.map(({ provider, subject }) => ({ provider, subject })),
 		recoveryCodeCount: read.recoveryCodes.length,
+		passkeyRecovery:
+			read.passkeyRecovery === null || seal.heldPasskeyActivatesAt === null
+				? null
+				: {
+						credentialId: encodeBase64Url(read.passkeyRecovery.credentialId),
+						activatesAt: seal.heldPasskeyActivatesAt,
+					},
 	};
 }
 
@@ -327,6 +344,8 @@ interface Resealed {
 	readonly version: number;
 	readonly sessionEpoch: number;
 	readonly digest: Uint8Array<ArrayBuffer>;
+	/** the driver's date of the held back passkey the reseal ratified, or null where none is held */
+	readonly heldPasskeyActivatesAt: Date | null;
 }
 
 //a reseal confirms no generation a writer may have set and draws every one afresh (E-3523)
@@ -341,6 +360,7 @@ function generationsAfterReseal(stored: SealedGenerations, version: number): Sea
 			password_reset: drawGenerationOtherThan(stored.tokenGenerations.password_reset),
 			email_change: drawGenerationOtherThan(stored.tokenGenerations.email_change),
 			magic_link: drawGenerationOtherThan(stored.tokenGenerations.magic_link),
+			passkey_recovery: drawGenerationOtherThan(stored.tokenGenerations.passkey_recovery),
 		},
 		tokenLast: null,
 	};
@@ -350,7 +370,7 @@ async function writeResealedRow(
 	tx: Driver,
 	states: string,
 	read: SecurityStateRead,
-	seal: Omit<Resealed, "read"> & {
+	seal: Omit<Resealed, "read" | "heldPasskeyActivatesAt"> & {
 		readonly keyVersion: number;
 		readonly generations: SealedGenerations;
 	},
@@ -364,14 +384,16 @@ async function writeResealedRow(
 		seal.generations.tokenGenerations.password_reset,
 		seal.generations.tokenGenerations.email_change,
 		seal.generations.tokenGenerations.magic_link,
+		seal.generations.tokenGenerations.passkey_recovery,
 	];
 	const written =
 		stored === null
 			? await tx.query(
 					`INSERT INTO ${states} (user_id, version, digest, key_version, session_epoch,
   components_version, session_generation, attempt_generation, email_verify_generation,
-  password_reset_generation, email_change_generation, magic_link_generation)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) ON CONFLICT (user_id) DO NOTHING RETURNING 1 AS written`,
+  password_reset_generation, email_change_generation, magic_link_generation,
+  passkey_recovery_generation)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) ON CONFLICT (user_id) DO NOTHING RETURNING 1 AS written`,
 					[
 						read.userId,
 						seal.version,
@@ -386,7 +408,8 @@ VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) ON CONFLICT (user_id)
 SET version = $2, digest = $3, key_version = $4, session_epoch = $5, sealed_at = now(),
   components_version = $10, session_generation = $11, attempt_generation = $12,
   attempt_last = NULL, email_verify_generation = $13, password_reset_generation = $14,
-  email_change_generation = $15, magic_link_generation = $16, token_last = NULL
+  email_change_generation = $15, magic_link_generation = $16, token_last = NULL,
+  passkey_recovery_generation = $17
 WHERE user_id = $1 AND version = $6 AND digest = $7 AND key_version = $8 AND session_epoch = $9
 RETURNING 1 AS written`,
 					[
@@ -469,7 +492,12 @@ async function withTheConfirmedSwitch(
 	await createRecoveryCodeRepository({ driver: tx, schema: runtime.schema }).deleteEveryCode({
 		actor,
 	});
-	return { ...read, recoveryDisabled: true, recoveryCodes: [] };
+	//a reseal that leaves the switch on holds no recovery to a new passkey either (E-3774)
+	await createPasskeyRecoveryRepository({
+		driver: tx,
+		schema: runtime.schema,
+	}).withdrawHeldPasskey({ actor });
+	return { ...read, recoveryDisabled: true, recoveryCodes: [], passkeyRecovery: null };
 }
 
 //a reseal checks nothing it seals and lands above both the stored version and every floor (S-INTEG-7)
@@ -515,7 +543,19 @@ async function resealUnderAccountLock(
 			keyVersion,
 			digest,
 		});
-		return { read, version, sessionEpoch, digest };
+		const held =
+			read.passkeyRecovery === null
+				? null
+				: await createPasskeyRecoveryRepository({ driver: tx, schema }).heldPasskeyOf({
+						actor: actorOfMaintenance(userId),
+					});
+		return {
+			read,
+			version,
+			sessionEpoch,
+			digest,
+			heldPasskeyActivatesAt: held?.activatesAt ?? null,
+		};
 	});
 }
 
