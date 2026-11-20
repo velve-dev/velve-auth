@@ -19,7 +19,7 @@ function countedCoreCodes(text: string): readonly string[] {
 	const flattened = text.replace(/\s+/g, " ");
 	const stated: string[] = [];
 	for (const match of flattened.matchAll(
-		/\b(?:one of |the )(\d+|twenty-eight|twenty-nine|thirty|thirty-one)( core| stable)? codes\b|\bunion of all (\d+|twenty-eight|twenty-nine|thirty|thirty-one)\b/g,
+		/\b(?:one of |the )(\d+|twenty-eight|twenty-nine|thirty-one|thirty)\b( core| stable)? codes\b|\bunion of all (\d+|twenty-eight|twenty-nine|thirty-one|thirty)\b/g,
 	)) {
 		const spelled = match[1] ?? match[3] ?? "";
 		const number = WORDS[spelled] ?? Number(spelled);
