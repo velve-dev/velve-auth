@@ -18817,3 +18817,33 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Listing only the code this feature adds, which would leave the table's claim to be the whole union false.
 **Reason.** Both counts say 28, the number of codes `VELVE_ERROR_CODES` holds, and the table gains the three missing codes with their status 409, so it is again the whole union.
 **Price.** None.
+
+<a id="e-3746"></a>
+
+### A reseal of an unconfirmed state needs the switch named, and leaves no code under a switch that is on
+`E-3746` · no-recovery-switch · administration, settled
+
+**Context.** E-3744 had the reseal refuse only when the stored seal held with the switch flipped, and named as its price that a writer who flips the switch and changes one other component leaves a seal that holds with neither value, which the reseal then ratified with the switch off. The independent review wrote that attack (`test/no-recovery-switch-review-writer.test.ts`, "is not given the switch off by an administrator reseal that does not name the switch": clear the switch, put the deleted code rows back) and found a second one: a writer who puts the code rows back and leaves the switch on got a reseal that ratified the codes, and they worked again once the owner turned recovery on. The requirement says a write to the database alone never turns the switch off, so the orchestrator ruled E-3744's price unacceptable.
+**Rejected.** (a) A required `recoveryDisabled`, which would fail to compile the review's own tests and every existing caller that reseals a state with the switch on. (b) Taking the restrictive value by default, which would turn recovery off for every account an operator reseals without naming it. (c) Telling the hidden switch from the stored digest by trying more hypotheses, which cannot be exhaustive.
+**Reason.** No reseal can tell from the rows whether a switch that is off was ever on once the seal fails to confirm them, so the reseal asks the operator exactly then: where the stored seal does not hold, lies below an anchor's floor or is missing in mode `"required"`, and the switch is off in the rows, it refuses with `security_state_recovery_switch_unconfirmed` unless `recoveryDisabled` is named; the flipped-seal refusal of E-3744 stays. A switch that is on is kept without asking, since keeping it gives no way in, and a reseal that ends with the switch on deletes every recovery code, so a code a writer put back never survives it. An unsealed account in mode `"migrating"` is not bound at all (3.18) and is ratified as it is. The maintenance step needs nothing new: it verifies before it rekeys and refuses a broken account. Three existing reseal calls in `test/security-state-reseal.test.ts` and `test/race-rehash-session-issue-pool.test.ts` reseal broken states of accounts that never used the switch and now name `recoveryDisabled: false`.
+**Price.** Every reseal of a broken state of an account whose switch is off now needs the operator to name the switch, which is a change for every caller of `resealSecurityState` written before 3.0.0. A writer who sets the switch on gets it kept by a reseal that does not name it, which costs the owner the mailed paths until the operator turns recovery on again.
+
+<a id="e-3747"></a>
+
+### Turning recovery off ends every pending authentication of the account
+`E-3747` · no-recovery-switch · pending authentications, settled
+
+**Context.** E-3736 refused a reset held back for its second factor at completion while the switch was on, and named as its price that such a pending row stays until it expires. The review's `test/no-recovery-switch-review-mailbox.test.ts`, "does not write its password once the switch has been on, even after it is off again", turns the switch on and off within the row's lifetime and completes it: the check of E-3736 no longer stood in the way, and the password was written. Deleting the account's pending rows in the switch's transaction would take the account lock and then reach `pending_authentication`, which §7 orders before `velve.user` (E-3736).
+**Rejected.** Deleting the rows, for the lock order. Raising the epoch, which every pending row also binds but which signs out every session (E-3735).
+**Reason.** Every pending row binds the account's `attempt_generation` (S-INTEG-9), and a row that binds a generation the account has left answers as a missing one. Turning the switch on now draws a new attempt generation through a `retirePending` move of the sealing change, with no row that moved it and so no `attempt_last`, so every pending authentication of the account ends, a held back reset included, and none comes back. A pending reset cannot be created while the switch is on, so turning it off needs no such move.
+**Price.** A sign-in waiting for its second factor when the operator turns the switch on starts over.
+
+<a id="e-3748"></a>
+
+### Turning recovery on again retires the links as well
+`E-3748` · no-recovery-switch · one-time tokens, settled
+
+**Context.** E-3736 retired the reset and magic links when the switch went on and refused a link minted in the window between a request's lookup and the switch while it stayed on. The review's "mails no link the account's mailbox can still redeem once recovery is on again" mints such a link, turns the switch off, and redeems it: it bound the generation the switch-on drew, which turning off left standing, and it worked.
+**Rejected.** Refusing at redemption any link minted while the switch was on, which needs the mint time against the switch's history, which nothing stores.
+**Reason.** Turning the switch off now draws new `password_reset` and `magic_link` generations as well, so a link from the time the switch was on binds a generation the account has left. `oneTimeToken.resolve` follows, answering `null` for it (E-3742), and `test/no-recovery-switch-resolve.test.ts` says so.
+**Price.** A link mailed in the moment the switch goes back off is retired with the rest and has to be requested again; every call of either method now writes a seal.

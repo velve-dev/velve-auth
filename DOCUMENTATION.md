@@ -10386,7 +10386,7 @@ a passkey or identity a writer inserted included.
 |---|---|
 | `userId` | the account |
 | `reason` | why, non-empty; it is logged at `warn` with the account and the new version, to the configured `log` or, without one, to the console, and it is not stored |
-| `recoveryDisabled` | optional: the [no-recovery switch](#the-no-recovery-switch) the reseal writes and ratifies; `true` also deletes the account's recovery codes. Without it the reseal ratifies the switch the row holds, unless the stored seal holds with the switch the other way round, which it refuses |
+| `recoveryDisabled` | the [no-recovery switch](#the-no-recovery-switch) the reseal writes and ratifies; name it for every broken state, `false` for an account that never turned the switch on. Without it the reseal keeps a switch that is on, and refuses one that is off unless the stored seal confirms the state. A reseal that ends with the switch on deletes the account's recovery codes |
 
 The new version lies above the stored one and above every anchor's floor, and the
 anchors learn it. The session epoch is drawn afresh and differs from the current
@@ -10404,7 +10404,7 @@ It refuses with a `SecurityStateMaintenanceError` and changes nothing:
 | `security_state_version_exhausted` | the stored version or an anchor's floor is already `Number.MAX_SAFE_INTEGER` |
 | `security_state_envelope_unreadable` | the account has no seal row and an envelope its conversion cannot open; the alarm `envelope_binding_mismatch` is raised, and the reseal repairs no envelope |
 | `security_state_changed_during_reseal` | the seal row changed under the account lock, which only a writer outside the library can do |
-| `security_state_recovery_switch_unconfirmed` | `recoveryDisabled` is given and not a boolean, or it is not given and the stored seal holds with the no-recovery switch the other way round — a writer flipped `recovery_disabled_at` and nothing else the seal covers |
+| `security_state_recovery_switch_unconfirmed` | `recoveryDisabled` is given and not a boolean; or it is not given, the no-recovery switch is off in the rows and the stored seal does not confirm the state (it does not hold, lies below an anchor's floor, or is missing in mode `"required"`); or it is not given and the stored seal holds with the switch the other way round |
 
 An account at the largest version is recovered by hand: delete its sessions and
 its seal row by SQL and let `sealSecurityState()` seal it in mode `"migrating"`.
@@ -10811,13 +10811,19 @@ that one transaction it
   drawing new token generations for `password_reset` and `magic_link`; such a
   link answers like an unknown token from then on, also after the switch is off
   again (E-3736);
+- ends every pending authentication of the account by drawing a new attempt
+  generation, a mailed reset held back for its second factor included; a sign-in
+  in progress starts over, and no held back reset comes back once the switch is
+  off again (E-3747);
 - keeps the session epoch: no session is revoked, because the switch removes
   ways in and does not change who is signed in (E-3735).
 
-Turning it off clears the column and nothing else. The codes it deleted do not
-come back; the owner generates new ones. Calling either method when the switch
-is already in that position changes nothing that matters: turning it on again
-retires any link minted since, and turning it off again writes no new seal.
+Turning it off clears the column and retires the account's reset links and magic
+links once more, so that a link minted while the switch was on never becomes
+redeemable (E-3748); it keeps the epoch too. The codes the switch deleted do not
+come back; the owner generates new ones. Calling either method when the switch is
+already in that position retires the account's links again and changes nothing
+else.
 
 | Outcome | When |
 |---|---|
@@ -10840,8 +10846,8 @@ retires any link minted since, and turning it off again writes no new seal.
 | `factor.recovery.generate`, `POST /factor/recovery/generate` | `409 recovery_disabled` |
 | `factor.recovery.remaining` | `{ remainingCount: 0 }` |
 
-A pending authentication no longer offers `"recovery"` among its
-`availableFactors`, because the account has no codes. Everything else is as it
+A pending authentication created after the switch went on no longer offers
+`"recovery"` among its `availableFactors`, because the account has no codes. Everything else is as it
 was: password sign-in, passkey sign-in, OAuth sign-in through a linked identity,
 TOTP and passkeys as second factors, `email.requestVerification` and
 `email.requestChange` and their redemptions — confirming or changing the address
@@ -10909,15 +10915,20 @@ a broken state, answers its ordinary failure and raises the alarm with
 breaks the state in the same way.
 
 A reseal does not turn the switch off for that writer either.
-`maintenance.resealSecurityState` refuses with
-`security_state_recovery_switch_unconfirmed` while the stored seal holds with the
-switch the other way round, until you name the switch with `recoveryDisabled`; it
-then writes that value, and with `true` deletes the recovery codes. If the writer
-changed another component as well, the seal holds with neither value and the
-reseal ratifies what the rows hold, as it does for every component; it reports
-the switch in `SealedSecurityState.recoveryDisabled`, so read it, or name the
-switch you expect. `maintenance.sealSecurityState()` refuses an account whose
-switch was changed like every broken state, and keeps a switch that is on.
+When the stored seal does not confirm the account's state — it does not hold,
+lies below an anchor's floor, or is missing in mode `"required"` — and the switch
+is off in the rows, `maintenance.resealSecurityState` refuses with
+`security_state_recovery_switch_unconfirmed` until you name the switch with
+`recoveryDisabled`, because the writer may have cleared it together with any other
+component. It refuses as well when the stored seal holds with the switch the
+other way round. Name `false` for an account that never turned the switch on. The
+reseal writes the value you name, and whenever it ends with the switch on it
+deletes every recovery code of the account, one a writer put back included, so
+none comes back once the switch is off again. It reports the switch in
+`SealedSecurityState.recoveryDisabled` (E-3746). `maintenance.sealSecurityState()`
+refuses an account whose switch was changed like every broken state, and keeps a
+switch that is on. In mode `"migrating"` an account without a seal row is not
+bound at all (3.18), and the first seal ratifies the switch as the rows hold it.
 
 The encoding the seal is taken over appends the switch as its last field only
 while it is on, so an account that never turns the switch on keeps the seal it
