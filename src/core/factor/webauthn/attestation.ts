@@ -8,7 +8,7 @@ import {
 } from "@simplewebauthn/server/helpers";
 import { ConcealedError } from "../../http/error-map.js";
 import { isRecord } from "../../http/validators.js";
-import { decodeBase64Url } from "../../keys/base64url.js";
+import { decodeBase64Url, encodeBase64Url } from "../../keys/base64url.js";
 
 /** what a verified registration reports about its attestation, before the chain is held to the roots */
 interface ReportedAttestation {
@@ -20,6 +20,7 @@ interface ReportedAttestation {
 const CRL_DISTRIBUTION_POINTS = "2.5.29.31";
 const LONGEST_ATTESTATION_OBJECT_BYTES = 32 * 1024;
 const MOST_CERTIFICATES_IN_A_CHAIN = 8;
+
 const PEM_CERTIFICATE = /^-----BEGIN CERTIFICATE-----([A-Za-z0-9+/=\s]+)-----END CERTIFICATE-----$/;
 
 function parsesAsACertificate(certificate: Uint8Array<ArrayBuffer>): boolean {
@@ -58,56 +59,133 @@ export function namesARevocationList(certificate: Uint8Array): boolean {
 	return extensions.some((extension) => extension.extnID === CRL_DISTRIBUTION_POINTS);
 }
 
-function certificatesOfJwsHeader(response: unknown): readonly Uint8Array[] {
-	if (!(response instanceof Uint8Array)) {
-		throw new TypeError("a safetynet statement carries no response");
+const STANDARD_BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+
+class UnreadableAttestation extends Error {
+	constructor(part: string) {
+		super(`the attestation carries ${part} the library cannot read strictly`);
+		this.name = "UnreadableAttestation";
 	}
-	const [header] = new TextDecoder().decode(response).split(".");
-	const decoded = decodeBase64Url(header ?? "");
-	const parsed: unknown = decoded === null ? null : JSON.parse(new TextDecoder().decode(decoded));
-	const chain = isRecord(parsed) && Object.hasOwn(parsed, "x5c") ? parsed.x5c : [];
-	if (!Array.isArray(chain) || !chain.every((entry) => typeof entry === "string")) {
-		throw new TypeError("a safetynet header names no chain of certificates");
-	}
-	return chain.map((entry) => Uint8Array.from(isoBase64URL.toBuffer(entry, "base64")));
 }
 
-function certificatesTheVerifierReads(
-	attestationObject: Uint8Array<ArrayBuffer>,
-): readonly Uint8Array[] {
-	const decoded = decodeAttestationObject(attestationObject);
+function strictJsonObjectOf(segment: string | undefined, part: string): Record<string, unknown> {
+	const decoded = decodeBase64Url(segment ?? "");
+	if (decoded === null) {
+		throw new UnreadableAttestation(part);
+	}
+	const parsed: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(decoded));
+	if (!isRecord(parsed)) {
+		throw new UnreadableAttestation(part);
+	}
+	return parsed;
+}
+
+function certificateOfStandardBase64(entry: unknown): Uint8Array {
+	if (typeof entry !== "string" || !STANDARD_BASE64.test(entry)) {
+		throw new UnreadableAttestation("a header certificate");
+	}
+	return Uint8Array.from(isoBase64URL.toBuffer(entry, "base64"));
+}
+
+function certificatesOfJwsHeader(response: unknown): readonly Uint8Array[] {
+	if (!(response instanceof Uint8Array)) {
+		throw new UnreadableAttestation("a safetynet response");
+	}
+	const parts = new TextDecoder("utf-8", { fatal: true }).decode(response).split(".");
+	if (parts.length !== 3) {
+		throw new UnreadableAttestation("a safetynet response");
+	}
+	const header = strictJsonObjectOf(parts[0], "a safetynet header");
+	strictJsonObjectOf(parts[1], "a safetynet payload");
+	const chain: unknown = Object.hasOwn(header, "x5c") ? header.x5c : [];
+	if (!Array.isArray(chain)) {
+		throw new UnreadableAttestation("a safetynet header chain");
+	}
+	return chain.map(certificateOfStandardBase64);
+}
+
+/** the parts of an attestation object the verifier reads, each checked to be the type it must be */
+interface ReadAttestationObject {
+	readonly authData: Uint8Array;
+	readonly certificates: readonly Uint8Array[];
+}
+
+function readStrictly(attestationObject: Uint8Array<ArrayBuffer>): ReadAttestationObject {
+	const decoded: unknown = decodeAttestationObject(attestationObject);
+	if (!(decoded instanceof Map)) {
+		throw new UnreadableAttestation("no map");
+	}
+	const format: unknown = decoded.get("fmt");
 	const statement: unknown = decoded.get("attStmt");
-	if (!(statement instanceof Map)) {
-		throw new TypeError("the attestation statement is no map");
+	const authData: unknown = decoded.get("authData");
+	if (
+		typeof format !== "string" ||
+		!(statement instanceof Map) ||
+		!(authData instanceof Uint8Array)
+	) {
+		throw new UnreadableAttestation("a map without its three entries");
 	}
 	const chain: unknown = statement.get("x5c") ?? [];
 	if (!Array.isArray(chain) || !chain.every((entry) => entry instanceof Uint8Array)) {
-		throw new TypeError("x5c is no list of certificates");
+		throw new UnreadableAttestation("an x5c that is no list of certificates");
 	}
-	return decoded.get("fmt") === "android-safetynet"
-		? [...chain, ...certificatesOfJwsHeader(statement.get("response"))]
-		: chain;
+	const certificates =
+		format === "android-safetynet"
+			? [...chain, ...certificatesOfJwsHeader(statement.get("response"))]
+			: chain;
+	if (certificates.length > MOST_CERTIFICATES_IN_A_CHAIN) {
+		throw new UnreadableAttestation("a chain longer than any authenticator sends");
+	}
+	return { authData, certificates };
 }
 
-//a certificate the client sends is never handed to a verifier that would fetch the revocation list it names (E-3854)
-export function refuseAnAttestationNamingARevocationList(attestationObject: unknown): void {
+function cborHead(majorType: number, length: number): Uint8Array {
+	const prefix = majorType << 5;
+	if (length < 24) {
+		return Uint8Array.of(prefix | length);
+	}
+	if (length < 0x100) {
+		return Uint8Array.of(prefix | 24, length);
+	}
+	return Uint8Array.of(prefix | 25, length >> 8, length & 0xff);
+}
+
+function cborText(text: string): Uint8Array {
+	const bytes = new TextEncoder().encode(text);
+	return Uint8Array.of(...cborHead(3, bytes.length), ...bytes);
+}
+
+//a rewritten object may change only the format and the statement and must keep the authenticator data byte for byte (E-3855)
+function asNoneAttestation(authData: Uint8Array): string {
+	const object = new Uint8Array([
+		...cborHead(5, 3),
+		...cborText("fmt"),
+		...cborText("none"),
+		...cborText("attStmt"),
+		...cborHead(5, 0),
+		...cborText("authData"),
+		...cborHead(2, authData.length),
+		...authData,
+	]);
+	return encodeBase64Url(object);
+}
+
+/** the attestation object the verifier is given, which never holds a certificate naming a revocation list */
+export function attestationObjectToVerify(attestationObject: unknown): string {
 	const bytes = typeof attestationObject === "string" ? decodeBase64Url(attestationObject) : null;
 	if (bytes === null || bytes.length > LONGEST_ATTESTATION_OBJECT_BYTES) {
 		throw new ConcealedError("attestation_unreadable");
 	}
-	let certificates: readonly Uint8Array[];
+	let read: ReadAttestationObject;
+	let namesAList: boolean;
 	try {
-		certificates = certificatesTheVerifierReads(bytes);
-		if (certificates.length > MOST_CERTIFICATES_IN_A_CHAIN) {
-			throw new RangeError("the chain is longer than any authenticator sends");
-		}
-		if (!certificates.some(namesARevocationList)) {
-			return;
-		}
+		read = readStrictly(bytes);
+		namesAList = read.certificates.some(namesARevocationList);
 	} catch {
 		throw new ConcealedError("attestation_unreadable");
 	}
-	throw new ConcealedError("attestation_names_a_revocation_list");
+	//a chain the verifier would fetch for must reach it as no attestation at all (E-3855)
+	return namesAList ? asNoneAttestation(read.authData) : (attestationObject as string);
 }
 
 function chainOf(attestationObject: Uint8Array): readonly Uint8Array[] {

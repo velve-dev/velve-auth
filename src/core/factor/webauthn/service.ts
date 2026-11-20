@@ -35,7 +35,7 @@ import {
 import { componentsAfter } from "../../security-state/sealing.js";
 import type { TokenBindingRefusalReport } from "../../token/binding.js";
 import type { PendingResolution } from "../pending/index.js";
-import { attestedAaguidOf, refuseAnAttestationNamingARevocationList } from "./attestation.js";
+import { attestationObjectToVerify, attestedAaguidOf } from "./attestation.js";
 import {
 	createWebAuthnChallenges,
 	WEBAUTHN_CHALLENGE_LIFETIME_SECONDS,
@@ -194,7 +194,7 @@ export function attestedAaguidOfRegistered(
 	return credential.attestationVerified ? credential.aaguid : null;
 }
 
-//a list refuses every authenticator outside it and every one whose chain did not verify (S-INTEG-13)
+//an authenticator whose chain did not verify must never satisfy a list whatever aaguid it names (S-INTEG-13)
 export function refuseAnAuthenticatorOutsideTheList(
 	read: SecurityStateRead,
 	credential: RegisteredWebAuthnCredential,
@@ -391,10 +391,13 @@ export function createWebAuthnService(options: WebAuthnServiceOptions): WebAuthn
 		readonly userVerification: RegistrationUserVerification;
 	}): Promise<RegisteredWebAuthnCredential> {
 		assertOriginIsExpected(input.response.response.clientDataJSON, settings.origins);
-		refuseAnAttestationNamingARevocationList(input.response.response.attestationObject);
+		const objectToVerify = attestationObjectToVerify(input.response.response.attestationObject);
 		const verification = await verifiedOrRejected(() =>
 			verifyRegistrationResponse({
-				response: input.response,
+				response: {
+					...input.response,
+					response: { ...input.response.response, attestationObject: objectToVerify },
+				},
 				expectedChallenge: input.challengeToken,
 				expectedOrigin: [...settings.origins],
 				expectedRPID: settings.relyingPartyId,

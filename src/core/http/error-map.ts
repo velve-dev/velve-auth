@@ -259,7 +259,6 @@ export type ConcealedReason =
 	| "authenticator_not_allowed"
 	| "authenticator_not_allowed_on_assertion"
 	| "attestation_unreadable"
-	| "attestation_names_a_revocation_list"
 	| "user_disabled_on_webauthn_assertion"
 	| "session_issue_missed_on_password_sign_in"
 	| "session_issue_missed_on_passkey_sign_in"
@@ -337,9 +336,8 @@ const VISIBLE_CODE_BY_CONCEALED_REASON: Readonly<Record<ConcealedReason, VelveEr
 	authenticator_not_allowed: "authenticator_not_allowed",
 	//a passkey outside the list fails as an unknown one does and the list is no oracle (S-INTEG-13)
 	authenticator_not_allowed_on_assertion: "webauthn_credential_rejected",
-	//an attestation refused before verification answers as one the verifier rejected (E-3854)
+	//an attestation unreadable before verification answers as one the verifier rejected (E-3854)
 	attestation_unreadable: "webauthn_credential_rejected",
-	attestation_names_a_revocation_list: "webauthn_credential_rejected",
 	user_disabled_on_webauthn_assertion: "webauthn_credential_rejected",
 	//a session issue that wrote no row answers as the ordinary failure of the path it completes (S-INTEG-5)
 	session_issue_missed_on_password_sign_in: "invalid_credentials",
@@ -400,7 +398,6 @@ const REGISTRATION_REFUSALS: ReadonlySet<ConcealedReason> = new Set([
 	"credential_not_discoverable",
 	"authenticator_not_allowed",
 	"attestation_unreadable",
-	"attestation_names_a_revocation_list",
 ]);
 
 const RECOVERY_REFUSALS: ReadonlySet<ConcealedReason> = new Set([
