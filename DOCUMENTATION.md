@@ -8079,7 +8079,7 @@ if (!answer.ok) {
 
 The `switch` is exhaustive and the compiler checks it, because `answer.error.code`
 is narrowed to the codes **that route** declares and not to the union of all
-31.
+thirty-one.
 
 A call returns a result rather than throwing, and the asymmetry with the server
 is on purpose: on the server a call sits in a request handler with a central
@@ -10411,6 +10411,7 @@ while such an account exists.
 ```ts
 resealSecurityState(input: {
   userId: string; reason: string; recoveryDisabled?: boolean
+  authenticatorAllowlist?: readonly string[] | null
 }): Promise<SealedSecurityState>
 interface SealedSecurityState {
   readonly version: number; readonly sessionEpoch: number
@@ -10422,6 +10423,9 @@ interface SealedSecurityState {
   readonly passkeyCredentialIds: readonly string[]          // base64url
   readonly identities: readonly { readonly provider: string; readonly subject: string }[]
   readonly recoveryCodeCount: number
+  readonly passkeyRecovery: { readonly credentialId: string; readonly activatesAt: Date } | null
+  readonly authenticatorAllowlist: readonly string[] | null
+  readonly attestedPasskeyCredentialIds: readonly string[]  // base64url
 }
 ```
 
@@ -10435,6 +10439,11 @@ a passkey or identity a writer inserted included.
 | `userId` | the account |
 | `reason` | why, non-empty; it is logged at `warn` with the account and the new version, to the configured `log` or, without one, to the console, and it is not stored |
 | `recoveryDisabled` | the [no-recovery switch](#the-no-recovery-switch) the reseal writes and ratifies; name it for every broken state, `false` for an account that never turned the switch on. Without it the reseal keeps a switch that is on, and refuses one that is off unless the stored seal confirms the state. A reseal that ends with the switch on deletes the account's recovery codes |
+| `authenticatorAllowlist` | the authenticator allowlist the reseal writes and ratifies, the AAGUIDs or `null` for none ([Verified attestation and the authenticator allowlist](#verified-attestation-and-the-authenticator-allowlist)). Without it the reseal keeps the list the rows hold where the stored seal confirms the state, and refuses where it does not and the account holds a list or a verified attestation or `webauthn.attestation` is configured. Every reseal of a state the stored seal does not confirm resets every `attestation_verified` of the account, so no passkey satisfies a list until it is registered again (E-3851) |
+
+`authenticatorAllowlist` in the result is the list the reseal ratified, and
+`attestedPasskeyCredentialIds` the credential ids, in base64url, whose verified
+attestation it kept; after a reseal of an unconfirmed state that is always empty.
 
 The new version lies above the stored one and above every anchor's floor, and the
 anchors learn it. The session epoch is drawn afresh and differs from the current
@@ -10453,6 +10462,7 @@ It refuses with a `SecurityStateMaintenanceError` and changes nothing:
 | `security_state_envelope_unreadable` | the account has no seal row and an envelope its conversion cannot open; the alarm `envelope_binding_mismatch` is raised, and the reseal repairs no envelope |
 | `security_state_changed_during_reseal` | the seal row changed under the account lock, which only a writer outside the library can do |
 | `security_state_recovery_switch_unconfirmed` | `recoveryDisabled` is given and not a boolean; or it is not given, the no-recovery switch is off in the rows and the stored seal does not confirm the state (it does not hold, lies below an anchor's floor, or is missing in mode `"required"`); or it is not given and the stored seal holds with the switch the other way round |
+| `security_state_authenticator_allowlist_unconfirmed` | `authenticatorAllowlist` is given and neither `null` nor a non-empty list of AAGUIDs other than the all-zero one; or it is not given, the stored seal does not confirm the state, and the account holds a list or a verified attestation or `webauthn.attestation` is configured |
 
 An account at the largest version is recovered by hand: delete its sessions and
 its seal row by SQL and let `sealSecurityState()` seal it in mode `"migrating"`.
@@ -11662,6 +11672,7 @@ AAGUID is on the list. Without a list every passkey satisfies it.
 | `factor.webauthn.authenticate.finish` | the same, as the second factor |
 | activation of a waiting recovery | not activated |
 | `factor.webauthn.remove` | removing the **last** passkey that satisfies the list is refused with `last_sign_in_method` when the account has no password and no identity |
+| `identity.unlink` and every other removal L-13 guards | a passkey outside the list is not counted as a way in, so unlinking the last identity of an account whose passkeys all lie outside it is refused with `last_sign_in_method` (E-3853) |
 
 An account whose only second factor is a passkey outside the list still needs
 a second factor; it does not fall back to the password alone.
@@ -11725,8 +11736,6 @@ registered before has `attestationVerified: false`.
 - No metadata: the library does not know which AAGUID names which product, and
   does not read the FIDO Metadata Service's status reports.
 - A list ends no session; revoke sessions yourself if a list should.
-- Unlinking an account's last identity still counts passkeys outside the list
-  as a way in (L-13).
 
 ## Using it with an AI coding agent
 
