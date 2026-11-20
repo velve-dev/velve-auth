@@ -3365,49 +3365,16 @@ With that the schema comprises **seventeen tables**.
 
 #### The no-recovery switch
 
-An account can turn off every way in that does not use one of its own credentials
-(S-INTEG-11). `user.disableRecovery({ userId })` turns the switch on,
-`user.enableRecovery({ userId })` turns it off again; the application calls both in its own
-process after its own authorisation decision, without an HTTP route and without a client call
-(3.15 B.3). The switch is the column `velve.user.recovery_disabled_at` from migration 6 and a
-component of the seal (point 4). Turning it on and off are sealed changes under the account
-lock; a writer without the root key who clears or sets the column breaks the state, and every
-check refuses instead of flipping the switch. Every path that asks about it asks the verified
-read, never the column alone. The one exception is the request for a link: it reads the switch
-with the row it reads for the address anyway, so that both branches run the same statements
-(S-TIM-6); a cleared switch lets a real link go to the account's address there, whose
-redemption fails on the broken state.
+An account can turn off every way in that does not use one of its own credentials (S-INTEG-11). `user.disableRecovery({ userId })` turns the switch on, `user.enableRecovery({ userId })` turns it off again; the application calls both in its own process after its own authorisation decision, without an HTTP route and without a client call (3.15 B.3). The switch is the column `velve.user.recovery_disabled_at` from migration 6 and a component of the seal (point 4). Turning it on and off are sealed changes under the account lock; a writer without the root key who clears or sets the column breaks the state, and every check refuses instead of flipping the switch. Every path that asks about it asks the verified read, never the column alone. The one exception is the request for a link: it reads the switch with the row it reads for the address anyway, so that both branches run the same statements (S-TIM-6); a cleared switch lets a real link go to the account's address there, whose redemption fails on the broken state.
 
-Turning it on deletes every recovery code of the account in the same sealing transaction and
-draws new generations for the purposes `password_reset` and `magic_link` (point 3): every reset
-and magic link that went to the account before answers like an unknown token afterwards, even
-once the switch is off again. It keeps the epoch and revokes no session, because the switch
-removes ways in and does not change who is signed in; a pending authentication stays and leads
-on only through an enrolled second factor. While the switch is on (S-ENUM-9):
+Turning it on deletes every recovery code of the account in the same sealing transaction and draws new generations for the purposes `password_reset` and `magic_link` (point 3): every reset and magic link that went to the account before answers like an unknown token afterwards, even once the switch is off again. It keeps the epoch and revokes no session, because the switch removes ways in and does not change who is signed in; a pending authentication stays and leads on only through an enrolled second factor. While the switch is on (S-ENUM-9):
 
-- `factor.recovery.generate` refuses with `recovery_disabled`, and `factor.recovery.verify` and
-  `password.redeemResetWithRecoveryCode` answer as to a wrong code;
-- `password.requestReset` and `signIn.magicLink.request` take the branch of an address without
-  an account: the same statements, exactly one call of the send callback with
-  `request_for_unknown_address` and the same answer 204 (L-1, S-TIM-6);
-- `password.redeemReset` and `signIn.magicLink.redeem` refuse a link of the account with
-  `invalid_token` like an unknown token and do not spend it, and a mailed reset waiting for its
-  second factor (3.6) writes no password and answers like a missing pending authentication;
-- every path that recovers an account through its address — the recovery to a new passkey
-  included — answers as for an unknown address; it asks the verified read for that with the
-  same predicate as the paths above.
+- `factor.recovery.generate` refuses with `recovery_disabled`, and `factor.recovery.verify` and `password.redeemResetWithRecoveryCode` answer as to a wrong code;
+- `password.requestReset` and `signIn.magicLink.request` take the branch of an address without an account: the same statements, exactly one call of the send callback with `request_for_unknown_address` and the same answer 204 (L-1, S-TIM-6);
+- `password.redeemReset` and `signIn.magicLink.redeem` refuse a link of the account with `invalid_token` like an unknown token and do not spend it, and a mailed reset waiting for its second factor (3.6) writes no password and answers like a missing pending authentication;
+- every path that recovers an account through its address — the recovery to a new passkey included — answers as for an unknown address; it asks the verified read for that with the same predicate as the paths above.
 
-What remains is the sign-in with an enrolled credential: password, passkey and linked
-identity, and every enrolled second factor except the deleted codes. Confirming and changing
-the address remain, because neither issues a session or sets a credential. The automatic
-linking of a new identity through the confirmed address of a trusted provider (3.10, S-LINK-2)
-does not ask about the switch in this version; for an account with a second factor it still
-leads only as far as the pending authentication. Turning it on and off is logged through `log`,
-on the console without a configured `log`, with the event names `account recovery disabled` and
-`account recovery enabled` and the `userId`, without an address, and not stored (3.14). An
-account that never uses the switch keeps its encoding and its seal. An instance before 3.0.0
-does not know the column and would seal an account with the switch on without it; the switch
-is therefore used only once every instance runs 3.0.0.
+What remains is the sign-in with an enrolled credential: password, passkey and linked identity, and every enrolled second factor except the deleted codes. Confirming and changing the address remain, because neither issues a session or sets a credential. The automatic linking of a new identity through the confirmed address of a trusted provider (3.10, S-LINK-2) does not ask about the switch in this version; for an account with a second factor it still leads only as far as the pending authentication. Turning it on and off is logged through `log`, on the console without a configured `log`, with the event names `account recovery disabled` and `account recovery enabled` and the `userId`, without an address, and not stored (3.14). An account that never uses the switch keeps its encoding and its seal. An instance before 3.0.0 does not know the column and would seal an account with the switch on without it; the switch is therefore used only once every instance runs 3.0.0.
 
 ```sql
 -- Migration 6

@@ -3371,52 +3371,16 @@ Damit umfasst das Schema **siebzehn Tabellen**.
 
 #### Der Schalter ohne Wiederherstellung
 
-Ein Konto kann jeden Weg hinein abschalten, der keines seiner eigenen Anmeldemittel benutzt
-(S-INTEG-11). `user.disableRecovery({ userId })` schaltet den Schalter ein,
-`user.enableRecovery({ userId })` wieder aus; beide ruft die Anwendung im eigenen Prozess nach
-ihrer eigenen Autorisierungsentscheidung auf, ohne HTTP-Route und ohne Client-Aufruf (3.15 B.3).
-Der Schalter ist die Spalte `velve.user.recovery_disabled_at` aus Migration 6 und ein Bestandteil
-des Siegels (Punkt 4). Ein- und Ausschalten sind versiegelte Änderungen unter der Kontosperre; ein
-Schreiber ohne den Wurzelschlüssel, der die Spalte leert oder setzt, bricht den Zustand, und jede
-Prüfung lehnt ab, statt den Schalter umzulegen. Jeder Weg, der danach fragt, fragt die geprüfte
-Lesung, nie die Spalte allein. Die einzige Ausnahme ist die Anforderung eines Links: Sie liest
-den Schalter mit der Zeile, die sie für die Adresse ohnehin liest, damit beide Zweige dieselben
-Anweisungen ausführen (S-TIM-6); ein geleerter Schalter lässt dort einen echten Link an die
-Adresse des Kontos gehen, dessen Einlösung am gebrochenen Zustand scheitert.
+Ein Konto kann jeden Weg hinein abschalten, der keines seiner eigenen Anmeldemittel benutzt (S-INTEG-11). `user.disableRecovery({ userId })` schaltet den Schalter ein, `user.enableRecovery({ userId })` wieder aus; beide ruft die Anwendung im eigenen Prozess nach ihrer eigenen Autorisierungsentscheidung auf, ohne HTTP-Route und ohne Client-Aufruf (3.15 B.3). Der Schalter ist die Spalte `velve.user.recovery_disabled_at` aus Migration 6 und ein Bestandteil des Siegels (Punkt 4). Ein- und Ausschalten sind versiegelte Änderungen unter der Kontosperre; ein Schreiber ohne den Wurzelschlüssel, der die Spalte leert oder setzt, bricht den Zustand, und jede Prüfung lehnt ab, statt den Schalter umzulegen. Jeder Weg, der danach fragt, fragt die geprüfte Lesung, nie die Spalte allein. Die einzige Ausnahme ist die Anforderung eines Links: Sie liest den Schalter mit der Zeile, die sie für die Adresse ohnehin liest, damit beide Zweige dieselben Anweisungen ausführen (S-TIM-6); ein geleerter Schalter lässt dort einen echten Link an die Adresse des Kontos gehen, dessen Einlösung am gebrochenen Zustand scheitert.
 
-Das Einschalten löscht in derselben versiegelnden Transaktion jeden Wiederherstellungscode des
-Kontos und zieht die Generationen der Zwecke `password_reset` und `magic_link` neu (Punkt 3):
-Jeder Reset- und Magic-Link, der vorher an das Konto ging, antwortet danach wie ein unbekannter
-Token, auch nachdem der Schalter wieder aus ist. Es behält die Epoche und widerruft keine
-Sitzung, weil der Schalter Wege hinein entfernt und nicht ändert, wer angemeldet ist; ein
-Zwischenzustand bleibt bestehen und führt nur noch über einen eingerichteten zweiten Faktor
-weiter. Solange der Schalter eingeschaltet ist (S-ENUM-9):
+Das Einschalten löscht in derselben versiegelnden Transaktion jeden Wiederherstellungscode des Kontos und zieht die Generationen der Zwecke `password_reset` und `magic_link` neu (Punkt 3): Jeder Reset- und Magic-Link, der vorher an das Konto ging, antwortet danach wie ein unbekannter Token, auch nachdem der Schalter wieder aus ist. Es behält die Epoche und widerruft keine Sitzung, weil der Schalter Wege hinein entfernt und nicht ändert, wer angemeldet ist; ein Zwischenzustand bleibt bestehen und führt nur noch über einen eingerichteten zweiten Faktor weiter. Solange der Schalter eingeschaltet ist (S-ENUM-9):
 
-- lehnt `factor.recovery.generate` mit `recovery_disabled` ab, und `factor.recovery.verify` und
-  `password.redeemResetWithRecoveryCode` antworten wie auf einen falschen Code;
-- nehmen `password.requestReset` und `signIn.magicLink.request` den Zweig einer Adresse ohne
-  Konto: dieselben Anweisungen, genau ein Aufruf des Sende-Callbacks mit
-  `request_for_unknown_address` und dieselbe Antwort 204 (L-1, S-TIM-6);
-- lehnen `password.redeemReset` und `signIn.magicLink.redeem` einen Link des Kontos mit
-  `invalid_token` ab wie einen unbekannten Token und verbrauchen ihn nicht, und ein gemailter
-  Reset, der auf seinen zweiten Faktor wartet (3.6), schreibt kein Kennwort und antwortet wie ein
-  fehlender Zwischenzustand;
-- antwortet jeder Weg, der ein Konto über seine Adresse wiederherstellt — auch die
-  Wiederherstellung auf einen neuen Passkey —, wie für eine unbekannte Adresse; er fragt dafür
-  die geprüfte Lesung mit demselben Prädikat wie die Wege oben.
+- lehnt `factor.recovery.generate` mit `recovery_disabled` ab, und `factor.recovery.verify` und `password.redeemResetWithRecoveryCode` antworten wie auf einen falschen Code;
+- nehmen `password.requestReset` und `signIn.magicLink.request` den Zweig einer Adresse ohne Konto: dieselben Anweisungen, genau ein Aufruf des Sende-Callbacks mit `request_for_unknown_address` und dieselbe Antwort 204 (L-1, S-TIM-6);
+- lehnen `password.redeemReset` und `signIn.magicLink.redeem` einen Link des Kontos mit `invalid_token` ab wie einen unbekannten Token und verbrauchen ihn nicht, und ein gemailter Reset, der auf seinen zweiten Faktor wartet (3.6), schreibt kein Kennwort und antwortet wie ein fehlender Zwischenzustand;
+- antwortet jeder Weg, der ein Konto über seine Adresse wiederherstellt — auch die Wiederherstellung auf einen neuen Passkey —, wie für eine unbekannte Adresse; er fragt dafür die geprüfte Lesung mit demselben Prädikat wie die Wege oben.
 
-Es bleibt die Anmeldung mit einem eingerichteten Anmeldemittel: Kennwort, Passkey und
-verknüpfte Identität, und jeder eingerichtete zweite Faktor außer den gelöschten Codes. Die
-Bestätigung und der Wechsel der Adresse bleiben, weil keiner von beiden eine Sitzung ausstellt
-oder ein Anmeldemittel setzt. Die automatische Verknüpfung einer neuen Identität über die
-bestätigte Adresse eines vertrauenswürdigen Anbieters (3.10, S-LINK-2) fragt den Schalter in
-dieser Version nicht; sie führt bei einem Konto mit zweitem Faktor weiterhin nur bis zum
-Zwischenzustand. Ein- und Ausschalten werden über `log` protokolliert, ohne konfiguriertes `log`
-auf der Konsole, mit den Ereignisnamen `account recovery disabled` und
-`account recovery enabled` und der `userId`, ohne Adresse, und nicht gespeichert (3.14). Ein
-Konto, das den Schalter nie benutzt, behält Kodierung und Siegel. Eine Instanz vor 3.0.0 kennt
-die Spalte nicht und versiegelte ein eingeschaltetes Konto ohne sie; der Schalter wird deshalb
-erst benutzt, wenn jede Instanz auf 3.0.0 läuft.
+Es bleibt die Anmeldung mit einem eingerichteten Anmeldemittel: Kennwort, Passkey und verknüpfte Identität, und jeder eingerichtete zweite Faktor außer den gelöschten Codes. Die Bestätigung und der Wechsel der Adresse bleiben, weil keiner von beiden eine Sitzung ausstellt oder ein Anmeldemittel setzt. Die automatische Verknüpfung einer neuen Identität über die bestätigte Adresse eines vertrauenswürdigen Anbieters (3.10, S-LINK-2) fragt den Schalter in dieser Version nicht; sie führt bei einem Konto mit zweitem Faktor weiterhin nur bis zum Zwischenzustand. Ein- und Ausschalten werden über `log` protokolliert, ohne konfiguriertes `log` auf der Konsole, mit den Ereignisnamen `account recovery disabled` und `account recovery enabled` und der `userId`, ohne Adresse, und nicht gespeichert (3.14). Ein Konto, das den Schalter nie benutzt, behält Kodierung und Siegel. Eine Instanz vor 3.0.0 kennt die Spalte nicht und versiegelte ein eingeschaltetes Konto ohne sie; der Schalter wird deshalb erst benutzt, wenn jede Instanz auf 3.0.0 läuft.
 
 ```sql
 -- Migration 6
