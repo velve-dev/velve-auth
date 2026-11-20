@@ -1760,7 +1760,13 @@ need them, not at all (`storeTokens: false` is the default).
 
 **What a plugin may not do:**
 - Override core routes. A name conflict is a **start error**, not a warning.
-- Change the core context. The context is frozen (`Object.freeze`).
+- Change the core context. The context is frozen (`Object.freeze`), down to its parts: a
+  plugin's clock is a frozen object of its own, and every event a hook receives is a deeply frozen
+  copy.
+- Read session tokens or set cookies. A plugin route receives neither a token nor a cookie
+  writer, and no cookie arises from its output.
+- Send more than one statement. Plugin SQL is exactly one statement, which the core reads as
+  PostgreSQL does or refuses.
 - Replace the password verifier, the session resolution or the origin check.
 - Write to core tables directly. Only repository methods, and every one requires
   an `actor`.
@@ -3118,6 +3124,12 @@ interface PluginMigration<Id extends string> {
 }
 type PluginRoute<Id extends string> =
   RouteDefinition<`${Id}.${string}`, `/x/${Id}/${string}`, any, any, VelveErrorCode>
+  // the handler receives PluginRequestContext instead of the core's request context
+interface PluginRequestContext {   // no token, no cookie writer
+  readonly session: Session | null; readonly ipAddress: string | null
+  readonly userAgent: string | null; readonly plugin: FrozenContext
+  enforceAccountRateLimit(normalisedIdentifier: string): Promise<void>
+}
 
 interface PluginHooks {
   beforeSignIn?:        (event: SignInEvent,          context: FrozenContext) => Promise<void>
@@ -3168,18 +3180,24 @@ interface FrozenRepositories {
 interface PluginActor { readonly pluginId: string; readonly reason: string }
 ```
 
-The namespace constraint is a type, not a runtime check: `name` begins with `${Id}.`, `path`
+The namespace constraint is a type: `name` begins with `${Id}.`, `path`
 with `/x/${Id}/`, every created table with `${Id}_`, every error code with `${Id}.`. A plugin
 that wants to override a core route cannot satisfy the declaration type; the
 runtime check at startup remains for plugins written in JavaScript, and a name conflict there is
-a start error, not a warning. `dependsOn` is sorted topologically, a cycle is a
+a start error, not a warning. It also checks the name and path of every plugin route itself: a
+route outside `${Id}.` or `/x/${Id}/` is `plugin_route_conflict`, and a name segment that a
+promise or every object reads — `then`, `catch`, `finally`, `constructor`, `__proto__`,
+`toString` and their like — is `route_name_segment_reserved`, because the instance would
+otherwise become a thenable. `dependsOn` is sorted topologically, a cycle is a
 start error.
 
 Nine hook points, exactly the ones from 3.11. The return is everywhere
 `Promise<void>` — that is the type which expresses "listener with a veto": a hook can
 **reject** by throwing, and **observe** by doing nothing; it cannot replace the
 response, because it cannot return one. A return type `Promise<Event | void>` would have
-opened exactly the door 3.11 closes. All event fields are `readonly`, and
+opened exactly the door 3.11 closes. All event fields are `readonly`, every hook receives a
+copy of the event frozen down to its last field, never the object the core goes on working with,
+and a hook that writes into it throws and so rejects; and
 no event contains a session token, a plaintext password or a hash. The anchor's `digest` is not
 the hash of a secret but the seal's HMAC under `state-mac`; without the root key nothing can be
 computed from it. `afterEmailChange` runs only once the address change has committed: a hook
@@ -3200,7 +3218,15 @@ factors is a co-owner of the core. Every method demands an `actor` with
 tables with the prefix `<pluginId>_`. From the context no path leads to the
 password verifier, to session resolution or to the origin check — they are not part of the
 type. Hooks run without exception **after** the origin check and rate limiting, including for direct
-server method calls.
+server method calls. The clock in the context is, per plugin, a frozen object of its own that asks
+the core's clock; `Object.freeze` is shallow, and handing over the core's clock itself would put the
+time of freshness, rate limiting and TOTP in the plugin's hands. `ownTables.query` takes exactly
+one statement: a text with a semicolon, a backslash, a dollar quote or a string opened with `E` or
+`U&` is refused before it reaches the driver, and a line comment ends as in PostgreSQL at a line
+feed or a carriage return — a statement without parameters goes out as a simple query, and that
+runs every statement it carries. `repositories.revokeSession` reaches the session of any account,
+as `listSessionsForUser` reads any account: a revocation ends a session and opens none, and every
+call is logged with its `actor` and announced.
 
 ##### G.1 Example: logging sign-ins
 
@@ -4726,9 +4752,9 @@ The research report records: "**every single one** would have been prevented by 
 - **S-OWNER-7:** The identity of the caller comes exclusively from the resolved session; no handler reads a user id from the request body, from a query or from a header entry in order to derive an actor from it. *(Section 3.5, resolution by one query on `token_sha256`)*
 - **S-OWNER-8:** "Does not exist" and "belongs to another user" produce the same response with the same status, the same headers and the same body. *(Section 3.13, "Deliberately invisible: everything that would betray existence")*
 - **S-OWNER-9:** Object identifiers of user-bound rows are `uuid` values from `gen_random_uuid()`; there is no sequential integer identifier on a user-bound table. *(Section 3.2, schema: `id uuid PRIMARY KEY DEFAULT gen_random_uuid()`)*
-- **S-OWNER-10:** A plugin receives no write access to core tables except through the repository methods with the actor obligation, and the core context handed to it is frozen. *(Section 3.11, "Change the core context. The context is frozen (`Object.freeze`).")*
+- **S-OWNER-10:** A plugin receives no write access to core tables except through the repository methods with the actor obligation, and the core context handed to it is frozen, down to its parts: a plugin's clock is a frozen object of its own and never the core's clock. Plugin SQL is exactly one statement: a text with a semicolon, a backslash, a dollar quote or a string opened with `E` or `U&` is refused before it reaches the driver, and a line comment ends as in PostgreSQL at a line feed or a carriage return. *(Section 3.11, "Change the core context. The context is frozen (`Object.freeze`).")*
 - **S-OWNER-11:** A plugin cannot override a core route; a name conflict between a plugin route and a core route leads to an error at start. *(Section 3.11: "A name conflict is a start error, not a warning.")*
-- **S-OWNER-12:** A plugin hook can reject or observe an operation, but cannot replace the core's response and cannot exchange the session resolution. *(Section 3.11, "A hook may reject … or observe. It may not replace the response."; "Replace the password verifier, the session resolution or the origin check." under "What a plugin may not do")*
+- **S-OWNER-12:** A plugin hook can reject or observe an operation, but cannot replace the core's response and cannot exchange the session resolution; it receives a deeply frozen copy of its event and never the object the core goes on working with. A plugin route receives neither a session, a pending nor a state token and no cookie writer, and no cookie arises from its output. *(Section 3.11, "A hook may reject … or observe. It may not replace the response."; "Replace the password verifier, the session resolution or the origin check." under "What a plugin may not do")*
 
 ---
 
@@ -5141,9 +5167,9 @@ soften the first, so it is declined.
 | T-OWNER-7 | S-OWNER-7 | Static | AST scan: no assignment from `req.body`, `req.query` or a header entry to a variable of type `UserId` or `Actor`. | **0 hits** | CI on every commit |
 | T-OWNER-8 | S-OWNER-8 | Integration, generated | For every route with an object identifier: call it once with a foreign and once with an invented identifier and compare the responses byte for byte. | **0 differing bytes** across all route pairs | CI on every commit |
 | T-OWNER-9 | S-OWNER-9 | Static | Check the migration artefact against `information_schema`: no column of type `serial`, `bigserial`, `integer` or `bigint` is the sole primary key of a user-bound table; an integer column in a composite key with `user_id`, such as `time_step` in `velve.totp_used_step`, is a counter of the clock and not an object identifier. | **0 sequential primary keys** | CI on every commit |
-| T-OWNER-10 | S-OWNER-10 | Integration | Test plugin tries (i) a direct `INSERT` into `velve.session` through the driver from the context, (ii) `ctx.repositories = …`. | (i) The context offers no raw driver — does not compile; (ii) throws `TypeError` (frozen object): **2/2** | CI on every commit |
+| T-OWNER-10 | S-OWNER-10 | Integration | Test plugin tries (i) a direct `INSERT` into `velve.session` through the driver from the context, (ii) `ctx.repositories = …`, (iii) through `ownTables.query` one statement of every literal form — `E'…'` with a backslash before the quote, a backslash in a plain string, `U&'…'`, a dollar quote, a line comment up to a carriage return, a semicolon in a string and a comment —, without a role and with `pluginDatabaseRole`, (iv) to reassign `now` on the context's clock. | (i) The context offers no raw driver — does not compile; (ii) throws `TypeError` (frozen object); (iii) each refused before it reaches the driver, `velve.session` unchanged; (iv) the clock is frozen, the core's clock and every other instance's unchanged: **4/4** | CI on every commit |
 | T-OWNER-11 | S-OWNER-11 | Integration | Test plugin registers a route with the path of a core route; a second test plugin collides with the first. | **2/2 lead to a start error**; the error message names both contributors | CI on every commit |
-| T-OWNER-12 | S-OWNER-12 | Integration | Test plugin hook returns a response body and tries to replace the verifier. | The hook's return value **does not influence the response**; the replacement does not compile; a throwing hook rejects the operation: **3/3** | CI on every commit |
+| T-OWNER-12 | S-OWNER-12 | Integration | Test plugin hook returns a response body and tries to replace the verifier; a `beforeSessionCreate` hook pushes `totp` into `factors`; a plugin route reads `sessionToken`, answers with `sessionToken` and with `pendingToken` and calls `cookies.setSession`. | The hook's return value **does not influence the response**; the replacement does not compile; a throwing hook rejects the operation; the session carries only its own factors, also on an instance without the plugin; the route sees no token, and none of its answers sets a cookie: **5/5** | CI on every commit |
 
 ---
 

@@ -1767,7 +1767,13 @@ nicht braucht, gar nicht (`storeTokens: false` ist der Standard).
 
 **Was ein Plugin nicht darf:**
 - Kernrouten überschreiben. Ein Namenskonflikt ist ein **Startfehler**, keine Warnung.
-- Den Kernkontext verändern. Der Kontext ist eingefroren (`Object.freeze`).
+- Den Kernkontext verändern. Der Kontext ist eingefroren (`Object.freeze`), bis in seine Teile:
+  Die Uhr eines Plugins ist ein eigenes eingefrorenes Objekt, und jedes Ereignis, das ein Hook
+  erhält, ist eine tief eingefrorene Kopie.
+- Sitzungstoken lesen oder Cookies setzen. Eine Plugin-Route erhält weder ein Token noch einen
+  Cookie-Schreiber, und aus ihrer Ausgabe entsteht kein Cookie.
+- Mehr als eine Anweisung senden. Plugin-SQL ist genau eine Anweisung, die der Kern so liest wie
+  PostgreSQL oder ablehnt.
 - Den Passwort-Verifier, die Session-Auflösung oder die Origin-Prüfung ersetzen.
 - Kerntabellen direkt beschreiben. Nur Repository-Methoden, und jede verlangt
   einen `actor`.
@@ -3129,6 +3135,12 @@ interface PluginMigration<Id extends string> {
 }
 type PluginRoute<Id extends string> =
   RouteDefinition<`${Id}.${string}`, `/x/${Id}/${string}`, any, any, VelveErrorCode>
+  // der Handler erhält PluginRequestContext statt des Anfragekontexts des Kerns
+interface PluginRequestContext {   // kein Token, kein Cookie-Schreiber
+  readonly session: Session | null; readonly ipAddress: string | null
+  readonly userAgent: string | null; readonly plugin: FrozenContext
+  enforceAccountRateLimit(normalisedIdentifier: string): Promise<void>
+}
 
 interface PluginHooks {
   beforeSignIn?:        (event: SignInEvent,          context: FrozenContext) => Promise<void>
@@ -3179,18 +3191,24 @@ interface FrozenRepositories {
 interface PluginActor { readonly pluginId: string; readonly reason: string }
 ```
 
-Der Namensraum-Zwang ist ein Typ, keine Laufzeitprüfung: `name` beginnt mit `${Id}.`, `path`
+Der Namensraum-Zwang ist ein Typ: `name` beginnt mit `${Id}.`, `path`
 mit `/x/${Id}/`, jede erzeugte Tabelle mit `${Id}_`, jeder Fehlercode mit `${Id}.`. Ein Plugin,
 das eine Kernroute überschreiben will, kann den Deklarationstyp nicht erfüllen; die
 Laufzeitprüfung beim Start bleibt für Plugins aus JavaScript, und ein Namenskonflikt ist dort
-ein Startfehler, keine Warnung. `dependsOn` wird topologisch sortiert, ein Zyklus ist ein
+ein Startfehler, keine Warnung. Sie prüft auch Name und Pfad jeder Plugin-Route selbst: Eine Route
+außerhalb von `${Id}.` oder `/x/${Id}/` ist `plugin_route_conflict`, und ein Namenssegment, das ein
+Promise oder jedes Objekt liest — `then`, `catch`, `finally`, `constructor`, `__proto__`,
+`toString` und ihresgleichen —, ist `route_name_segment_reserved`, weil die Instanz sonst ein
+Thenable würde. `dependsOn` wird topologisch sortiert, ein Zyklus ist ein
 Startfehler.
 
 Neun Hook-Punkte, genau die aus 3.11. Die Rückgabe ist überall
 `Promise<void>` — das ist der Typ, der „Zuhörer mit Vetorecht" ausdrückt: Ein Hook kann
 **ablehnen**, indem er wirft, und **beobachten**, indem er nichts tut; ersetzen kann er die
 Antwort nicht, weil er keine zurückgeben kann. Ein Rückgabetyp `Promise<Event | void>` hätte
-genau die Tür geöffnet, die 3.11 schließt. Alle Ereignisfelder sind `readonly`, und
+genau die Tür geöffnet, die 3.11 schließt. Alle Ereignisfelder sind `readonly`, jeder Hook
+erhält eine bis ins letzte Feld eingefrorene Kopie des Ereignisses, nie das Objekt, mit dem der
+Kern weiterarbeitet, und ein Hook, der hineinschreibt, wirft und lehnt damit ab; und
 kein Ereignis enthält ein Sitzungstoken, ein Klartextkennwort oder einen Hash. Der `digest` des
 Ankers ist kein Hash eines Geheimnisses, sondern der HMAC des Siegels unter `state-mac`; ohne den
 Wurzelschlüssel lässt sich aus ihm nichts berechnen. `afterEmailChange` läuft erst, wenn der
@@ -3211,7 +3229,16 @@ Faktoren schreiben kann, ist Miteigentümer des Kerns. Jede Methode verlangt ein
 Tabellen mit dem Präfix `<pluginId>_` beschränkt. Vom Kontext führt kein Weg zum
 Passwort-Verifier, zur Sitzungsauflösung oder zur Origin-Prüfung — sie sind nicht Teil des
 Typs. Hooks laufen ausnahmslos **nach** Origin-Prüfung und Ratenbegrenzung, auch bei direkten
-Servermethodenaufrufen.
+Servermethodenaufrufen. Die Uhr im Kontext ist je Plugin ein eigenes eingefrorenes Objekt, das die
+Uhr des Kerns fragt; `Object.freeze` ist flach, und die Uhr des Kerns selbst zu übergeben hieße, die
+Zeit von Frische, Ratenbegrenzung und TOTP in die Hand des Plugins zu legen. `ownTables.query`
+nimmt genau eine Anweisung: Ein Text mit einem Semikolon, einem Backslash, einem Dollar-Quote oder
+einer mit `E` oder `U&` eröffneten Zeichenkette wird abgelehnt, bevor er den Treiber erreicht, und
+ein Zeilenkommentar endet wie in PostgreSQL an einem Zeilenvorschub oder Wagenrücklauf — eine
+Anweisung ohne Parameter geht als einfache Abfrage hinaus, und die führt jede Anweisung aus, die sie
+trägt. `repositories.revokeSession` erreicht die Sitzung jedes Kontos, wie `listSessionsForUser`
+jedes Konto liest: Ein Widerruf beendet eine Sitzung und öffnet keine, und jeder Aufruf ist mit
+seinem `actor` protokolliert und angekündigt.
 
 ##### G.1 Beispiel: Anmeldungen protokollieren
 
@@ -4737,9 +4764,9 @@ Der Recherchebericht hält fest: „**jede einzelne** wäre durch die Actor-Pfli
 - **S-OWNER-7:** Die Identität des Aufrufers stammt ausschließlich aus der aufgelösten Sitzung; kein Handler liest eine Nutzerkennung aus dem Anfragekörper, aus einer Query oder aus einem Kopfeintrag, um daraus einen Aktor abzuleiten. *(Abschnitt 3.5, Auflösung per einer Abfrage auf `token_sha256`)*
 - **S-OWNER-8:** „Existiert nicht" und „gehört einem anderen Nutzer" erzeugen dieselbe Antwort mit demselben Status, denselben Kopfzeilen und demselben Körper. *(Abschnitt 3.13, „Absichtlich unsichtbar: Alles, was Existenz verraten würde")*
 - **S-OWNER-9:** Objektkennungen nutzergebundener Zeilen sind `uuid`-Werte aus `gen_random_uuid()`; es existiert keine fortlaufende ganzzahlige Kennung auf einer nutzergebundenen Tabelle. *(Abschnitt 3.2, Schema: `id uuid PRIMARY KEY DEFAULT gen_random_uuid()`)*
-- **S-OWNER-10:** Ein Plugin erhält keinen Schreibzugriff auf Kerntabellen außer über die Repository-Methoden mit Actor-Pflicht, und der ihm übergebene Kernkontext ist eingefroren. *(Abschnitt 3.11, „Den Kernkontext verändern. Der Kontext ist eingefroren (`Object.freeze`).")*
+- **S-OWNER-10:** Ein Plugin erhält keinen Schreibzugriff auf Kerntabellen außer über die Repository-Methoden mit Actor-Pflicht, und der ihm übergebene Kernkontext ist eingefroren, bis in seine Teile: Die Uhr eines Plugins ist ein eigenes eingefrorenes Objekt und nie die Uhr des Kerns. Plugin-SQL ist genau eine Anweisung: Ein Text mit einem Semikolon, einem Backslash, einem Dollar-Quote oder einer mit `E` oder `U&` eröffneten Zeichenkette wird abgelehnt, bevor er den Treiber erreicht, und ein Zeilenkommentar endet wie in PostgreSQL an einem Zeilenvorschub oder Wagenrücklauf. *(Abschnitt 3.11, „Den Kernkontext verändern. Der Kontext ist eingefroren (`Object.freeze`).")*
 - **S-OWNER-11:** Ein Plugin kann keine Kernroute überschreiben; ein Namenskonflikt zwischen einer Plugin-Route und einer Kernroute führt beim Start zu einem Fehler. *(Abschnitt 3.11: „Ein Namenskonflikt ist ein Startfehler, keine Warnung.")*
-- **S-OWNER-12:** Ein Plugin-Hook kann eine Operation ablehnen oder beobachten, aber die Antwort des Kerns nicht ersetzen und die Session-Auflösung nicht austauschen. *(Abschnitt 3.11, „Ein Hook darf ablehnen … oder beobachten. Er darf die Antwort nicht ersetzen."; „Den Passwort-Verifier, die Session-Auflösung oder die Origin-Prüfung ersetzen." unter „Was ein Plugin nicht darf")*
+- **S-OWNER-12:** Ein Plugin-Hook kann eine Operation ablehnen oder beobachten, aber die Antwort des Kerns nicht ersetzen und die Session-Auflösung nicht austauschen; er erhält eine tief eingefrorene Kopie seines Ereignisses und nie das Objekt, mit dem der Kern weiterarbeitet. Eine Plugin-Route erhält weder ein Sitzungs-, Zwischenzustands- noch State-Token und keinen Cookie-Schreiber, und aus ihrer Ausgabe entsteht kein Cookie. *(Abschnitt 3.11, „Ein Hook darf ablehnen … oder beobachten. Er darf die Antwort nicht ersetzen."; „Den Passwort-Verifier, die Session-Auflösung oder die Origin-Prüfung ersetzen." unter „Was ein Plugin nicht darf")*
 
 ---
 
@@ -5154,9 +5181,9 @@ wird nicht genommen.
 | T-OWNER-7 | S-OWNER-7 | Statisch | AST-Scan: keine Zuweisung aus `req.body`, `req.query` oder einem Kopfeintrag an eine Variable vom Typ `UserId` oder `Actor`. | **0 Treffer** | CI bei jedem Commit |
 | T-OWNER-8 | S-OWNER-8 | Integration, generiert | Für jede Route mit Objektkennung: einmal mit fremder, einmal mit erfundener Kennung aufrufen und die Antworten byteweise vergleichen. | **0 abweichende Bytes** über alle Routenpaare | CI bei jedem Commit |
 | T-OWNER-9 | S-OWNER-9 | Statisch | Migrationsartefakt gegen `information_schema` prüfen: keine Spalte vom Typ `serial`, `bigserial`, `integer` oder `bigint` ist alleiniger Primärschlüssel einer nutzergebundenen Tabelle; eine ganzzahlige Spalte in einem zusammengesetzten Schlüssel mit `user_id`, wie `time_step` in `velve.totp_used_step`, ist ein Zähler der Uhr und keine Objektkennung. | **0 fortlaufende Primärschlüssel** | CI bei jedem Commit |
-| T-OWNER-10 | S-OWNER-10 | Integration | Testplugin versucht (i) direkten `INSERT` in `velve.session` über den Treiber aus dem Kontext, (ii) `ctx.repositories = …`. | (i) Der Kontext bietet keinen rohen Treiber — kompiliert nicht; (ii) wirft `TypeError` (eingefrorenes Objekt): **2/2** | CI bei jedem Commit |
+| T-OWNER-10 | S-OWNER-10 | Integration | Testplugin versucht (i) direkten `INSERT` in `velve.session` über den Treiber aus dem Kontext, (ii) `ctx.repositories = …`, (iii) über `ownTables.query` je eine Anweisung jeder Literalform — `E'…'` mit einem Backslash vor dem Anführungszeichen, ein Backslash in einer einfachen Zeichenkette, `U&'…'`, ein Dollar-Quote, ein Zeilenkommentar bis zu einem Wagenrücklauf, ein Semikolon in Zeichenkette und Kommentar —, ohne Rolle und mit `pluginDatabaseRole`, (iv) `now` an der Uhr des Kontexts neu zuzuweisen. | (i) Der Kontext bietet keinen rohen Treiber — kompiliert nicht; (ii) wirft `TypeError` (eingefrorenes Objekt); (iii) jede abgelehnt, bevor sie den Treiber erreicht, `velve.session` unverändert; (iv) die Uhr ist eingefroren, die Uhr des Kerns und die jeder anderen Instanz unverändert: **4/4** | CI bei jedem Commit |
 | T-OWNER-11 | S-OWNER-11 | Integration | Testplugin registriert eine Route mit dem Pfad einer Kernroute; zweites Testplugin kollidiert mit dem ersten. | **2/2 führen zu einem Startfehler**; die Fehlermeldung nennt beide Beitragenden | CI bei jedem Commit |
-| T-OWNER-12 | S-OWNER-12 | Integration | Testplugin-Hook gibt einen Antwortkörper zurück und versucht, den Verifier zu ersetzen. | Der Rückgabewert des Hooks **beeinflusst die Antwort nicht**; das Ersetzen kompiliert nicht; ein werfender Hook lehnt die Operation ab: **3/3** | CI bei jedem Commit |
+| T-OWNER-12 | S-OWNER-12 | Integration | Testplugin-Hook gibt einen Antwortkörper zurück und versucht, den Verifier zu ersetzen; ein `beforeSessionCreate`-Hook schiebt `totp` in `factors`; eine Plugin-Route liest `sessionToken`, antwortet mit `sessionToken` und mit `pendingToken` und ruft `cookies.setSession`. | Der Rückgabewert des Hooks **beeinflusst die Antwort nicht**; das Ersetzen kompiliert nicht; ein werfender Hook lehnt die Operation ab; die Sitzung trägt nur ihre eigenen Faktoren, auch auf einer Instanz ohne das Plugin; die Route sieht kein Token, und keine ihrer Antworten setzt ein Cookie: **5/5** | CI bei jedem Commit |
 
 ---
 

@@ -19497,3 +19497,83 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** (a) Keeping the reservation and recording it as a breaking change, which would charge every application for a feature it did not turn on. (b) Checking `cookie-sig` in `assertKeysAnswerForEveryPurpose` for every instance, which would refuse a provider that starts today for a feature it does not use.
 **Reason.** The direct server call takes `proofOfWork` out of the input as its envelope field, except while `environment.proofOfWork` is absent and the route declares an input field of that name; then the field reaches the route as its own input, as before 3.0.0, and a call that passes the envelope field to a route that does not declare it still has it ignored. With it, the assembly refuses any core or plugin route declaring an input field `proofOfWork` with `proof_of_work_unusable`, naming the route, since the envelope would swallow that field. `migrate()`, where the key ring is already asked for every purpose, then also asks `keyTakesMac` of the current `cookie-sig` key when the proof of work is configured and refuses with `keys_unusable`, naming `cookie-sig` and the proof of work, as a key that cannot take a MAC is refused for the integrity purposes.
 **Price.** An application with a plugin route that takes a `proofOfWork` input has to rename it before it can turn the proof of work on. The key check runs at `migrate()` and not at construction, like every other key check that needs to await the provider.
+
+<a id="e-3940"></a>
+
+### Plugin SQL is read as PostgreSQL reads it, and a form whose end depends on escapes is refused
+`E-3940` · security-review · plugins, settled
+
+**Context.** Finding PLUGINS-1 (high) and PLUGINS-2 (medium). The statement check in `src/core/plugin/own-tables.ts` ended a string literal at the first lone quote and a line comment at a newline. PostgreSQL reads a backslash before a quote inside an `E'…'` literal as an escaped quote, reads a plain literal the same way while `standard_conforming_strings` is off, and ends a line comment at a carriage return as well (PostgreSQL documentation, 4.1.2 and 4.1.5). Text the check erased as data was code to the database: a read or delete of a core table in the default configuration, and `RESET ROLE` followed by a delete under `pluginDatabaseRole`.
+**Rejected.** (a) Teaching the reader backslash escapes, unicode escapes with `UESCAPE` and both settings of `standard_conforming_strings`, which makes the reader's correctness depend on a server setting the library does not read. (b) Leaving the role and the plugin login as the only bound, which the default configuration does not have.
+**Reason.** The simplest reader that agrees with PostgreSQL is one that refuses every form whose end depends on escapes. A quote opened by an `E` or a `U&` prefix is refused; an `e` after a digit counts as such a prefix, as PostgreSQL 14 reads `1e'…'` as a number and an escape string. A line comment ends at `\n` or `\r`. Dollar quotes were refused already and stay refused. Values that need those forms go in as parameters, which OWASP's SQL injection prevention cheat sheet names as the first defence. One test per form is in `test/security-plugins-1-statement-forms.test.ts`.
+**Price.** A plugin statement that used an escape string literally, or a typed literal written without a space after an identifier ending in `e`, is refused and has to pass the value as a parameter. The check remains a guardrail and not a sandbox (E-738); the role and the plugin login remain the database's bound.
+
+<a id="e-3941"></a>
+
+### Plugin SQL with a semicolon or a backslash anywhere is refused before it is read
+`E-3941` · security-review · plugins, settled
+
+**Context.** The second half of PLUGINS-1. The check refused a `;` only where its reader saw code, so any disagreement between its reader and PostgreSQL's became a statement list. node-postgres, like the test connection, sends a statement without parameters as a simple query, and a simple query runs every statement it carries.
+**Rejected.** Sending every plugin statement through the extended protocol, which allows one statement per message. The driver is a parameter of the library (CLAUDE.md §7), and the `Driver` interface has no way to ask for the extended protocol; adding a dummy parameter changes what a plugin's `$1` means.
+**Reason.** A statement list needs a `;`, and a hidden escape needs a `\`. Refusing both anywhere in the text — inside a literal or a comment included — before the reader runs makes a second statement impossible whatever a later reading gets wrong, which is the second layer the finding asked for.
+**Price.** A plugin that wrote a semicolon or a backslash inside a literal has to pass it as a parameter.
+
+<a id="e-3942"></a>
+
+### A plugin route is given no token and no cookie writer, and its output becomes no cookie
+`E-3942` · security-review · plugins, breaking
+
+**Context.** Finding PLUGINS-3 (medium). A plugin route handler received the core's own `RequestContext`: the caller's plaintext `sessionToken` and `pendingToken`, the OAuth state pointer and the cookie writer, and its output went through `moveTokensIntoCookies` like a sign-in route's. 3.15 G closes on a plugin having no access to session tokens, G19 leaves cookies to the core alone, and 3.11 forbids replacing the session resolution. OWASP's session management cheat sheet treats the session identifier as the credential it is.
+**Rejected.** (a) Blanking the token fields and handing an inert cookie writer, which keeps the shape and silently drops a write the plugin author believes happened. (b) Refusing a plugin route whose output carries a `sessionToken` field, which a plugin may use for data of its own.
+**Reason.** The registry builds plugin routes with `defineContributedRoute` in `src/core/http/route.ts`, which hands the handler a frozen `PluginRequestContext` of `session`, `ipAddress`, `userAgent`, `plugin` and `enforceAccountRateLimit`, and marks the route; the web handler answers a marked route's output as JSON and moves no field of it into a cookie, the same way `redirectingRoutes` limits a redirect to the one route allowed one. A route declared `caller: "session"` still gets the resolved session.
+**Price.** Breaking for plugin authors. Migration: type a plugin handler's context as `PluginRequestContext`, exported beside `PluginRoute`. A plugin that read `sessionToken`, `pendingToken` or `oauthStateToken`, or wrote a cookie, has no replacement, by design; one that needs the account reads `context.session.userId`. A JavaScript plugin calling `context.cookies` now meets a `TypeError`, answered `internal_error`.
+
+<a id="e-3943"></a>
+
+### Every hook is handed a deeply frozen copy of its event
+`E-3943` · security-review · plugins, breaking
+
+**Context.** Finding PLUGINS-4 (medium). The dispatcher handed each listener the object the flow built, and `SessionCreateEvent.factors` was the array the flow then wrote into the session row and its token MAC. The reset's factor list was a module constant shared by every instance in the process. A `beforeSessionCreate` listener that pushed `totp` decided which factors a session claimed, on its own instance and, through the constant, on an instance without the plugin. 3.15 G says every event field is `readonly`, which TypeScript states and nothing enforced.
+**Rejected.** (a) Handing each listener a fresh mutable copy, which keeps a write silent and lets the listener believe it changed something. (b) Freezing the flow's own arrays, which leaves the event the flow's object and makes the flow's correctness depend on every producer remembering to freeze.
+**Reason.** The dispatcher copies the event once per dispatch and freezes it down to its last array (`frozenCopyOf` in `src/core/plugin/registry.ts`), so no listener holds an object the flow reads again and none can change what the next listener sees. A listener that writes into it throws, which 3.11 already makes a refusal. The reset's constant `ISSUE_OF_A_RESET` is frozen too. `OAUTH_FACTORS` in `src/core/oauth/service.ts` is reached by no hook any more; freezing it was left to the branch that owns that directory, which this branch was told not to touch.
+**Price.** Breaking for a hook that wrote into its event, which now refuses the operation it was told about. Migration: copy the field before changing it. One copy per dispatch costs an allocation proportional to the event, which is a few strings.
+
+<a id="e-3944"></a>
+
+### A plugin holds a frozen clock of its own, and the system clock is frozen
+`E-3944` · security-review · plugins, settled
+
+**Context.** Finding PLUGINS-5 (medium). The frozen context carried `services.clock`, the object the pipeline reads freshness from, the rate limiter its window and TOTP its time step. `Object.freeze` is shallow, so a plugin reassigned `now`; without a configured clock that object was `SYSTEM_CLOCK` in `src/index.ts`, shared by every instance in the process.
+**Rejected.** Freezing the configured clock in place, which would change an object the operator owns and may mean to drive in a test.
+**Reason.** Each plugin context gets `Object.freeze({ now: () => services.clock.now() })`, so the plugin reads the core's time and holds nothing that is the core's, and `SYSTEM_CLOCK` is frozen. This follows 3.11's "the context is frozen" to its parts rather than adding a rule.
+**Price.** A plugin that compared `context.clock` with the core's clock by identity now sees two objects. A test that replaced `now` on the shared system clock now fails to, which is the point.
+
+<a id="e-3945"></a>
+
+### A plugin route's name and path are held to its namespace at start, and no segment may be a promise's or every object's member
+`E-3945` · security-review · plugins, breaking
+
+**Context.** Finding PLUGINS-6 (low). 3.15 G held a plugin route's name to `<id>.` and its path to `/x/<id>/` by type alone. A JavaScript plugin could mount a route at a core-looking path, under another plugin's or a free namespace, or name a route `then`, which makes the instance or one of its namespaces a thenable that `await` calls.
+**Rejected.** New start codes `plugin_route_outside_its_namespace` and `plugin_route_name_reserved`, which belong in `src/core/auth/startup.ts`, a file outside this branch's set; that change is handed off.
+**Reason.** The registry refuses, before any route is built, a route whose name does not begin with its plugin's id and a dot or whose path does not begin with `/x/<id>/` and go on below it, as `plugin_route_conflict` naming the namespace's owner — the plugin of that id if one is configured, the core otherwise — and the arriving plugin, which is what that code's contract states. A name segment from the members a promise or every object reads (`then`, `catch`, `finally`, `constructor`, `prototype`, `__proto__`, `toString`, `toLocaleString`, `valueOf`, `toJSON`, `hasOwnProperty`, `isPrototypeOf`, `propertyIsEnumerable` and the four legacy accessors) is `route_name_segment_reserved`, whose stated message still names three of them. Two plugins can no longer collide on a route at all, so `test/plugin-route-conflict-contributors.test.ts` now has the second plugin reach into the first one's namespace.
+**Price.** Breaking for a JavaScript plugin whose routes sit outside its namespace or carry one of those segments; migration is renaming the route under `<id>.` and `/x/<id>/`. The message of `route_name_segment_reserved` understates the set until `startup.ts` is changed.
+
+<a id="e-3946"></a>
+
+### An anchor floor that throws while it is read is the anchor_unavailable alarm
+`E-3946` · security-review · security-state, settled
+
+**Context.** The unconfirmed note of the plugin review, confirmed by `test/security-plugins-7-anchor-throwing-getter.test.ts` and tracked as PLUGINS-7 (low). `consultAnchors` in `src/core/security-state/anchor.ts` decoded the answer in the fulfilment handler of the same `then` whose rejection handler caught a throwing anchor, so a floor whose `version` or `digest` getter threw rejected the whole reading. 3.15 G makes every answer other than `null` or a valid floor a broken state with the alarm `anchor_unavailable`.
+**Rejected.** Copying the answer with a structured clone first, which runs the same getters and needs the same catch.
+**Reason.** The decode now runs before a `catch` that covers both the call and the reading of its answer, so the reading is `unavailable` and the verdict `anchor_unavailable`, which the callers already raise as the alarm.
+**Price.** None beyond the one handler.
+
+<a id="e-3947"></a>
+
+### A plugin's revokeSession reaches any account's session, and that is the documented power
+`E-3947` · security-review · plugins, settled
+
+**Context.** The map of every way into an account noted that `repositories.revokeSession` in `src/core/plugin/context.ts` revokes a session of any account, only logged. 3.15 G types it as `revokeSession({ sessionId, reason, actor })` with no account, beside `listSessionsForUser({ userId, actor })` for any `userId`, and `DOCUMENTATION.md` describes it the same way.
+**Rejected.** Restricting it to the account the current event or route concerns, which the specification does not promise and which would leave an administration plugin no way to end a session the application decided to end.
+**Reason.** A revocation ends a session and opens none, so it is not a way into an account; it is a denial of service a plugin, which runs in the application's process, can cause by other means anyway. Every call names its `actor`, is logged and is announced through `beforeSessionRevoke`. The specification now states the reach in 3.15 G so it reads as a decision and not as an omission.
+**Price.** A malicious plugin can sign any account out, which the operator accepts by installing it.
