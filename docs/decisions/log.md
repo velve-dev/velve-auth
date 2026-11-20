@@ -18657,3 +18657,113 @@ One consequence of restating in place that the rule does not mention, and that s
 **Rejected.** Logging the plugin's code through a field of its own beside the error map's `cause`, which needs a log sink the flow does not hold (E-3717 (a)).
 **Reason.** For a `VelveError` the aggregate's message takes its `code` instead of its `message`; every other failure keeps its message as before. The code is what `registerPluginErrorCodes` keys a plugin's refusal by and starts with the plugin's id, so the line names the plugin. The message stays in the aggregate, which the error map answers as `500 internal_error` without its text, so nothing new reaches the caller.
 **Price.** A plugin that throws a `VelveError` with a core code is logged by that core code, which names no plugin; and the text E-3717's Reason calls "the message naming both" now names a refusal by its code rather than its words.
+
+<a id="e-3730"></a>
+
+### The no-recovery switch is a sealed column on the account row
+`E-3730` · no-recovery-switch · storage format, frozen
+
+**Context.** Change 5 of 3.0.0 asks for a per-account switch that turns every mailed path into the account off and deletes its recovery codes, and that "a write to the database alone cannot turn off". Section 3.18 already has one mechanism against that writer: a component of the seal, changed only under the account lock by `sealChange`, and checked by every sign-in, factor check, session resolution and redemption in the one statement that reads the state. Migration 6 adds `velve.user.recovery_disabled_at timestamptz`, nullable, set while the switch is on; the state document reads whether it is set beside `disabled_at`, and `SealedComponents` carries `recoveryDisabled`.
+**Rejected.** (a) A column on `velve.security_state`, which `writeSealRow` writes with a fixed column list and every generation beside it; the switch is something the seal covers, not something the seal row is. (b) A table of its own, like `password_reset_required`, which would make the schema eighteen tables for one bit and add an owned table to the census of every user-owned table. (c) A boolean, which would lose when the switch went on for an operator reading the row; the timestamp follows `disabled_at`.
+**Reason.** `disabled_at` is the precedent: a bit about the account that the seal covers as a boolean and the row keeps as a time. A writer who clears or sets the column changes a sealed component without the root key, so every check finds `seal_mismatch` and refuses, and no change reseals over it (S-INTEG-3, S-INTEG-11). Adding a nullable column without a default rewrites no row.
+**Price.** `velve.user` is the row every sign-in reads; it gains a column nobody but this feature reads. An instance before 3.0.0 does not read the column, so it would seal an account whose switch is on without it and break that account's state; the switch must not be used until every instance runs 3.0.0, which the specification and the documentation say.
+
+<a id="e-3731"></a>
+
+### The encoding appends the switch only while it is on
+`E-3731` · no-recovery-switch · storage format, frozen
+
+**Context.** Adding a field to the canonical encoding of S-INTEG-2 changes the encoding, and so the HMAC, of every account. An encoding with the field always present would break the seal of every account sealed before migration 6, and the estate would need `resealSecurityState` account by account, which ratifies whatever a writer left there (S-INTEG-7). The requirement says the switch changes nothing for accounts that never use it.
+**Rejected.** (a) The field always present, for the reason above. (b) A new context string `velve-auth/security-state/v2` for switched-off accounts only, which needs the verifier to try two contexts and gains nothing over (c). (c) is taken.
+**Reason.** The encoding is self-delimiting: every field carries its type and length and every list its count, so a trailing `BOOLEAN true` after the recovery-code list cannot be produced by any state without it. `encodeSecurityState` appends it only when `recoveryDisabled` is true, so an account that never turned the switch on has byte for byte the encoding, and therefore the seal, it had before; `test/security-state-seal-encoding.test.ts` pins both forms, the property test mutates the switch like every other field, and `test/no-recovery-switch-seal.test.ts` checks that a fresh account's stored digest is taken over the encoding without it.
+**Price.** The switch is the one component that is absent from the encoding rather than encoded as false, so the encoding has two shapes and a second implementation must know that.
+
+<a id="e-3732"></a>
+
+### A request for a link reads the switch from the row its lookup already reads
+`E-3732` · no-recovery-switch · enumeration, settled
+
+**Context.** A switched-off account must "refuse with the same answer an unknown address gets", and the orchestrator fixed that this includes the statements and the one send of `request_for_unknown_address` (L-1, S-TIM-6). `requestReset` and `requestMagicLink` look the address up with `findUserByEmail`, mint a row, and send; the unknown branch mints a row with no owner, serialised on the address. Neither reads the seal today.
+**Rejected.** Reading and checking the security state on the request side, which adds statements and an HMAC to one branch and not the other and so reopens the oracle S-TIM-6 closes; doing the same work for an unknown address as well would add a stand-in read to two routes for no gain, because the request issues nothing an attacker can use.
+**Reason.** `User` gains `recoveryDisabledAt`, read in the same statement as the rest of the row, and `ownerAMailedLinkMayReach` treats an account with it set as no account, so the request runs exactly the unknown branch: the same statements, `subjectOfAddress(null, …)`, one send of `request_for_unknown_address`. `test/no-recovery-switch-mailed-paths.test.ts` records the statements of both and finds them equal. The seal is checked where it matters, at redemption.
+**Price.** The request side trusts an unsealed column. A writer who clears it makes the next request mail a real link to the account's own address; its redemption meets the broken state and is refused with `seal_mismatch`. A writer who sets it suppresses the mail, which deleting the row's address would do as well.
+
+<a id="e-3733"></a>
+
+### The switch names its account through an actor of its own
+`E-3733` · no-recovery-switch · ownership, settled
+
+**Context.** Turning the switch on deletes the account's recovery codes, a write to an owned table by owner, and S-OWNER-1 has such a write take an `Actor` (E-242, E-2420). `user.disable` and `user.enable` hold no proof and change the account as `{ unproven: userId }`, which leaves an unsealed account unsealed in mode `"migrating"` (E-3162). The maintenance step met the same need and added `actorOfMaintenance` (E-3176), whose price is that its safety rests on its single caller.
+**Rejected.** (a) Calling `actorOfMaintenance`, which would give that producer a second caller and void the one thing E-3176 says keeps it safe. (b) A recovery-code delete taking a plain `userId`, which `test/owner-actor-census.test.ts` would count as a method without a proof and which is outside this feature's files to excuse. (c) `{ unproven: userId }` for the sealing change, which would leave a switched-off account unsealed while the estate migrates, so that a writer could clear its switch unseen.
+**Reason.** `actorOfRecoverySwitch(userId)` in `src/core/db/actor.ts`, called only from `src/core/security-state/recovery-switch.ts`, for the reason E-3176 gives: no request can reach the call, and the id was chosen by the application after its own authorisation decision. With an actor the sealing change converts and seals an unsealed account, so the switch is covered from its first write.
+**Price.** `actor.ts` now holds two producers that take a plain string, and the safety of each rests on its single caller, which no test enforces.
+
+<a id="e-3734"></a>
+
+### The switch is audited through the operator's log once it has committed
+`E-3734` · no-recovery-switch · logging, settled
+
+**Context.** The requirement says turning the switch on and off "is audited through the existing events", and the orchestrator fixed that this means the existing `log` sink with an event name and the account id and no address, because section 3.14 rules out a stored audit log. `user.disable` logs through `config.log` before it seals, and its line is lost when no `log` is configured. The administrator reseal logs through the operator sink, `config.log` or the console without it, because "a reseal must reach the operator even without a configured sink" (S-INTEG-7).
+**Rejected.** (a) Logging before the change, as `disable` does, which records a switch that a broken state then refused. (b) `config.log` alone, which loses the line silently in a deployment without one. (c) A row in a table, which 3.14 excludes.
+**Reason.** OWASP ASVS V7 asks that security-relevant events be logged and that logs carry no data beyond what is needed. The line `account recovery disabled` or `account recovery enabled`, at level `warn`, with `{ userId }` and nothing else, is written after `sealChange` returns, through the operator sink, so it reaches the operator with or without a configured `log`. A sink that throws does not undo or fail a switch that has already committed.
+**Price.** A deployment without `log` gets the two lines on the console. The switch does not take a reason, unlike `disable`; an operator who wants one records it in the application.
+
+<a id="e-3735"></a>
+
+### The switch keeps the epoch and revokes no session
+`E-3735` · no-recovery-switch · sessions, settled
+
+**Context.** The orchestrator asked to decide and record which sessions the switch affects. Every mass revocation draws a new epoch (S-INTEG-3); the password writes revoke every other session (S-FIX-6). The consuming application turns the switch on for its own staff accounts, which are signed in when it happens.
+**Rejected.** Revoking every session when the switch goes on, which signs a member of staff out of the session they used to get the protection, and on turning it off, which an operator does to give the account a way back in and which no attacker reaches without the operator.
+**Reason.** NIST SP 800-63B and the OWASP session cheat sheet tie revocation to a change of the authenticators that sign in or to a suspected compromise. The switch removes ways in and changes no credential an existing session was proven with; it does not change who is signed in. The change uses `epoch: "keep"`; its new `components_version` makes an issue whose check came before it miss, as every component change does, so no session is created from a state that still offered recovery.
+**Price.** A session an attacker already holds survives the switch; the switch is not a response to a compromise, and `session.revokeAll` is.
+
+<a id="e-3736"></a>
+
+### Turning recovery off retires the links and refuses the rest under the lock
+`E-3736` · no-recovery-switch · one-time tokens, settled
+
+**Context.** A link minted before the switch went on, or by a request whose lookup ran just before it, must be "refused at redemption exactly like an invalid token", and a reset held back for a second factor (change 1, S-FIX-7) must not complete. Deleting the account's one-time tokens and pending rows in the switch's transaction would take the account lock and then reach `one_time_token` and `pending_authentication`, which §7 orders before `velve.user` and `pnpm check:token-after-lock` refuses, and which would deadlock against a redemption that consumed its row and waits for the lock.
+**Rejected.** (a) Deleting the rows, for the lock order. (b) Spending a refused link as a disabled account's link is spent (E-2879), which moves the generation and writes a seal on a path an unknown token never writes.
+**Reason.** The switch draws new generations for `password_reset` and `magic_link` through a new `retire` move of the sealing change, with no row that moved them; every link minted before it binds a generation the account has left and is refused by `refuseATokenWrittenBack` as an unknown token, and stays refused after the switch goes off again. A link minted after it is refused by `refuseALinkWhileRecoveryIsDisabled` on the verified read, which throws inside the redemption's transaction, so the consumption rolls back and nothing is written. The completion of a held back reset checks the same read under the lock and refuses as a missing pending authentication. Each refusal is logged with a reason of its own, `recovery_disabled_on_token_redemption` or `recovery_disabled_on_pending_reset`.
+**Price.** A refused link costs the lock and the seal check an unknown token does not, as a disabled account's does; the answer is identical, the timing is not. A refused link stays in its table until it expires. A pending reset stays until it expires, and each completion attempt still books an attempt and spends its factor code before it is refused.
+
+<a id="e-3737"></a>
+
+### Generating codes while recovery is off answers recovery_disabled
+`E-3737` · no-recovery-switch · error codes, settled
+
+**Context.** The orchestrator asked that generating codes refuse "with one stable code". `factor.recovery.generate` is called by the signed-in owner, who may learn that the account has no recovery; no existing code says so — `factor_not_enrolled` means the factor is missing, and every refusal on that route so far is about the session. Section 3.15 F said "25 Codes", a new one "only with a new route", while the code list already held 27: `passkey_limit_reached` and `identity_limit_reached` arrived with 2.0.0 on existing routes, and the count was not moved.
+**Rejected.** Reusing `factor_not_enrolled`, which would tell an application that something can be enrolled when nothing can.
+**Reason.** `recovery_disabled`, 409, "Recovery is turned off for this account.", is the answer of a state conflict like the limit codes. The code is checked under the account lock on the verified read, inside the sealing change that would write the codes, so a generation racing the switch either completes before it, and the switch deletes its codes, or is refused. F now states 28 codes and that a new one arrives with a new route or a new refusal on an existing one, which is what the limit codes already did. A deleted code presented at `factor.recovery.verify` or `password.redeemResetWithRecoveryCode` answers `invalid_recovery_code` as a wrong code does, also on the verified read.
+**Price.** The rule that a code arrives only with a route was already false and is now weaker in writing. `DOCUMENTATION.md` says "25 codes" in its server-call section and in *Error codes*, whose table lacks the two limit codes as well; both are outside this feature's chapter, which documents the new code, and are reported.
+
+<a id="e-3738"></a>
+
+### What remains is sign-in with an enrolled credential, and the automatic link is not covered
+`E-3738` · no-recovery-switch · scope, revisit after 3.0.0
+
+**Context.** "Only sign-in with an enrolled credential remains." The orchestrator fixed that an enrolled credential includes a password and a linked identity and that mailed paths are what is switched off, and asked to decide the rest. The mailed paths into an account are the reset and the magic link; email verification and the address change mail links too.
+**Rejected.** (a) Refusing password and OAuth sign-in, which would leave a staff account the passkey alone where the application chose otherwise, and which no part of the requirement asks for. (b) Refusing address verification and address change, which issue no session and set no credential; verification may remove a foreign password (S-LINK-4), which takes a way in away rather than adding one.
+**Reason.** Password, passkey, linked identity and every enrolled second factor except the deleted codes remain. The recovery of change 6, recovery to a new passkey through the address, is not built yet; the specification has it answer as for an unknown address and names `recoveryIsDisabledFor` on the verified read as the predicate it asks. The automatic linking of a new identity through a trusted provider's confirmed address (3.10, S-LINK-2) is a way in through the address that uses no enrolled credential, and it does not ask the switch: `src/core/oauth/linking.ts` and `src/core/oauth/service.ts` are outside this feature's files. The specification names that limit rather than hiding it, and it is reported for a follow-up.
+**Price.** Until the follow-up, a switched-off account without a second factor can be joined by a new identity of a trusted provider that reports its address as confirmed; an account with a second factor is still asked for it.
+
+<a id="e-3739"></a>
+
+### The switch is two server methods and reads back as recoveryDisabledAt
+`E-3739` · no-recovery-switch · public interface, settled
+
+**Context.** The requirement asks for a server-only method without an HTTP route; the orchestrator suggested following `user.disable` and `user.enable` and deciding whether the state is readable.
+**Rejected.** (a) One method `setRecovery({ userId, enabled })`, whose boolean reads as the opposite of the switch's name at every call site and which pairs with nothing in the namespace. (b) A separate read method, when `findById` already returns the account.
+**Reason.** `user.disableRecovery({ userId })` and `user.enableRecovery({ userId })` pair as `disable` and `enable` do, and neither has a route, a client call or a plugin point. `User.recoveryDisabledAt` reports the switch on every read of an account, `findById` among them, so the application can show it and the owner learns it with their own account. An unknown account and an id that is not a uuid answer `invalid_input`; a broken state is refused like any change, with the alarm.
+**Price.** `User` reaches the browser in every sign-in result, so the client learns whether its own account has recovery off; that is the owner's own state. `B.3` counts eight methods and `AuthSurface` two more in each mode.
+
+<a id="e-3740"></a>
+
+### The specification counts two requirements more, in ENUM and INTEG
+`E-3740` · no-recovery-switch · specification, settled
+
+**Context.** The behaviour needs requirements and test cases. The sealed switch belongs to INTEG, which already has the writer as its attacker; the identical answers of the mailed paths are an enumeration property, the same one S-ENUM-5 and S-TIM-6 hold for an unknown address.
+**Rejected.** A twentieth class for recovery, which would change "neunzehn Fehlerklassen" for two members, as E-3716 rejected for the address notice.
+**Reason.** S-INTEG-11 and T-INTEG-11, S-ENUM-9 and T-ENUM-9 are added in both languages, S-INTEG-2 names the switch among the sealed components, and the stated counts move to 139 requirements, 143 test cases and 124 per commit. The tests are `test/no-recovery-switch-seal.test.ts` and `test/no-recovery-switch-mailed-paths.test.ts`; each case was checked to fail with the line it holds removed.
+**Price.** ENUM now holds a requirement whose subject is an account's own setting rather than whether an account exists; the property it states is that the two cannot be told apart.
