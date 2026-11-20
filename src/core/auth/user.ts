@@ -122,6 +122,17 @@ function toUser(row: UserRowShape): User {
 	};
 }
 
+//the two switches of an account are set only by the application itself and share one statement
+function switchStatement(
+	users: string,
+	column: "disabled_at" | "recovery_disabled_at",
+	on: boolean,
+): string {
+	return `UPDATE ${users} /* no owner predicate: S-OWNER-7, the caller is the application itself (B.3) */
+				SET ${column} = ${on ? "now()" : "NULL"}, updated_at = now()
+				WHERE id = $1`;
+}
+
 export function createUserRepository(options: {
 	readonly driver: Driver;
 	readonly schema: string;
@@ -196,21 +207,11 @@ export function createUserRepository(options: {
 
 		//sessions are not deleted here as resolution must refuse them once the account is disabled
 		async setDisabledAt({ userId, disabled }) {
-			await options.driver.query(
-				`UPDATE ${users} /* no owner predicate: S-OWNER-7, the caller is the application itself (B.3) */
-				SET disabled_at = ${disabled ? "now()" : "NULL"}, updated_at = now()
-				WHERE id = $1`,
-				[userId],
-			);
+			await options.driver.query(switchStatement(users, "disabled_at", disabled), [userId]);
 		},
 
 		async setRecoveryDisabledAt({ actor, disabled }) {
-			await options.driver.query(
-				`UPDATE ${users} /* no owner predicate: S-OWNER-2, velve.user is the owned row and id is its owner column */
-				SET recovery_disabled_at = ${disabled ? "now()" : "NULL"}, updated_at = now()
-				WHERE id = $1`,
-				[actor],
-			);
+			await options.driver.query(switchStatement(users, "recovery_disabled_at", disabled), [actor]);
 		},
 
 		async deleteUser(userId) {
