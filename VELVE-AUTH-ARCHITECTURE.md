@@ -242,13 +242,13 @@ Source references are relative to `/home/claude/better-auth/` and come from the 
 | C77 `disableImplicitSignUp` | Registration only with an explicit `requestSignUp: true` | Adopt | Unchanged. |
 | C78 `overrideUserInfoOnSignIn` | Overwrites the profile data at every sign-in | Solve differently | `velve.identity.profile` is overwritten at every sign-in with the current claims, `velve.user` remains untouched. There is no competition between the provider profile and the local profile, because there is no local profile. |
 | C79 `requireEmailVerification` per provider | Demands `email_verified` from the provider | Solve differently | No switch per provider: `provider_email_verified` is one of the three non-negotiable conditions of the linking rule (section 3.10). For the sign-in itself the provider's verification status is irrelevant, because the email is not a key. |
-| C80 Account linking globally on/off | `account.accountLinking.enabled`, default `true` (`init-options.ts:1188`) | Solve differently | No global switch. Automatic linking happens only when all three conditions hold (provider reports verified, local account verified, provider in `trustedProviders`); otherwise a new account comes into being or an express linking in an existing session is needed. |
-| C81 `trustedProviders` | List of providers whose email counts as proof of ownership (`init-options.ts:1240`) | Adopt | Adopted as one of the three conditions — but never as the sole proof. |
+| C80 Account linking globally on/off | `account.accountLinking.enabled`, default `true` (`init-options.ts:1188`) | Solve differently | No global switch. Nothing is ever linked automatically (3.10, since 3.0.0): if an account carries the address, the sign-in answers `identity_link_required`, otherwise a new account comes into being; linking happens expressly in a session of the account. |
+| C81 `trustedProviders` | List of providers whose email counts as proof of ownership (`init-options.ts:1240`) | Adopt | Adopted for confirming the address of an account that a sign-in through the provider creates; since 3.0.0 it leads to no link (3.10). |
 | C82 `allowDifferentEmails` | Allows manual linking with a deviating email (`init-options.ts:1264`) | Solve differently | Needs no switch: since the email is never a linking key, a deviating address is the normal case at an express linking. |
 | C83 `allowUnlinkingAll` | Allows the removal of the last linked account (`init-options.ts:1270`) | Solve differently | Instead of a switch the core checks whether a sign-in method still remains after the unlinking (password, passkey or a further identity), and otherwise refuses with `last_sign_in_method` (L-13). That is a statement about the state, not a default setting. |
 | C84 `updateUserInfoOnLink` | Updates profile data at linking (`init-options.ts:1280`) | Omit | Removed with C63: there is no profile data in `velve.user`. |
-| C85 `disableImplicitLinking` | Forbids automatic linking with the same email (`init-options.ts:1199`) | Solve differently | An empty `trustedProviders` list switches implicit linking off completely — it is the default setting, not an additional switch. |
-| C86 `requireLocalEmailVerified` | Additionally demands that the local account is verified (`init-options.ts:1218`) | Surpass | Not an option but condition 2 of the linking rule and not switchable off. Better Auth retrofitted it only as a fix for CVE-2026-53516 (CVSS 8.3) — the auto-link gate never read the local `emailVerified`. |
+| C85 `disableImplicitLinking` | Forbids automatic linking with the same email (`init-options.ts:1199`) | Solve differently | Since 3.0.0 implicit linking exists in no configuration, so there is nothing to switch off (3.10). |
+| C86 `requireLocalEmailVerified` | Additionally demands that the local account is verified (`init-options.ts:1218`) | Surpass | Not an option: up to 2.x it was condition 2 of the linking rule and not switchable off, since 3.0.0 there is no automatic link left that would need it (3.10). Better Auth retrofitted it only as a fix for CVE-2026-53516 (CVSS 8.3) — the auto-link gate never read the local `emailVerified`. |
 | C87 Link an account manually | `POST /link-social` in the signed-in state (`account.ts:126`) | Adopt | Over `velve.oauth_flow.link_to_user_id`; the target session is thereby fixed server-side and cannot come out of the callback. |
 | C88 Unlink an account | `POST /unlink-account` (`account.ts:453`) | Adopt | Unchanged, with the check from C83. |
 | C89 List linked accounts | `GET /list-accounts` (`account.ts:45`) | Adopt | Delivers `provider`, `subject`, `provider_email`, `scopes`, timestamps — never tokens. |
@@ -904,7 +904,7 @@ absence is evidenced — source code, advisory or issue.
 | A Postgres schema of its own | All tables lie in the application's search path; that is why `modelName`, `fields` and `usePlural` exist, to dodge collisions | Everything lies in `velve` (configurable). Nothing collides, `user` needs no quotation-mark discipline, and the naming options fall away without replacement (section 3.2). |
 | Real PostgreSQL types and constraints | No partial indexes, no expression indexes, no PG enums, no `inet`, no CHECK constraints, no triggers; `string[]` lands as a JSON string in `jsonb` (inventory N4-45/46/47) | `uuid`, `timestamptz`, `bytea`, `inet`, `text[]`, `jsonb`, partial unique indexes, CHECK constraints for the normalisation and the identity rule, a trigger against `UPDATE session SET user_id`. |
 | Uniqueness of `(provider, subject)` in the database | No unique constraint on `account(providerId, accountId)`; the check stands in JavaScript and is susceptible to races (`db/internal-adapter.ts:1192-1215`, inventory N4-43) | `CONSTRAINT identity_provider_subject UNIQUE (provider, subject)`. The email is never a linking key. |
-| Linking conditions that cannot be switched off | The auto-link gate never read the local `emailVerified` (CVE-2026-53516, CVSS 8.3); the magic link/OTP variant is GHSA-qq9h-g4jm-xgf3 | Automatic linking happens only when the provider reports the email as verified **and** the local account is verified **and** the provider stands in `trustedProviders`. All three, without exception (section 3.10). |
+| Linking conditions that cannot be switched off | The auto-link gate never read the local `emailVerified` (CVE-2026-53516, CVSS 8.3); the magic link/OTP variant is GHSA-qq9h-g4jm-xgf3 | Nothing is ever linked automatically: a sign-in through a new identity with the address of an existing account answers `identity_link_required`, linking happens only from a session of the account (section 3.10, since 3.0.0; up to 2.x three conditions held without exception). |
 | Enumerated plugin extension points with a start error on collision | Collisions of endpoints and tables are only logged (`api/index.ts:153-170`); there is no sandboxing, no declared dependencies and no topological sorting (inventory N5-54/55/56) | Nine enumerated hook points, the namespace `/x/<plugin-id>/…`, the table prefix `<plugin-id>_`, `dependsOn` with topological sorting, a frozen context — and a name conflict is a start error. |
 | Purpose-separated keys with rotation | The same secret signs cookies, signs email JWTs and HMACs the cookie cache; HKDF only in the JWE path; for signing keys there is no rotation (inventory N3-26/27) | One root key, out of it by HKDF-SHA256 `cookie-sig`, `token-pepper`, `totp-enc`, `oauth-token-enc`, `pkce-enc`, `password-enc`, `state-mac`, `token-mac`; every value carries its version, a ring permits rotation without an outage — and because sessions are database rows, every rotation survives all sessions (section 3.8). |
 | Recovery codes as HMAC instead of encrypted | Backup codes are stored encrypted by default so that `viewBackupCodes` can display them (`backup-codes/index.ts:44-55,552-590`) | `HMAC-SHA256(pepper, code)` with `(user_id, code_hmac)` as the primary key: the lookup is one index hit, consumption is `DELETE … RETURNING`, and displaying is impossible. |
@@ -1700,6 +1700,16 @@ Authorisation code flow with **PKCE S256 mandatory**, `state` server-side
 in `velve.oauth_flow` (the cookie holds only the pointer), `nonce` with OIDC, checking
 of `iss` per RFC 9207, ID token signature against JWKS.
 
+The `iss` of the ID token is always checked against an issuer (OpenID Connect Core
+3.1.3.7, step 2). For that a provider with a `jwksUri` needs an `issuer`; a generic
+provider with a `jwksUri` and without an `issuer` does not start (`oauth_provider_issuer_missing`), because
+a token whose `iss` is compared with nothing can come from any issuer whose
+keys the set holds. `microsoft` has no fixed issuer, because it names the tenant:
+there `iss` must be exactly `https://login.microsoftonline.com/{tid}/v2.0`, with `{tid}` from the
+`tid` claim of the same token, which must be a GUID — that is how Microsoft describes the check
+of a multi-tenant token. An `issuer` configured for `microsoft` replaces this
+rule and binds the sign-in to one tenant.
+
 Beside `link_to_user_id` the flow row also holds `link_from_session_id`: the
 session the linking was started in. S-FIX-1 requires linking to create a new
 session row and to delete the previous one in the same transaction, and without
@@ -1716,14 +1726,30 @@ is the value, not the number.
 
 **Linking rule, not negotiable:**
 `(provider, subject)` is the only key. **The e-mail is never a
-linking key.** Automatic linking with an existing account happens
-only if *all* the conditions hold:
-1. The provider reports the e-mail as verified.
-2. The local account has `email_verified_at IS NOT NULL`.
-3. The provider is in `trustedProviders`.
+linking key.** A provider identity is never linked automatically with an
+existing account. A sign-in through a `(provider, subject)` that belongs to no
+account yet, with an address an existing account carries, attaches
+no identity, issues neither a session nor a pending authentication and
+answers `identity_link_required` (409) — whether or not the provider reports the address
+as verified, whether or not the account has confirmed it and whether or not the provider stands in
+`trustedProviders`. Linking happens only explicitly, from a session of the
+account (`identity.link.start` and its callback). If no account carries the address,
+a new account comes into being; `trustedProviders` now decides only whether the
+address the provider reports as verified counts as confirmed for that new account.
+The answer tells whoever holds the provider identity that an account carries the
+address. The sign-in told that before, because it then created no account and
+ended with `oauth_flow_invalid`; the code makes the same bit readable without
+adding another, and a sign-up that takes the address at the same moment
+answers alike.
 
-Otherwise: a new account or explicit linking within an existing session.
-Until CVE-2026-53516 (CVSS 8.3), Better Auth never read the second condition — the
+Up to 2.x the library linked automatically when the provider reported the e-mail as
+verified, the local account carried `email_verified_at IS NOT NULL` and the
+provider stood in `trustedProviders`. The security review of 3.0.0 removed
+that: the address and the provider's word replaced every proof that
+the account itself demands — an account without a second factor was signed in, an account
+with recovery turned off (3.18) did not ask the switch, and the
+identity stayed written before a second factor was asked for.
+Until CVE-2026-53516 (CVSS 8.3), Better Auth never read the second of these conditions — the
 auto-link gate checked only the provider's `emailVerified` claim. Even after the
 fix the conditions there are not all mandatory: a trustworthy
 provider replaces the first, and the second can be switched off via
@@ -2130,8 +2156,10 @@ interface SecurityStateAlarm {
 
 `subjectClaim` deliberately has no default: the stable provider ID is the only
 linking key, and `"sub"` would be convenient and, in the one case in which it is wrong, an
-account takeover fault. `trustedProviders` is the third of the three conditions for automatic
-linking; whoever is not in it never leads to one. `webauthn.origins` is an array, because
+account takeover fault. `trustedProviders` decides only whether the address reported as verified
+of an account that a sign-in through the provider creates counts as confirmed; no provider leads to a
+link (3.10). A provider with a `jwksUri` needs an `issuer`, except
+`microsoft` (3.10). `webauthn.origins` is an array, because
 a relying party with a web and a native app legitimately has several origins; a single
 string would force a second instance with the same `relyingPartyId`.
 `userVerification: "discouraged"` is absent, because a second factor without user verification
@@ -3002,7 +3030,7 @@ type VelveErrorCode =
   | "invalid_pending_authentication" | "too_many_factor_attempts"
   | "password_unacceptable" | "username_taken" | "username_invalid"
   | "factor_not_enrolled" | "factor_already_enrolled" | "last_sign_in_method"
-  | "identity_already_linked" | "provider_not_configured"
+  | "identity_already_linked" | "identity_link_required" | "provider_not_configured"
   | "passkey_limit_reached" | "identity_limit_reached" | "recovery_disabled"
   | "passkey_recovery_failed" | "proof_of_work_required"
   | "oauth_flow_invalid" | "oauth_provider_error"
@@ -3017,7 +3045,7 @@ class VelveError extends Error {
 }
 ```
 
-32 codes, stable: a code disappears only at a major version jump, a new one arrives only with
+33 codes, stable: a code disappears only at a major version jump, a new one arrives only with
 a new route or a new refusal on an existing one.
 
 | Code | When | Status | Visible |
@@ -3041,6 +3069,7 @@ a new route or a new refusal on an existing one.
 | `factor_already_enrolled` | Factor already present | 409 | yes |
 | `last_sign_in_method` | Unlinking removed the last way to sign in | 409 | yes |
 | `identity_already_linked` | `(provider, subject)` belongs to another account | 409 | yes |
+| `identity_link_required` | A sign-in through a `(provider, subject)` that belongs to no account carries the address of an existing account; linking happens only from its session (3.10, S-LINK-2) | 409 | yes |
 | `passkey_limit_reached` | The account already has `limits.passkeysPerAccount` passkeys | 409 | yes |
 | `identity_limit_reached` | The account already has `limits.identitiesPerAccount` identities | 409 | yes |
 | `recovery_disabled` | Generating recovery codes while the account has turned recovery off (3.18) | 409 | yes |
@@ -3535,7 +3564,7 @@ Turning it on deletes every recovery code of the account in the same sealing tra
 - `password.redeemReset` and `signIn.magicLink.redeem` refuse a link of the account with `invalid_token` like an unknown token and do not spend it, `oneTimeToken.resolve` answers `null` for such a link (S-TOKEN-7), and a mailed reset waiting for its second factor (3.6) writes no password and answers like a missing pending authentication;
 - every path that recovers an account through its address — the recovery to a new passkey included — answers as for an unknown address; it asks the verified read for that with the same predicate as the paths above.
 
-What remains is the sign-in with an enrolled credential: password, passkey and linked identity, and every enrolled second factor except the deleted codes. Confirming and changing the address remain, because neither issues a session or sets a credential. The automatic linking of a new identity through the confirmed address of a trusted provider (3.10, S-LINK-2) does not ask about the switch in this version; for an account with a second factor it still leads only as far as the pending authentication. The gap closes when automatic linking by address is removed, as this release's security review provides. Turning it on and off is logged through `log`, on the console without a configured `log`, with the event names `account recovery disabled` and `account recovery enabled` and the `userId`, without an address, and not stored (3.14). An account that never uses the switch keeps its encoding and its seal. An instance before 3.0.0 does not know the column and would seal an account with the switch on without it; the switch is therefore used only once every instance runs 3.0.0.
+What remains is the sign-in with an enrolled credential: password, passkey and linked identity, and every enrolled second factor except the deleted codes. Confirming and changing the address remain, because neither issues a session or sets a credential. A new identity does not join the account through the address, not even through a trusted provider (3.10, S-LINK-2), and so has no need to ask the switch; the gap that stood here while automatic linking existed is closed with it. Turning it on and off is logged through `log`, on the console without a configured `log`, with the event names `account recovery disabled` and `account recovery enabled` and the `userId`, without an address, and not stored (3.14). An account that never uses the switch keeps its encoding and its seal. An instance before 3.0.0 does not know the column and would seal an account with the switch on without it; the switch is therefore used only once every instance runs 3.0.0.
 
 ```sql
 -- Migration 6
@@ -4596,7 +4625,7 @@ The design is **not** changed here. Where the elaboration exposed a gap in the t
 - **S-REPLAY-3:** The response to an expired, an already used and a never existing token is byte-identical in all three cases. *(Section 3.7: "expired, used and never existed are indistinguishable from the outside")*
 - **S-REPLAY-4:** A TOTP code is accepted at most once per user and time step; the check is an `INSERT INTO velve.totp_used_step (user_id, time_step, expires_at)` whose failure on the primary key constraint is the rejection, and what is entered is the time step that actually matched, not the current one. *(Section 3.6, TOTP paragraph: "an `INSERT` that fails on conflict is the check")*
 - **S-REPLAY-5:** A WebAuthn challenge is valid for at most 5 minutes, is consumed by `DELETE … RETURNING` and is accepted only for the purpose under which it was created (`register` or `authenticate`). *(Section 3.6, WebAuthn paragraph)*
-- **S-REPLAY-6:** An OAuth callback is accepted only if the associated row in `velve.oauth_flow` still exists at consumption and has not expired; PKCE with `code_challenge_method = S256` is mandatory and cannot be switched off by any configuration, and with OIDC the `nonce` and the `iss` per RFC 9207 are checked in addition. *(Section 3.10, first paragraph)*
+- **S-REPLAY-6:** An OAuth callback is accepted only if the associated row in `velve.oauth_flow` still exists at consumption and has not expired; PKCE with `code_challenge_method = S256` is mandatory and cannot be switched off by any configuration, and with OIDC the `nonce` and the `iss` per RFC 9207 are checked in addition. The `iss` of every ID token is checked against an issuer that the configuration names or, for `microsoft`, the token's `tid` claim; a provider with a `jwksUri` and without an issuer does not start. *(Section 3.10, first and second paragraph)*
 
 ---
 
@@ -4741,7 +4770,7 @@ The research report records: "**every single one** would have been prevented by 
 **(c) The requirements.**
 
 - **S-LINK-1:** The only linking key between a provider identity and a local account is the pair `(provider, subject)`; the email address is an attribute and is used in no query as a linking key. *(Section 3.10: "`(provider, subject)` is the only key. The email is never a linking key."; schema constraint `identity_provider_subject UNIQUE (provider, subject)`)*
-- **S-LINK-2:** An automatic link with an existing account takes place only if the provider reports the email as verified **and** the local account carries `email_verified_at IS NOT NULL` **and** the provider stands in `trustedProviders`; if one of the three conditions is missing, a new account comes into being or it remains an explicit link in an existing session. *(Section 3.10, linking rule, conditions 1–3)*
+- **S-LINK-2:** A provider identity is linked with an existing account only explicitly, from a session of that account through `identity.link.start` and its callback, and never automatically; a sign-in through a `(provider, subject)` that belongs to no account, with an address an existing account carries, writes neither an identity nor a session nor a pending authentication and answers `identity_link_required`, whatever the provider reports about the address, whether or not the account has confirmed it and whether or not the provider stands in `trustedProviders`. *(Section 3.10, linking rule)*
 - **S-LINK-3:** `velve.identity.subject` contains the stable provider id and never an email address. *(Section 3.2, schema: `subject text NOT NULL, -- the stable ID at the provider, never the email`)*
 - **S-LINK-4:** If an email address is confirmed for the first time — by magic link or confirmation link — and the existing password was set in a session other than the confirming one, then the password sign-in is deleted and all existing sessions are revoked; if the password was set in the same session that is now confirming, it remains. The confirming session counts for that only if it belongs to the confirmed account and its MAC (which binds `session.id`, section 3.18, point 3) matches; otherwise the password counts as set in another session. A magic link links no provider identity. *(Section 3.16, L-12; section 3.10: "The email is never a linking key")*
 - **S-LINK-5:** If a provider reports no email address, `velve.user.email` remains NULL in the configuration `username`; in `username_email` the CHECK constraint from 3.2 requires an address on every account, and the sign-in through that provider creates no account there. The library generates a placeholder address in no configuration. *(Section 3.10, "No account without an email obligation")*
@@ -5033,7 +5062,7 @@ To each of the 149 requirements from section 5 belongs a test case. The test ID 
 | T-REPLAY-3 | S-REPLAY-3 | Integration | Three requests per purpose: expired token (advance the clock), consumed token, invented token. | **12/12 responses byte-for-byte identical** (4 purposes × 3 cases) | CI on every commit |
 | T-REPLAY-4 | S-REPLAY-4 | Unit, controlled clock | Fix the clock, compute a code, submit it twice; advance the clock by 30 s, submit a new code; submit the code of the previous step; submit the code of the step before that. In addition check which `time_step` was recorded. | **5/5**: 200, 401, 200, 200, 401; the recorded `time_step` is that of the accepted code | CI on every commit |
 | T-REPLAY-5 | S-REPLAY-5 | Integration, controlled clock | Create a challenge, use it, use it again; create a challenge and use it after 5 min + 1 s; submit a `register` challenge to `authenticate`. | **3/3**: second use rejected, expired one rejected, wrong-purpose one rejected — all with the same response | CI on every commit |
-| T-REPLAY-6 | S-REPLAY-6 | Integration + Static | Call the callback twice with the same `state`; call the callback with an invented `state`; try to set a configuration without PKCE (type check); OIDC callback with a wrong `nonce` and with a wrong `iss`. | **5/5** rejected; **0 option keys** that switch PKCE off; `oauth_flow` **0 rows** after the first callback | CI on every commit |
+| T-REPLAY-6 | S-REPLAY-6 | Integration + Static | Call the callback twice with the same `state`; call the callback with an invented `state`; try to set a configuration without PKCE (type check); OIDC callback with a wrong `nonce` and with a wrong `iss`; a `microsoft` ID token whose `iss` is not the issuer of its `tid`, and one without a `tid`; a generic provider with a `jwksUri` and without an `issuer`. | **7/7** rejected; the generic provider does not start (`oauth_provider_issuer_missing`); **0 option keys** that switch PKCE off; `oauth_flow` **0 rows** after the first callback | CI on every commit |
 
 ---
 
@@ -5152,7 +5181,7 @@ soften the first, so it is declined.
 | Test ID | verifies | Kind | Procedure | Threshold | runs in |
 |---|---|---|---|---|---|
 | T-LINK-1 | S-LINK-1 | Static + Integration | AST scan: no query on `velve.identity` or `velve.user` that uses a provider email as a linking predicate. Integration: two providers report the same email with different `subject`. | **0 hits**; the integration produces **2 separate identity rows**, not one link | CI on every commit |
-| T-LINK-2 | S-LINK-2 | Integration, state matrix | 3 local states (absent, present unverified, present verified) × 2 provider states (`email_verified` true/false) × 2 (`trustedProviders` contains the provider / does not) = **12 cases**, expectation table as a fixture. | **12/12 as expected**; in particular (locally unverified, provider verified, trusted) does **not** lead to a silent link | CI on every commit |
+| T-LINK-2 | S-LINK-2 | Integration, state matrix | 3 local states (absent, present unverified, present verified) × 2 provider states (`email_verified` true/false) × 2 (`trustedProviders` contains the provider / does not) = **12 cases**, expectation table as a fixture; in addition an account with TOTP and an account with recovery turned off, and an explicit link from the account's session. | **12/12 as expected**: the 8 cases with a present account answer `identity_link_required` with **0 identities**, **0 sessions** and **0 pending authentications**, (locally verified, provider verified, trusted) included; the 4 cases without an account create one, whose address is confirmed only at (verified, trusted); the explicit link succeeds | CI on every commit |
 | T-LINK-3 | S-LINK-3 | Integration + Static | Provider double returns an email address as `sub`. AST scan: the assignment to `subject` comes from the `sub` claim, never from `email`. | Stored `subject` is the `sub` value; **0 AST hits** | CI on every commit |
 | T-LINK-4 | S-LINK-4 | Integration | Reproduce the attacker path: register an account with a password (unverified), redeem a magic link to the same address, then sign in with the original password. Counter-check: register an account with a password and redeem the confirmation link in the same session. Third case: magic link while a provider identity with the same email exists. | Attacker path: `email_verified_at` set, `password_credential` **0 rows**, all sessions created before the confirmation revoked (**0 rows**), sign-in with the original password fails with `invalid_credentials`. Counter-check: `password_credential` **1 row**, session stays valid. Third case: `velve.identity` **0 new rows** | CI on every commit |
 | T-LINK-5 | S-LINK-5 | Integration + Static | Provider double returns no email, in the configurations `username` and `username_email`. AST scan: no string concatenation that produces an email address from an identifier (`@` literal in an assignment to `email`). | `user.email IS NULL` in `username`; in `username_email` **0 rows** in `velve.user`, `velve.identity` and `velve.session`; **0 AST hits** | CI on every commit |

@@ -240,13 +240,13 @@ Fundstellen sind relativ zu `/home/claude/better-auth/` und stammen aus den Vorb
 | C77 `disableImplicitSignUp` | Registrierung nur bei explizitem `requestSignUp: true` | Übernehmen | Unverändert. |
 | C78 `overrideUserInfoOnSignIn` | Überschreibt bei jeder Anmeldung die Profildaten | Anders lösen | `velve.identity.profile` wird bei jeder Anmeldung mit den aktuellen Claims überschrieben, `velve.user` bleibt unberührt. Es gibt keine Konkurrenz zwischen Anbieterprofil und lokalem Profil, weil es kein lokales Profil gibt. |
 | C79 `requireEmailVerification` je Provider | Verlangt `email_verified` vom Provider | Anders lösen | Kein Schalter je Anbieter: `provider_email_verified` ist eine der drei nicht verhandelbaren Bedingungen der Verknüpfungsregel (Abschnitt 3.10). Für die Anmeldung selbst ist der Verifikationsstatus des Anbieters ohne Belang, weil die E-Mail kein Schlüssel ist. |
-| C80 Account-Linking global an/aus | `account.accountLinking.enabled`, Vorgabe `true` (`init-options.ts:1188`) | Anders lösen | Kein globaler Schalter. Automatisch verknüpft wird nur, wenn alle drei Bedingungen gelten (Anbieter meldet verifiziert, lokales Konto verifiziert, Anbieter in `trustedProviders`); sonst entsteht ein neues Konto oder es braucht eine ausdrückliche Verknüpfung in einer bestehenden Sitzung. |
-| C81 `trustedProviders` | Liste von Providern, deren E-Mail als Eigentumsnachweis gilt (`init-options.ts:1240`) | Übernehmen | Übernommen als eine der drei Bedingungen — aber nie als alleiniger Nachweis. |
+| C80 Account-Linking global an/aus | `account.accountLinking.enabled`, Vorgabe `true` (`init-options.ts:1188`) | Anders lösen | Kein globaler Schalter. Automatisch verknüpft wird nie (3.10, seit 3.0.0): Trägt ein Konto die Adresse, antwortet die Anmeldung `identity_link_required`, sonst entsteht ein neues Konto; verknüpft wird ausdrücklich in einer Sitzung des Kontos. |
+| C81 `trustedProviders` | Liste von Providern, deren E-Mail als Eigentumsnachweis gilt (`init-options.ts:1240`) | Übernehmen | Übernommen für die Bestätigung der Adresse eines Kontos, das eine Anmeldung über den Anbieter anlegt; seit 3.0.0 führt er zu keiner Verknüpfung (3.10). |
 | C82 `allowDifferentEmails` | Erlaubt manuelles Verknüpfen bei abweichender E-Mail (`init-options.ts:1264`) | Anders lösen | Braucht keinen Schalter: da die E-Mail nie Verknüpfungsschlüssel ist, ist eine abweichende Adresse beim ausdrücklichen Verknüpfen der Normalfall. |
 | C83 `allowUnlinkingAll` | Erlaubt das Entfernen des letzten verknüpften Kontos (`init-options.ts:1270`) | Anders lösen | Statt eines Schalters prüft der Kern, ob nach dem Trennen noch ein Anmeldeweg bleibt (Kennwort, Passkey oder eine weitere Identität), und lehnt sonst mit `last_sign_in_method` ab (L-13). Das ist eine Aussage über den Zustand, keine Voreinstellung. |
 | C84 `updateUserInfoOnLink` | Aktualisiert Profildaten beim Verknüpfen (`init-options.ts:1280`) | Weglassen | Entfällt mit C63: es gibt keine Profildaten in `velve.user`. |
-| C85 `disableImplicitLinking` | Verbietet automatisches Verknüpfen bei gleicher E-Mail (`init-options.ts:1199`) | Anders lösen | Eine leere `trustedProviders`-Liste schaltet implizites Verknüpfen vollständig ab — es ist die Voreinstellung, nicht ein zusätzlicher Schalter. |
-| C86 `requireLocalEmailVerified` | Verlangt zusätzlich, dass der lokale Account verifiziert ist (`init-options.ts:1218`) | Übertreffen | Keine Option, sondern Bedingung 2 der Verknüpfungsregel und nicht abschaltbar. Better Auth hat sie erst als Fix für CVE-2026-53516 (CVSS 8.3) nachgerüstet — das Auto-Link-Gate las das lokale `emailVerified` nie. |
+| C85 `disableImplicitLinking` | Verbietet automatisches Verknüpfen bei gleicher E-Mail (`init-options.ts:1199`) | Anders lösen | Implizites Verknüpfen gibt es seit 3.0.0 in keiner Konfiguration, also nichts abzuschalten (3.10). |
+| C86 `requireLocalEmailVerified` | Verlangt zusätzlich, dass der lokale Account verifiziert ist (`init-options.ts:1218`) | Übertreffen | Keine Option: Bis 2.x war sie Bedingung 2 der Verknüpfungsregel und nicht abschaltbar, seit 3.0.0 gibt es keine automatische Verknüpfung mehr, die sie bräuchte (3.10). Better Auth hat sie erst als Fix für CVE-2026-53516 (CVSS 8.3) nachgerüstet — das Auto-Link-Gate las das lokale `emailVerified` nie. |
 | C87 Konto manuell verknüpfen | `POST /link-social` im eingeloggten Zustand (`account.ts:126`) | Übernehmen | Über `velve.oauth_flow.link_to_user_id`; die Zielsitzung steht damit serverseitig fest und kann nicht aus dem Callback stammen. |
 | C88 Konto trennen | `POST /unlink-account` (`account.ts:453`) | Übernehmen | Unverändert, mit der Prüfung aus C83. |
 | C89 Verknüpfte Konten auflisten | `GET /list-accounts` (`account.ts:45`) | Übernehmen | Liefert `provider`, `subject`, `provider_email`, `scopes`, Zeitstempel — nie Tokens. |
@@ -902,7 +902,7 @@ Fehlen belegt ist — Quelltext, Advisory oder Issue.
 | Eigenes Postgres-Schema | Alle Tabellen liegen im Suchpfad der Anwendung; deshalb gibt es `modelName`, `fields` und `usePlural`, um Kollisionen auszuweichen | Alles liegt in `velve` (konfigurierbar). Nichts kollidiert, `user` braucht keine Anführungszeichen-Disziplin, und die Namensoptionen entfallen ersatzlos (Abschnitt 3.2). |
 | Echte PostgreSQL-Typen und -Constraints | Keine partiellen Indizes, keine Ausdrucksindizes, keine PG-Enums, kein `inet`, keine CHECK-Constraints, keine Trigger; `string[]` landet als JSON-String in `jsonb` (Inventur N4-45/46/47) | `uuid`, `timestamptz`, `bytea`, `inet`, `text[]`, `jsonb`, partielle Unique-Indizes, CHECK-Constraints für die Normalisierung und die Identitätsregel, ein Trigger gegen `UPDATE session SET user_id`. |
 | Eindeutigkeit von `(provider, subject)` in der Datenbank | Kein Unique-Constraint auf `account(providerId, accountId)`; die Prüfung steht in JavaScript und ist anfällig für Wettläufe (`db/internal-adapter.ts:1192-1215`, Inventur N4-43) | `CONSTRAINT identity_provider_subject UNIQUE (provider, subject)`. Die E-Mail ist nie ein Verknüpfungsschlüssel. |
-| Nicht abschaltbare Verknüpfungsbedingungen | Das Auto-Link-Gate las das lokale `emailVerified` nie (CVE-2026-53516, CVSS 8.3); die Magic-Link-/OTP-Variante ist GHSA-qq9h-g4jm-xgf3 | Automatisch verknüpft wird nur, wenn der Anbieter die E-Mail als verifiziert meldet **und** das lokale Konto verifiziert ist **und** der Anbieter in `trustedProviders` steht. Alle drei, ohne Ausnahme (Abschnitt 3.10). |
+| Nicht abschaltbare Verknüpfungsbedingungen | Das Auto-Link-Gate las das lokale `emailVerified` nie (CVE-2026-53516, CVSS 8.3); die Magic-Link-/OTP-Variante ist GHSA-qq9h-g4jm-xgf3 | Automatisch verknüpft wird nie: Eine Anmeldung über eine neue Identität mit der Adresse eines bestehenden Kontos antwortet `identity_link_required`, verknüpft wird nur aus einer Sitzung des Kontos (Abschnitt 3.10, seit 3.0.0; bis 2.x galten drei Bedingungen ohne Ausnahme). |
 | Aufgezählte Plugin-Erweiterungspunkte mit Startfehler bei Kollision | Kollisionen von Endpunkten und Tabellen werden nur geloggt (`api/index.ts:153-170`); es gibt kein Sandboxing, keine deklarierten Abhängigkeiten und keine topologische Sortierung (Inventur N5-54/55/56) | Neun aufgezählte Hook-Punkte, Namensraum `/x/<plugin-id>/…`, Tabellenpräfix `<plugin-id>_`, `dependsOn` mit topologischer Sortierung, eingefrorener Kontext — und ein Namenskonflikt ist ein Startfehler. |
 | Zweckgetrennte Schlüssel mit Rotation | Dasselbe Secret signiert Cookies, signiert E-Mail-JWTs und HMACt den Cookie-Cache; HKDF nur im JWE-Pfad; für Signaturschlüssel gibt es keine Rotation (Inventur N3-26/27) | Ein Wurzelschlüssel, daraus per HKDF-SHA256 `cookie-sig`, `token-pepper`, `totp-enc`, `oauth-token-enc`, `pkce-enc`, `password-enc`, `state-mac`, `token-mac`; jeder Wert trägt seine Version, ein Ring erlaubt Rotation ohne Ausfall — und weil Sitzungen Datenbankzeilen sind, überlebt jede Rotation sämtliche Sitzungen (Abschnitt 3.8). |
 | Wiederherstellungscodes als HMAC statt verschlüsselt | Backup-Codes werden per Vorgabe verschlüsselt gespeichert, damit `viewBackupCodes` sie anzeigen kann (`backup-codes/index.ts:44-55,552-590`) | `HMAC-SHA256(pepper, code)` mit `(user_id, code_hmac)` als Primärschlüssel: Nachschlagen ist ein Index-Treffer, Konsum ist `DELETE … RETURNING`, und Anzeigen ist unmöglich. |
@@ -1706,6 +1706,16 @@ Autorisierungscode-Fluss mit **PKCE S256 verpflichtend**, `state` serverseitig
 in `velve.oauth_flow` (Cookie hält nur den Zeiger), `nonce` bei OIDC, Prüfung
 von `iss` nach RFC 9207, ID-Token-Signatur gegen JWKS.
 
+Das `iss` des ID-Tokens wird immer gegen einen Aussteller geprüft (OpenID Connect Core
+3.1.3.7, Schritt 2). Ein Anbieter mit `jwksUri` braucht dafür einen `issuer`; ein generischer
+Anbieter mit `jwksUri` und ohne `issuer` startet nicht (`oauth_provider_issuer_missing`), denn
+ein Token, dessen `iss` mit nichts verglichen wird, kann von jedem Aussteller stammen, dessen
+Schlüssel die Menge hält. `microsoft` hat keinen festen Aussteller, weil er den Mandanten nennt:
+Dort muss `iss` genau `https://login.microsoftonline.com/{tid}/v2.0` sein, mit `{tid}` aus dem
+`tid`-Claim desselben Tokens, der eine GUID sein muss — so beschreibt Microsoft die Prüfung
+eines mandantenübergreifenden Tokens. Ein für `microsoft` konfigurierter `issuer` ersetzt diese
+Regel und bindet die Anmeldung an einen Mandanten.
+
 Die Flow-Zeile hält neben `link_to_user_id` auch `link_from_session_id`: die
 Sitzung, in der die Verknüpfung gestartet wurde. S-FIX-1 verlangt beim
 Verknüpfen eine neue Sitzungszeile und das Löschen der vorherigen in derselben
@@ -1723,14 +1733,30 @@ ist der Wert, nicht die Anzahl.
 
 **Verknüpfungsregel, nicht verhandelbar:**
 `(provider, subject)` ist der einzige Schlüssel. **Die E-Mail ist niemals ein
-Verknüpfungsschlüssel.** Automatisch mit einem bestehenden Konto verknüpft wird
-nur, wenn *alle* Bedingungen gelten:
-1. Der Anbieter meldet die E-Mail als verifiziert.
-2. Das lokale Konto hat `email_verified_at IS NOT NULL`.
-3. Der Anbieter steht in `trustedProviders`.
+Verknüpfungsschlüssel.** Eine Anbieteridentität wird nie automatisch mit einem
+bestehenden Konto verknüpft. Eine Anmeldung über ein `(provider, subject)`, das noch
+keinem Konto gehört, und mit einer Adresse, die ein bestehendes Konto trägt, hängt
+keine Identität an, stellt weder eine Sitzung noch einen Zwischenzustand aus und
+antwortet `identity_link_required` (409) — gleich, ob der Anbieter die Adresse als
+verifiziert meldet, ob das Konto sie bestätigt hat und ob der Anbieter in
+`trustedProviders` steht. Verknüpft wird nur ausdrücklich, aus einer Sitzung des
+Kontos (`identity.link.start` und sein Callback). Trägt kein Konto die Adresse,
+entsteht ein neues Konto; `trustedProviders` entscheidet nur noch, ob die vom
+Anbieter als verifiziert gemeldete Adresse dieses neuen Kontos als bestätigt gilt.
+Die Antwort sagt dem, der die Anbieteridentität hält, dass ein Konto die Adresse
+trägt. Das sagte die Anmeldung schon vorher, weil sie dann kein Konto anlegte und
+mit `oauth_flow_invalid` endete; der Code macht dasselbe Bit lesbar, ohne ein
+weiteres hinzuzufügen, und eine Registrierung, die im selben Augenblick die
+Adresse nimmt, antwortet ebenso.
 
-Sonst: neues Konto oder ausdrückliche Verknüpfung in einer bestehenden Sitzung.
-Better Auth las bis CVE-2026-53516 (CVSS 8.3) die zweite Bedingung nie — das
+Bis 2.x verknüpfte die Bibliothek automatisch, wenn der Anbieter die E-Mail als
+verifiziert meldete, das lokale Konto `email_verified_at IS NOT NULL` trug und der
+Anbieter in `trustedProviders` stand. Die Sicherheitsprüfung von 3.0.0 hat das
+entfernt: Die Adresse und das Wort des Anbieters ersetzten dort jeden Nachweis, den
+das Konto selbst verlangt — ein Konto ohne zweiten Faktor wurde angemeldet, ein Konto
+mit abgeschalteter Wiederherstellung (3.18) fragte den Schalter nicht, und die
+Identität blieb geschrieben, bevor ein zweiter Faktor gefragt war.
+Better Auth las bis CVE-2026-53516 (CVSS 8.3) die zweite dieser Bedingungen nie — das
 Auto-Link-Gate prüfte nur den `emailVerified`-Claim des Anbieters. Auch nach dem
 Fix sind die Bedingungen dort nicht alle verpflichtend: Ein vertrauenswürdiger
 Anbieter ersetzt die erste, und die zweite ist über
@@ -2138,8 +2164,10 @@ interface SecurityStateAlarm {
 
 `subjectClaim` hat bewusst keine Vorgabe: Die stabile Anbieter-ID ist der einzige
 Verknüpfungsschlüssel, und `"sub"` wäre bequem und in dem einen Fall, in dem es falsch ist, ein
-Kontoübernahmefehler. `trustedProviders` ist die dritte der drei Bedingungen für automatische
-Verknüpfung; wer nicht darin steht, führt nie zu einer. `webauthn.origins` ist ein Array, weil
+Kontoübernahmefehler. `trustedProviders` entscheidet nur, ob die als verifiziert gemeldete
+Adresse eines Kontos, das eine Anmeldung über den Anbieter anlegt, als bestätigt gilt; zu einer
+Verknüpfung führt kein Anbieter (3.10). Ein Anbieter mit `jwksUri` braucht einen `issuer`, außer
+`microsoft` (3.10). `webauthn.origins` ist ein Array, weil
 eine Relying Party mit Web- und nativer App legitim mehrere Ursprünge hat; ein einzelner
 String zwänge zu einer zweiten Instanz mit demselben `relyingPartyId`.
 `userVerification: "discouraged"` fehlt, weil ein zweiter Faktor ohne Nutzerverifikation
@@ -3013,7 +3041,7 @@ type VelveErrorCode =
   | "invalid_pending_authentication" | "too_many_factor_attempts"
   | "password_unacceptable" | "username_taken" | "username_invalid"
   | "factor_not_enrolled" | "factor_already_enrolled" | "last_sign_in_method"
-  | "identity_already_linked" | "provider_not_configured"
+  | "identity_already_linked" | "identity_link_required" | "provider_not_configured"
   | "passkey_limit_reached" | "identity_limit_reached" | "recovery_disabled"
   | "passkey_recovery_failed" | "proof_of_work_required"
   | "oauth_flow_invalid" | "oauth_provider_error"
@@ -3028,7 +3056,7 @@ class VelveError extends Error {
 }
 ```
 
-32 Codes, stabil: Ein Code verschwindet nur im Hauptversionssprung, ein neuer kommt nur mit
+33 Codes, stabil: Ein Code verschwindet nur im Hauptversionssprung, ein neuer kommt nur mit
 einer neuen Route oder einer neuen Ablehnung an einer bestehenden.
 
 | Code | Wann | Status | Sichtbar |
@@ -3052,6 +3080,7 @@ einer neuen Route oder einer neuen Ablehnung an einer bestehenden.
 | `factor_already_enrolled` | Faktor bereits vorhanden | 409 | ja |
 | `last_sign_in_method` | Trennen entfernte die letzte Anmeldemöglichkeit | 409 | ja |
 | `identity_already_linked` | `(provider, subject)` gehört einem anderen Konto | 409 | ja |
+| `identity_link_required` | Eine Anmeldung über ein `(provider, subject)`, das keinem Konto gehört, trägt die Adresse eines bestehenden Kontos; verknüpft wird nur aus dessen Sitzung (3.10, S-LINK-2) | 409 | ja |
 | `passkey_limit_reached` | Das Konto hat schon `limits.passkeysPerAccount` Passkeys | 409 | ja |
 | `identity_limit_reached` | Das Konto hat schon `limits.identitiesPerAccount` Identitäten | 409 | ja |
 | `recovery_disabled` | Wiederherstellungscodes erzeugen, während das Konto die Wiederherstellung abgeschaltet hat (3.18) | 409 | ja |
@@ -3546,7 +3575,7 @@ Das Einschalten löscht in derselben versiegelnden Transaktion jeden Wiederherst
 - lehnen `password.redeemReset` und `signIn.magicLink.redeem` einen Link des Kontos mit `invalid_token` ab wie einen unbekannten Token und verbrauchen ihn nicht, `oneTimeToken.resolve` antwortet für einen solchen Link `null` (S-TOKEN-7), und ein gemailter Reset, der auf seinen zweiten Faktor wartet (3.6), schreibt kein Kennwort und antwortet wie ein fehlender Zwischenzustand;
 - antwortet jeder Weg, der ein Konto über seine Adresse wiederherstellt — auch die Wiederherstellung auf einen neuen Passkey —, wie für eine unbekannte Adresse; er fragt dafür die geprüfte Lesung mit demselben Prädikat wie die Wege oben.
 
-Es bleibt die Anmeldung mit einem eingerichteten Anmeldemittel: Kennwort, Passkey und verknüpfte Identität, und jeder eingerichtete zweite Faktor außer den gelöschten Codes. Die Bestätigung und der Wechsel der Adresse bleiben, weil keiner von beiden eine Sitzung ausstellt oder ein Anmeldemittel setzt. Die automatische Verknüpfung einer neuen Identität über die bestätigte Adresse eines vertrauenswürdigen Anbieters (3.10, S-LINK-2) fragt den Schalter in dieser Version nicht; sie führt bei einem Konto mit zweitem Faktor weiterhin nur bis zum Zwischenzustand. Die Lücke schließt sich, wenn die automatische Verknüpfung über die Adresse entfällt, wie es die Sicherheitsprüfung dieser Version vorsieht. Ein- und Ausschalten werden über `log` protokolliert, ohne konfiguriertes `log` auf der Konsole, mit den Ereignisnamen `account recovery disabled` und `account recovery enabled` und der `userId`, ohne Adresse, und nicht gespeichert (3.14). Ein Konto, das den Schalter nie benutzt, behält Kodierung und Siegel. Eine Instanz vor 3.0.0 kennt die Spalte nicht und versiegelte ein eingeschaltetes Konto ohne sie; der Schalter wird deshalb erst benutzt, wenn jede Instanz auf 3.0.0 läuft.
+Es bleibt die Anmeldung mit einem eingerichteten Anmeldemittel: Kennwort, Passkey und verknüpfte Identität, und jeder eingerichtete zweite Faktor außer den gelöschten Codes. Die Bestätigung und der Wechsel der Adresse bleiben, weil keiner von beiden eine Sitzung ausstellt oder ein Anmeldemittel setzt. Eine neue Identität verbindet sich nicht über die Adresse mit dem Konto, auch nicht über einen vertrauenswürdigen Anbieter (3.10, S-LINK-2), und braucht den Schalter deshalb nicht zu fragen; die Lücke, die hier stand, solange es die automatische Verknüpfung gab, ist mit ihr geschlossen. Ein- und Ausschalten werden über `log` protokolliert, ohne konfiguriertes `log` auf der Konsole, mit den Ereignisnamen `account recovery disabled` und `account recovery enabled` und der `userId`, ohne Adresse, und nicht gespeichert (3.14). Ein Konto, das den Schalter nie benutzt, behält Kodierung und Siegel. Eine Instanz vor 3.0.0 kennt die Spalte nicht und versiegelte ein eingeschaltetes Konto ohne sie; der Schalter wird deshalb erst benutzt, wenn jede Instanz auf 3.0.0 läuft.
 
 ```sql
 -- Migration 6
@@ -4607,7 +4636,7 @@ Der Entwurf wird hier **nicht** geändert. Wo die Ausarbeitung eine Lücke in de
 - **S-REPLAY-3:** Die Antwort auf einen abgelaufenen, einen bereits verbrauchten und einen nie existierenden Token ist in allen drei Fällen byteweise identisch. *(Abschnitt 3.7: „abgelaufen, verbraucht und nie existiert sind nach außen ununterscheidbar")*
 - **S-REPLAY-4:** Ein TOTP-Code wird pro Nutzer und Zeitschritt höchstens einmal akzeptiert; die Prüfung ist ein `INSERT INTO velve.totp_used_step (user_id, time_step, expires_at)`, dessen Scheitern an der Primärschlüsselbedingung die Ablehnung ist, und eingetragen wird der tatsächlich passende Zeitschritt, nicht der aktuelle. *(Abschnitt 3.6, TOTP-Absatz: „ein `INSERT`, der bei Konflikt scheitert, ist die Prüfung")*
 - **S-REPLAY-5:** Eine WebAuthn-Challenge ist höchstens 5 Minuten gültig, wird per `DELETE … RETURNING` konsumiert und nur für den Zweck akzeptiert, unter dem sie erzeugt wurde (`register` oder `authenticate`). *(Abschnitt 3.6, WebAuthn-Absatz)*
-- **S-REPLAY-6:** Ein OAuth-Callback wird nur angenommen, wenn die zugehörige Zeile in `velve.oauth_flow` beim Konsum noch existiert und nicht abgelaufen ist; PKCE mit `code_challenge_method = S256` ist Pflicht und durch keine Konfiguration abschaltbar, und bei OIDC wird zusätzlich der `nonce` und der `iss` nach RFC 9207 geprüft. *(Abschnitt 3.10, erster Absatz)*
+- **S-REPLAY-6:** Ein OAuth-Callback wird nur angenommen, wenn die zugehörige Zeile in `velve.oauth_flow` beim Konsum noch existiert und nicht abgelaufen ist; PKCE mit `code_challenge_method = S256` ist Pflicht und durch keine Konfiguration abschaltbar, und bei OIDC wird zusätzlich der `nonce` und der `iss` nach RFC 9207 geprüft. Das `iss` jedes ID-Tokens wird gegen einen Aussteller geprüft, den die Konfiguration nennt oder bei `microsoft` der `tid`-Claim des Tokens; ein Anbieter mit `jwksUri` und ohne Aussteller startet nicht. *(Abschnitt 3.10, erster und zweiter Absatz)*
 
 ---
 
@@ -4752,7 +4781,7 @@ Der Recherchebericht hält fest: „**jede einzelne** wäre durch die Actor-Pfli
 **(c) Die Anforderungen.**
 
 - **S-LINK-1:** Der einzige Verknüpfungsschlüssel zwischen einer Anbieteridentität und einem lokalen Konto ist das Paar `(provider, subject)`; die E-Mail-Adresse ist ein Attribut und wird in keiner Abfrage als Verknüpfungsschlüssel verwendet. *(Abschnitt 3.10: „`(provider, subject)` ist der einzige Schlüssel. Die E-Mail ist niemals ein Verknüpfungsschlüssel."; Schema-Bedingung `identity_provider_subject UNIQUE (provider, subject)`)*
-- **S-LINK-2:** Eine automatische Verknüpfung mit einem bestehenden Konto findet nur statt, wenn der Anbieter die E-Mail als verifiziert meldet **und** das lokale Konto `email_verified_at IS NOT NULL` trägt **und** der Anbieter in `trustedProviders` steht; fehlt eine der drei Bedingungen, entsteht ein neues Konto oder es bleibt bei einer ausdrücklichen Verknüpfung in einer bestehenden Sitzung. *(Abschnitt 3.10, Verknüpfungsregel, Bedingungen 1–3)*
+- **S-LINK-2:** Eine Anbieteridentität wird mit einem bestehenden Konto nur ausdrücklich verknüpft, aus einer Sitzung dieses Kontos über `identity.link.start` und dessen Callback, und nie automatisch; eine Anmeldung über ein `(provider, subject)`, das keinem Konto gehört, mit einer Adresse, die ein bestehendes Konto trägt, schreibt weder eine Identität noch eine Sitzung noch einen Zwischenzustand und antwortet `identity_link_required`, gleich, was der Anbieter über die Adresse meldet, ob das Konto sie bestätigt hat und ob der Anbieter in `trustedProviders` steht. *(Abschnitt 3.10, Verknüpfungsregel)*
 - **S-LINK-3:** `velve.identity.subject` enthält die stabile Anbieterkennung und niemals eine E-Mail-Adresse. *(Abschnitt 3.2, Schema: `subject text NOT NULL, -- die stabile ID beim Anbieter, nie die E-Mail`)*
 - **S-LINK-4:** Wird eine E-Mail-Adresse erstmals bestätigt — per Magic Link oder Bestätigungslink — und wurde das vorhandene Kennwort in einer anderen Sitzung gesetzt als der bestätigenden, dann werden die Kennwortanmeldung gelöscht und alle bestehenden Sitzungen widerrufen; wurde das Kennwort in derselben Sitzung gesetzt, die jetzt bestätigt, bleibt es bestehen. Die bestätigende Sitzung zählt dafür nur, wenn sie dem bestätigten Konto gehört und ihr MAC (der `session.id` bindet, Abschnitt 3.18, Punkt 3) stimmt; sonst gilt das Kennwort als in einer anderen Sitzung gesetzt. Ein Magic Link verknüpft keine Anbieteridentität. *(Abschnitt 3.16, L-12; Abschnitt 3.10: „Die E-Mail ist niemals ein Verknüpfungsschlüssel")*
 - **S-LINK-5:** Meldet ein Anbieter keine E-Mail-Adresse, bleibt `velve.user.email` in der Konfiguration `username` NULL; in `username_email` verlangt der CHECK-Constraint aus 3.2 an jedem Konto eine Adresse, und die Anmeldung über diesen Anbieter legt dort kein Konto an. Die Bibliothek erzeugt in keiner Konfiguration eine Platzhalteradresse. *(Abschnitt 3.10, „Kein Konto ohne E-Mail-Zwang")*
@@ -5044,7 +5073,7 @@ Zu jeder der 149 Anforderungen aus Abschnitt 5 gehört ein Testfall. Die Test-ID
 | T-REPLAY-3 | S-REPLAY-3 | Integration | Drei Anfragen je Zweck: abgelaufener Token (Uhr vorstellen), verbrauchter Token, erfundener Token. | **12/12 Antworten byteweise identisch** (4 Zwecke × 3 Fälle) | CI bei jedem Commit |
 | T-REPLAY-4 | S-REPLAY-4 | Unit, kontrollierte Uhr | Uhr fixieren, Code berechnen, zweimal einreichen; Uhr um 30 s vorstellen, neuen Code einreichen; Code des vorherigen Schritts einreichen; Code des vorletzten Schritts einreichen. Zusätzlich prüfen, welcher `time_step` eingetragen wurde. | **5/5**: 200, 401, 200, 200, 401; der eingetragene `time_step` ist der des akzeptierten Codes | CI bei jedem Commit |
 | T-REPLAY-5 | S-REPLAY-5 | Integration, kontrollierte Uhr | Challenge erzeugen, verwenden, erneut verwenden; Challenge erzeugen und nach 5 min + 1 s verwenden; `register`-Challenge an `authenticate` einreichen. | **3/3**: zweite Verwendung abgelehnt, abgelaufene abgelehnt, zweckfremde abgelehnt — alle mit derselben Antwort | CI bei jedem Commit |
-| T-REPLAY-6 | S-REPLAY-6 | Integration + Statisch | Callback zweimal mit demselben `state` aufrufen; Callback mit erfundenem `state`; Konfiguration ohne PKCE zu setzen versuchen (Typprüfung); OIDC-Callback mit falschem `nonce` und mit falschem `iss`. | **5/5** abgelehnt; **0 Optionsschlüssel**, der PKCE abschaltet; `oauth_flow` nach dem ersten Callback **0 Zeilen** | CI bei jedem Commit |
+| T-REPLAY-6 | S-REPLAY-6 | Integration + Statisch | Callback zweimal mit demselben `state` aufrufen; Callback mit erfundenem `state`; Konfiguration ohne PKCE zu setzen versuchen (Typprüfung); OIDC-Callback mit falschem `nonce` und mit falschem `iss`; ein `microsoft`-ID-Token, dessen `iss` nicht der Aussteller seines `tid` ist, und eines ohne `tid`; ein generischer Anbieter mit `jwksUri` und ohne `issuer`. | **7/7** abgelehnt; der generische Anbieter startet nicht (`oauth_provider_issuer_missing`); **0 Optionsschlüssel**, der PKCE abschaltet; `oauth_flow` nach dem ersten Callback **0 Zeilen** | CI bei jedem Commit |
 
 ---
 
@@ -5165,7 +5194,7 @@ wird nicht genommen.
 | Test-ID | prüft | Art | Vorgehen | Schwelle | läuft in |
 |---|---|---|---|---|---|
 | T-LINK-1 | S-LINK-1 | Statisch + Integration | AST-Scan: keine Abfrage auf `velve.identity` oder `velve.user`, die eine Anbieter-E-Mail als Verknüpfungsprädikat verwendet. Integration: zwei Anbieter melden dieselbe E-Mail mit verschiedenen `subject`. | **0 Treffer**; die Integration erzeugt **2 getrennte Identitätszeilen**, nicht eine Verknüpfung | CI bei jedem Commit |
-| T-LINK-2 | S-LINK-2 | Integration, Zustandsmatrix | 3 lokale Zustände (nicht vorhanden, vorhanden unverifiziert, vorhanden verifiziert) × 2 Anbieterzustände (`email_verified` true/false) × 2 (`trustedProviders` enthält den Anbieter / nicht) = **12 Fälle**, Erwartungstabelle als Fixture. | **12/12 laut Erwartung**; insbesondere führt (lokal unverifiziert, Anbieter verifiziert, vertrauenswürdig) **nicht** zu einer stillen Verknüpfung | CI bei jedem Commit |
+| T-LINK-2 | S-LINK-2 | Integration, Zustandsmatrix | 3 lokale Zustände (nicht vorhanden, vorhanden unverifiziert, vorhanden verifiziert) × 2 Anbieterzustände (`email_verified` true/false) × 2 (`trustedProviders` enthält den Anbieter / nicht) = **12 Fälle**, Erwartungstabelle als Fixture; dazu ein Konto mit TOTP und ein Konto mit abgeschalteter Wiederherstellung, und eine ausdrückliche Verknüpfung aus der Sitzung des Kontos. | **12/12 laut Erwartung**: die 8 Fälle mit vorhandenem Konto antworten `identity_link_required` mit **0 Identitäten**, **0 Sitzungen** und **0 Zwischenzuständen**, auch (lokal verifiziert, Anbieter verifiziert, vertrauenswürdig); die 4 Fälle ohne Konto legen eines an, dessen Adresse nur bei (verifiziert, vertrauenswürdig) bestätigt ist; die ausdrückliche Verknüpfung gelingt | CI bei jedem Commit |
 | T-LINK-3 | S-LINK-3 | Integration + Statisch | Anbieterattrappe liefert eine E-Mail-Adresse als `sub`. AST-Scan: die Zuweisung an `subject` stammt aus dem `sub`-Claim, nie aus `email`. | Gespeicherter `subject` ist der `sub`-Wert; **0 AST-Treffer** | CI bei jedem Commit |
 | T-LINK-4 | S-LINK-4 | Integration | Angreiferpfad nachstellen: Konto mit Kennwort registrieren (unverifiziert), Magic Link an dieselbe Adresse einlösen, danach mit dem ursprünglichen Kennwort anmelden. Gegenprobe: Konto mit Kennwort registrieren und in derselben Sitzung den Bestätigungslink einlösen. Dritter Fall: Magic Link, während eine Anbieteridentität mit derselben E-Mail existiert. | Angreiferpfad: `email_verified_at` gesetzt, `password_credential` **0 Zeilen**, alle vor der Bestätigung erzeugten Sitzungen widerrufen (**0 Zeilen**), Anmeldung mit dem ursprünglichen Kennwort scheitert mit `invalid_credentials`. Gegenprobe: `password_credential` **1 Zeile**, Sitzung bleibt gültig. Dritter Fall: `velve.identity` **0 neue Zeilen** | CI bei jedem Commit |
 | T-LINK-5 | S-LINK-5 | Integration + Statisch | Anbieterattrappe liefert keine E-Mail, in den Konfigurationen `username` und `username_email`. AST-Scan: keine Zeichenkettenverkettung, die eine E-Mail-Adresse aus einer Kennung erzeugt (`@`-Literal in einer Zuweisung an `email`). | `user.email IS NULL` in `username`; in `username_email` **0 Zeilen** in `velve.user`, `velve.identity` und `velve.session`; **0 AST-Treffer** | CI bei jedem Commit |
