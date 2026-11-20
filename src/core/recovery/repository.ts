@@ -2,6 +2,11 @@ import type { Actor, DuePasskeyRecovery } from "../db/actor.js";
 import type { Driver } from "../db/driver.js";
 import { toEntityId } from "../db/entity-id.js";
 import { assertSchemaName, qualifiedTableName } from "../db/identifier.js";
+import {
+	isUniqueViolation,
+	readBytes,
+	readDate,
+} from "../factor/webauthn/credential-repository.js";
 import type { RegisteredWebAuthnCredential } from "../factor/webauthn/service.js";
 
 /** when a held back passkey becomes usable, as the database clock set it */
@@ -34,31 +39,6 @@ interface PasskeyRecoveryRepository {
 	findDueRecoveryOfCredential(input: {
 		readonly credentialId: Uint8Array<ArrayBuffer>;
 	}): Promise<DuePasskeyRecovery | null>;
-}
-
-const UNIQUE_VIOLATION = "23505";
-
-//drivers name the sql state either code or sql state so both are read
-function isUniqueViolation(cause: unknown): boolean {
-	if (typeof cause !== "object" || cause === null) {
-		return false;
-	}
-	const fields = cause as { readonly code?: unknown; readonly sqlState?: unknown };
-	return fields.code === UNIQUE_VIOLATION || fields.sqlState === UNIQUE_VIOLATION;
-}
-
-function readBytes(value: unknown): Uint8Array<ArrayBuffer> {
-	if (value instanceof Uint8Array) {
-		return Uint8Array.from(value);
-	}
-	throw new TypeError("the driver did not hand back a bytea column as bytes");
-}
-
-function readDate(value: unknown): Date {
-	if (value instanceof Date) {
-		return value;
-	}
-	throw new TypeError("the driver did not hand back a timestamptz column as a date");
 }
 
 //a count of microseconds must be exact before a seal covers it (S-INTEG-12)
@@ -112,8 +92,9 @@ RETURNING activates_at, ${MICROS_OF_ACTIVATION} AS activates_at_us`;
 
 	const withdrawStatement = `DELETE FROM ${table} WHERE user_id = $1 RETURNING 1 AS withdrawn`;
 
+	//an infinite time is no date the driver hands back (E-3779)
 	const heldStatement = `SELECT activates_at, ${MICROS_OF_ACTIVATION} AS activates_at_us
-FROM ${table} WHERE user_id = $1`;
+FROM ${table} WHERE user_id = $1 AND isfinite(activates_at)`;
 
 	//the held row leaves and the credential row arrives in one statement so neither can exist alone (E-3768)
 	const moveStatement = `WITH held AS (

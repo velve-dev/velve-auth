@@ -93,6 +93,7 @@ interface SecurityStateCheck {
 }
 
 //a statement that names an account reads its whole state in the same snapshot as everything else (E-3299)
+//an infinite activation time reads as a bound no library write produces so the seal refuses it (E-3779)
 export function securityStateDocumentOf(schema: string, accountIdSql: string): string {
 	const table = (name: string) => qualifiedTableName(schema, name);
 	return `(SELECT jsonb_build_object(
@@ -148,7 +149,9 @@ export function securityStateDocumentOf(schema: string, accountIdSql: string): s
     FROM ${table("recovery_code")} code WHERE code.user_id = account.id),
   'passkey_recovery', CASE WHEN recovery.user_id IS NULL THEN NULL ELSE jsonb_build_object(
     'activates_at_us', CASE WHEN isfinite(recovery.activates_at)
-      THEN trunc(extract(epoch FROM recovery.activates_at) * 1000000)::text END,
+      THEN trunc(extract(epoch FROM recovery.activates_at) * 1000000)::text
+      WHEN recovery.activates_at > now() THEN '9007199254740991'
+      ELSE '-9007199254740991' END,
     'credential_id', encode(recovery.credential_id, 'hex'),
     'public_key', encode(recovery.public_key, 'hex'),
     'due', recovery.activates_at <= now()) END

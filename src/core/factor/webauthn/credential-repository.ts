@@ -113,14 +113,14 @@ function readTransports(value: string | null): readonly string[] {
 	return parsed.filter((entry): entry is string => typeof entry === "string");
 }
 
-function readBytes(value: unknown): Uint8Array<ArrayBuffer> {
+export function readBytes(value: unknown): Uint8Array<ArrayBuffer> {
 	if (value instanceof Uint8Array) {
 		return Uint8Array.from(value);
 	}
 	throw new TypeError("the driver did not hand back a bytea column as bytes");
 }
 
-function readDate(value: unknown): Date {
+export function readDate(value: unknown): Date {
 	if (value instanceof Date) {
 		return value;
 	}
@@ -163,7 +163,7 @@ function storedCredential(row: CredentialRow): StoredWebAuthnCredential {
 }
 
 //drivers name the sql state either code or sql state so both are read
-function isUniqueViolation(cause: unknown): boolean {
+export function isUniqueViolation(cause: unknown): boolean {
 	if (typeof cause !== "object" || cause === null) {
 		return false;
 	}
