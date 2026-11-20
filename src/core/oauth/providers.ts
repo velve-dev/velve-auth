@@ -15,6 +15,8 @@ interface ProviderDescriptor {
 	readonly userInfoEndpoint?: string;
 	readonly userInfoHeaders?: Readonly<Record<string, string>>;
 	readonly issuer?: string;
+	/** an issuer naming the tenant, where `{tid}` stands for the token's own `tid` claim */
+	readonly tenantIssuerTemplate?: string;
 	readonly jwksUri?: string;
 	readonly subjectClaim: string;
 	readonly emailClaim?: string;
@@ -23,7 +25,7 @@ interface ProviderDescriptor {
 	readonly responseMode?: OAuthResponseMode;
 }
 
-//microsoft has no fixed issuer as the value is the tenant's and would refuse real tokens (E-556)
+//microsoft has no fixed issuer as the value is the tenant's, so its token names the tenant (E-3899)
 const DESCRIPTORS: Readonly<Record<KnownProvider, ProviderDescriptor>> = {
 	google: {
 		authorizationEndpoint: "https://accounts.google.com/o/oauth2/v2/auth",
@@ -60,6 +62,7 @@ const DESCRIPTORS: Readonly<Record<KnownProvider, ProviderDescriptor>> = {
 		authorizationEndpoint: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
 		tokenEndpoint: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
 		userInfoEndpoint: "https://graph.microsoft.com/oidc/userinfo",
+		tenantIssuerTemplate: "https://login.microsoftonline.com/{tid}/v2.0",
 		jwksUri: "https://login.microsoftonline.com/common/discovery/v2.0/keys",
 		subjectClaim: "sub",
 		emailClaim: "email",
@@ -173,6 +176,8 @@ export interface ResolvedProvider {
 	readonly userInfoEndpoint: string | null;
 	readonly userInfoHeaders: Readonly<Record<string, string>>;
 	readonly issuer: string | null;
+	/** set only where no issuer is, and then the ID token's `tid` decides the issuer it must name */
+	readonly tenantIssuerTemplate: string | null;
 	readonly jwksUri: string | null;
 	readonly subjectClaim: string;
 	readonly emailClaim: string | null;
@@ -222,6 +227,30 @@ function descriptorOf(id: string, configured: ProviderCredentials): ProviderDesc
 	};
 }
 
+interface IssuerOfProvider {
+	readonly issuer: string | null;
+	readonly tenantIssuerTemplate: string | null;
+}
+
+//an ID token whose iss is compared with nothing could come from any issuer sharing the key set (E-3898)
+function assertAnIssuerAnswersForTheKeySet(issuer: IssuerOfProvider, jwksUri: string | null): void {
+	if (jwksUri !== null && issuer.issuer === null && issuer.tenantIssuerTemplate === null) {
+		throw new VelveStartupError("oauth_provider_issuer_missing");
+	}
+}
+
+//a configured issuer is the operator's binding to one tenant and replaces the template
+function issuerOf(
+	configured: ProviderCredentials,
+	descriptor: ProviderDescriptor,
+): IssuerOfProvider {
+	const issuer = configured.issuer ?? descriptor.issuer ?? null;
+	return {
+		issuer,
+		tenantIssuerTemplate: issuer === null ? (descriptor.tenantIssuerTemplate ?? null) : null,
+	};
+}
+
 function callbackUrlFor(callbackBaseUrl: string, id: string): string {
 	return `${callbackBaseUrl.replace(/\/+$/, "")}/${encodeURIComponent(id)}`;
 }
@@ -234,6 +263,8 @@ function resolveProvider(
 	const descriptor = descriptorOf(id, configured);
 	const userInfoEndpoint = configured.userInfoEndpoint ?? descriptor.userInfoEndpoint ?? null;
 	const jwksUri = configured.jwksUri ?? descriptor.jwksUri ?? null;
+	const issuer = issuerOf(configured, descriptor);
+	assertAnIssuerAnswersForTheKeySet(issuer, jwksUri);
 
 	return {
 		id,
@@ -245,7 +276,7 @@ function resolveProvider(
 		tokenEndpoint: assertCallableEndpoint(configured.tokenEndpoint ?? descriptor.tokenEndpoint),
 		userInfoEndpoint: userInfoEndpoint === null ? null : assertCallableEndpoint(userInfoEndpoint),
 		userInfoHeaders: descriptor.userInfoHeaders ?? {},
-		issuer: configured.issuer ?? descriptor.issuer ?? null,
+		...issuer,
 		jwksUri: jwksUri === null ? null : assertCallableEndpoint(jwksUri),
 		subjectClaim: descriptor.subjectClaim,
 		emailClaim: descriptor.emailClaim ?? null,

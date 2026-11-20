@@ -53,6 +53,8 @@ interface IssuedToken {
 	readonly iss: string;
 	readonly tid?: string;
 	readonly sub: string;
+	/** the `iss` parameter of RFC 9207 the callback carries, absent where the provider sent none */
+	readonly callbackIss?: string;
 }
 
 //signs in through microsoft with an ID token the test writes, under a key the provider publishes
@@ -99,9 +101,11 @@ async function signInWithAnIdTokenOf(token: IssuedToken): Promise<Response> {
 			.sign(signing.privateKey),
 	);
 	const state = url.searchParams.get("state") ?? "";
+	const iss =
+		token.callbackIss === undefined ? "" : `&iss=${encodeURIComponent(token.callbackIss)}`;
 	return mount.handler(
 		requestTo(
-			`/sign-in/oauth/callback/microsoft?code=${codeCarrying(nonce)}&state=${encodeURIComponent(state)}`,
+			`/sign-in/oauth/callback/microsoft?code=${codeCarrying(nonce)}&state=${encodeURIComponent(state)}${iss}`,
 			{ method: "GET", cookie: `__Host-velve_oauth_state=${body.stateCookie.value}` },
 		),
 	);
@@ -157,6 +161,32 @@ describe("FLOWS-7: an ID token from another issuer is refused", () => {
 
 		expect(answer.status).toBe(302);
 		expect(sessionCookieOf(answer)).toBeDefined();
+	});
+});
+
+//the two cases E-585 wrote against a generic provider without an issuer, which no longer starts
+describe("RFC 9207 where the issuer is the tenant's (section 1 C60, E-585)", () => {
+	it("lets the signed token answer for the `iss` a provider without one cannot", async () => {
+		const answer = await signInWithAnIdTokenOf({
+			iss: TENANT_ISSUER,
+			tid: TENANT,
+			sub: "someone-whose-callback-names-the-tenant",
+			callbackIss: TENANT_ISSUER,
+		});
+
+		expect(answer.status).toBe(302);
+	});
+
+	it("refuses an `iss` the signed token does not carry", async () => {
+		const answer = await signInWithAnIdTokenOf({
+			iss: TENANT_ISSUER,
+			tid: TENANT,
+			sub: "someone-whose-callback-names-another-tenant",
+			callbackIss: "https://login.microsoftonline.com/another-tenant/v2.0",
+		});
+
+		expect(answer.status).toBe(400);
+		expect(sessionCookieOf(answer)).toBeUndefined();
 	});
 });
 

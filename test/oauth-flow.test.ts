@@ -51,7 +51,6 @@ async function mountWith(input: {
 	readonly trusted?: boolean;
 	readonly storeTokens?: boolean;
 	readonly responseMode?: "query" | "form_post";
-	readonly omitIssuer?: boolean;
 	readonly plugins?: readonly VelvePlugin[];
 	readonly session?: Partial<SessionConfig>;
 }): Promise<Mounted> {
@@ -66,7 +65,6 @@ async function mountWith(input: {
 			...(input.trusted === undefined ? {} : { trusted: input.trusted }),
 			...(input.storeTokens === undefined ? {} : { storeTokens: input.storeTokens }),
 			...(input.responseMode === undefined ? {} : { responseMode: input.responseMode }),
-			...(input.omitIssuer === undefined ? {} : { omitIssuer: input.omitIssuer }),
 		}),
 		fetch: provider.fetch,
 		...(input.plugins === undefined ? {} : { plugins: input.plugins }),
@@ -524,43 +522,6 @@ describe("S-KEY-7: the ID token is verified against the JWKS", () => {
 		expect(flow.nonce).not.toBeNull();
 		expect(refused.status).toBe(400);
 		expect(await countRows(mounted, "session")).toBe(0);
-	});
-});
-
-describe("RFC 9207 where the issuer is the tenant's (section 1 C60)", () => {
-	function callbackCarrying(flow: StartedFlow, iss: string): Request {
-		return requestTo(
-			`/sign-in/oauth/callback/stubby?code=${codeCarrying(flow.nonce)}&state=${encodeURIComponent(flow.state)}&iss=${encodeURIComponent(iss)}`,
-			{ method: "GET", cookie: `__Host-velve_oauth_state=${flow.pointer}` },
-		);
-	}
-
-	it("lets the signed token answer for the `iss` a provider without one cannot", async () => {
-		const mounted = await mountWith({
-			claims: VERIFIED_CLAIMS,
-			openIdConnect: true,
-			omitIssuer: true,
-		});
-		const answered = await mounted.auth.handler(
-			callbackCarrying(await start(mounted), "https://provider.example"),
-		);
-
-		expect(answered.status).toBe(302);
-		expect(await countRows(mounted, "identity")).toBe(1);
-	});
-
-	it("refuses an `iss` the signed token does not carry", async () => {
-		const mounted = await mountWith({
-			claims: VERIFIED_CLAIMS,
-			openIdConnect: true,
-			omitIssuer: true,
-		});
-		const refused = await mounted.auth.handler(
-			callbackCarrying(await start(mounted), "https://another-tenant.example"),
-		);
-
-		expect(refused.status).toBe(400);
-		expect(await countRows(mounted, "identity")).toBe(0);
 	});
 });
 

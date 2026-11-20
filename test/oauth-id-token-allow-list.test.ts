@@ -25,6 +25,7 @@ const PROVIDER: ResolvedProvider = {
 	userInfoEndpoint: null,
 	userInfoHeaders: {},
 	issuer: ISSUER,
+	tenantIssuerTemplate: null,
 	jwksUri: JWKS_URI,
 	subjectClaim: "sub",
 	emailClaim: "email",

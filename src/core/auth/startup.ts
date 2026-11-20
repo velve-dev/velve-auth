@@ -20,6 +20,7 @@ type StartupErrorCode =
 	| "recovery_codes_required"
 	| "recovery_code_shape_unusable"
 	| "oauth_provider_incomplete"
+	| "oauth_provider_issuer_missing"
 	| "rate_limit_bucket_unusable"
 	| "plugin_id_duplicated"
 	| "plugin_dependency_missing"
@@ -58,6 +59,8 @@ const MESSAGE_BY_STARTUP_ERROR_CODE: Readonly<Record<StartupErrorCode, string>> 
 		"recoveryCodes.count and recoveryCodes.groupSize must each be a positive whole number: a count of nothing is a set with no way back in, and a group of nothing never ends",
 	oauth_provider_incomplete:
 		"a provider id that is not one of the fourteen built in needs authorizationEndpoint, tokenEndpoint and subjectClaim",
+	oauth_provider_issuer_missing:
+		"a provider with a jwksUri needs an issuer: an ID token whose iss is compared with nothing may come from any issuer whose keys the set holds (OpenID Connect Core 3.1.3.7)",
 	rate_limit_bucket_unusable:
 		'rateLimit.perIpAddress and rateLimit.perAccount must each be a bucket of a finite capacity and refill rate of at least zero; "none" would take every core route out of that bucket, and S-DEFAULT-3 leaves no option that switches the rate limit off',
 	plugin_id_duplicated: "two plugins claim the same id, so neither owns its namespace",

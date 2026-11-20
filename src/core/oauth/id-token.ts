@@ -54,6 +54,25 @@ function assertNonceMatches(claims: Record<string, unknown>, expected: string | 
 	}
 }
 
+const TENANT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+//a tenant issuer is the one the token's own tid names, as Microsoft documents the check (E-3899)
+function assertTheTenantIssuerMatches(
+	provider: ResolvedProvider,
+	claims: Record<string, unknown>,
+): void {
+	if (provider.tenantIssuerTemplate === null) {
+		return;
+	}
+	const tenant = claims.tid;
+	if (typeof tenant !== "string" || !TENANT_ID.test(tenant)) {
+		throw new ConcealedError("issuer_mismatch");
+	}
+	if (claims.iss !== provider.tenantIssuerTemplate.replace("{tid}", tenant)) {
+		throw new ConcealedError("issuer_mismatch");
+	}
+}
+
 //any failed check must answer oauth_flow_invalid to the caller and log its own reason
 export async function claimsOfIdToken(input: {
 	readonly fetch: OutboundFetch;
@@ -80,6 +99,7 @@ export async function claimsOfIdToken(input: {
 		throw new ConcealedError("id_token_signature_invalid");
 	}
 
+	assertTheTenantIssuerMatches(provider, claims);
 	assertNonceMatches(claims, input.nonce);
 	return claims;
 }
